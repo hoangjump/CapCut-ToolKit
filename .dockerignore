@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.log
+
+# Store nội bộ — KHÔNG đưa session/cookie/proxy của máy dev vào image.
+profiles-store/
+
+# Env
+.env
+.env.local
+
+# Git / OS / docker
+.git/
+.gitignore
+.DS_Store
+Dockerfile
+docker-compose.yml
+.dockerignore

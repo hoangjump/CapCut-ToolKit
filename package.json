@@ -1,0 +1,30 @@
+{
+  "name": "capcut-auto",
+  "version": "0.1.0",
+  "description": "Multi-profile Playwright browser system with anti-detect, session persistence and per-profile proxy",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "server": "node dist/server/index.js",
+    "server:dev": "tsx watch src/server/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "camoufox-js": "^0.11.1",
+    "express": "^4.21.2",
+    "playwright": "1.53.1",
+    "proxy-agent": "^6.5.0",
+    "proxy-chain": "^3.0.0"
+  },
+  "overrides": {
+    "playwright-core": "1.53.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

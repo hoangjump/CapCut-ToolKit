@@ -1,0 +1,17 @@
+services:
+  proxy-manager:
+    build: .
+    image: capcut-auto
+    container_name: capcut-proxy-manager
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      # Endpoint dùng để xác nhận proxy thực sự định tuyến (trả JSON {ip}).
+      PROXY_CHECK_URL: "${PROXY_CHECK_URL:-https://api.ipify.org?format=json}"
+    volumes:
+      # Proxy list + session/cookie persist qua các lần restart.
+      - proxy-data:/data
+    restart: unless-stopped
+
+volumes:
+  proxy-data:

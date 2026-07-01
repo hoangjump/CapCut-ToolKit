@@ -1,0 +1,232 @@
+export interface ProxyConfig {
+  server: string; // e.g. "http://host:port" or "socks5://host:port"
+  username?: string;
+  password?: string;
+  /** ISO country code from IP geo, used by language: 'base-on-ip'. */
+  country?: string;
+}
+
+/** How a profile sources its proxy at launch time. */
+export type ProxyMode = 'static' | 'pool' | 'gateway';
+
+export interface ProxyPoolFilter {
+  /** Only draw proxies carrying all of these tags (empty = any proxy). */
+  tags?: string[];
+  /** Only draw proxies with alive===true (default true). */
+  liveOnly?: boolean;
+}
+
+/**
+ * Proxy rotation config. 'static' pins profile.proxy (legacy behavior).
+ * 'pool' draws from the ProxyStore library at launch. 'gateway' keeps a fixed
+ * rotating-endpoint proxy where the provider rotates the egress IP per session.
+ */
+export interface ProxyRotation {
+  mode: ProxyMode;
+  pool?: ProxyPoolFilter;
+  /** pool: draw a fresh proxy on every open (default false → keep assigned one). */
+  rotateOnOpen?: boolean;
+  /** pool: recheck the assigned proxy before launch; if dead, draw another. */
+  rotateOnFailure?: boolean;
+}
+
+export function defaultProxyRotation(): ProxyRotation {
+  return { mode: 'static' };
+}
+
+/**
+ * Anti-detect knobs. The engine is Camoufox (a hardened Firefox build) which
+ * handles canvas/webgl/audio/font/screen/cpu/memory/mediaDevices spoofing in
+ * its C++ engine — those no longer need per-field knobs here, and the WebGL
+ * vendor/renderer is sampled by Camoufox per-OS (forcing one pair makes every
+ * profile look identical, which is itself a tell). What remains are the few
+ * launch-time choices we still pass to Camoufox: OS to claim, WebRTC handling,
+ * and locale source.
+ */
+export interface AntiDetectConfig {
+  /**
+   * OS the fingerprint should claim. Camoufox generates a fully coherent
+   * platform/UA/WebGL/font set for the chosen OS. 'auto' lets it randomize
+   * across windows/macos/linux per launch.
+   */
+  osProfile: 'auto' | 'windows' | 'macos' | 'linux';
+  /** Locale source: keep Camoufox's OS-coherent default ('real') or derive from
+   *  the proxy IP geo ('base-on-ip'). */
+  language: 'real' | 'base-on-ip';
+  /** WebRTC handling: 'disabled' turns the stack off so no candidates leak;
+   *  'base-on-ip' and 'real' leave it on (the proxy relay forces egress so
+   *  discovered candidates match the proxy IP). */
+  webrtc: 'base-on-ip' | 'real' | 'disabled';
+  /** Derive timezone + geolocation (lat/long) + locale + WebRTC IP from the
+   *  proxy's egress IP via Camoufox's geoip (a MaxMind lookup done through the
+   *  proxy at launch). When on it supersedes the coarse `language` map with a
+   *  full IP-coherent set. Off keeps the OS-coherent defaults. */
+  geoip: boolean;
+  /** Browser geolocation permission (navigator.geolocation): 'prompt' asks,
+   *  'allow' grants silently (position comes from geoip when enabled),
+   *  'disabled' turns the API off. */
+  geolocation: 'prompt' | 'allow' | 'disabled';
+  /** Hide enumerated media devices (cameras/mics/speakers). Sets Camoufox's
+   *  `mediaDevices:enabled=false` so navigator.mediaDevices.enumerateDevices()
+   *  returns nothing. Turn off if the profile needs real video/voice calls. */
+  maskMediaDevices: boolean;
+  /** Screen resolution to claim. 'real' lets Camoufox pick one coherent with the
+   *  OS; a "WIDTHxHEIGHT" string (e.g. "1920x1080") pins a fixed window size via
+   *  Camoufox's `window` option so screen/window dims report that resolution. */
+  screen: string;
+}
+
+export function defaultAntiDetect(): AntiDetectConfig {
+  return {
+    osProfile: 'auto',
+    language: 'base-on-ip',
+    webrtc: 'base-on-ip',
+    geoip: true,
+    geolocation: 'prompt',
+    maskMediaDevices: true,
+    screen: 'real',
+  };
+}
+
+/** Browser-trigger + startup behavior, mirroring the left column of the panel. */
+export interface BrowserSettings {
+  /** "Xóa Cache tự động" — wipe Cache/Code Cache dirs before launch. */
+  clearCacheOnStart: boolean;
+  /** "Giới hạn kích thước trình duyệt theo cài đặt" — force window to viewport. */
+  limitWindowToViewport: boolean;
+  /** "Khôi phục phiên làm việc trước" — reopen last session's tabs. */
+  restorePreviousSession: boolean;
+  /** "URL khởi động" — opened in order on launch. */
+  startupUrls: string[];
+  /** "Chrome start parameters" — extra raw Chromium flags. */
+  chromeParams: string[];
+  /** "Bookmarks" — seeded into the profile. */
+  bookmarks: Array<{ name: string; url: string }>;
+  /** File extensions ("Cho phép request file tĩnh không qua proxy") bypassing
+   *  the proxy, e.g. ['.css', '.png', '.jpg']. Empty = route everything. */
+  noProxyExtensions: string[];
+}
+
+export function defaultBrowserSettings(): BrowserSettings {
+  return {
+    clearCacheOnStart: true,
+    limitWindowToViewport: true,
+    restorePreviousSession: false,
+    startupUrls: [],
+    chromeParams: [],
+    bookmarks: [],
+    noProxyExtensions: [],
+  };
+}
+
+export interface Profile {
+  id: string;
+  name: string;
+  /** Organizational group, e.g. "Default group". */
+  group?: string;
+  /** Window/taskbar title override; falls back to the profile name when empty. */
+  taskbarTitle?: string;
+  /** Current proxy. For 'static'/'gateway' this is the pinned proxy; for 'pool'
+   *  it's the currently-assigned draw (updated on each rotation, so the UI can
+   *  show it and it survives restarts). */
+  proxy?: ProxyConfig;
+  /** How the proxy is sourced at launch. Absent = treated as 'static'. */
+  proxyRotation?: ProxyRotation;
+  /** ProxyStore record id backing `proxy` when mode='pool' — lets us avoid
+   *  re-drawing the same one and update its liveness. */
+  assignedProxyId?: string;
+  antiDetect?: AntiDetectConfig;
+  browser?: BrowserSettings;
+  /** Stable per-profile seed, retained for backwards compatibility with
+   *  existing stored profiles. */
+  seed?: number;
+  createdAt: string;
+  notes?: string;
+}
+
+export interface LaunchOptions {
+  /** `false` = real headed window (local). `'virtual'` = headful inside an Xvfb
+   *  virtual display (containers): Camoufox runs the real engine so headless
+   *  tells don't leak, but no physical screen is needed. `true` = true headless
+   *  (lightest, but Firefox headless is itself a weak detection signal). */
+  headless?: boolean | 'virtual';
+  /** Extra args passed to the browser process. */
+  args?: string[];
+  /** Slow down operations by N ms — useful while debugging. */
+  slowMo?: number;
+  /** What kicked off this launch — controls whether a pool profile re-draws its
+   *  proxy. 'open' respects rotateOnOpen; 'manual'/'failure' force a re-draw. */
+  rotateTrigger?: 'open' | 'manual' | 'failure';
+}
+
+/** The credential triple dongvanfb's tools.* endpoints authenticate with — no
+ *  API key needed to read mail / fetch OTP, just this per-mailbox set. */
+export interface MailCredentials {
+  email: string;
+  refreshToken: string;
+  clientId: string;
+}
+
+/** A mailbox in the local library — either bought via /user/buy or added by
+ *  hand. `refreshToken` + `clientId` are secrets: never log or expose raw. */
+export interface MailRecord {
+  id: string;
+  email: string;
+  password?: string;
+  refreshToken: string;
+  clientId: string;
+  /** Mail host, e.g. "hotmail"/"outlook" — derived from the address domain. */
+  provider?: string;
+  tags: string[];
+  note?: string;
+  /** Order id from the buy response, when this mail came from a purchase. */
+  orderCode?: string;
+  boughtAt: string;
+}
+
+/** Params for a /user/buy call. `count` maps to how many rows we expect back. */
+export interface BuyMailInput {
+  accountType: string;
+  quality: string;
+  count?: number;
+}
+
+/** Service whose confirmation code we want to pull from a mailbox. */
+export type MailCodeType =
+  | 'all' | 'facebook' | 'instagram' | 'twitter' | 'apple' | 'tiktok'
+  | 'amazon' | 'lazada' | 'google' | 'shopee' | 'telegram' | 'wechat';
+
+export interface GetCodeInput extends MailCredentials {
+  type: MailCodeType;
+}
+
+/** Persisted app-level settings. `dongvanfbApiKey` bills real money — stored
+ *  locally, only ever returned to the UI masked. */
+export interface AppSettings {
+  dongvanfbApiKey?: string;
+}
+
+/** A saved automation job: run a named flow across a set of profiles, optionally
+ *  with a mailbox bound in for OTP steps. Flows themselves are TS code in
+ *  `flows/`; this record just names which flow + which profiles to drive. */
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  /** Key into the flow registry (flows/index.ts). */
+  flowName: string;
+  /** Profiles this project drives when run. */
+  profileIds: string[];
+  /** Optional mailbox (MailRecord id) bound in for getOtp() steps. */
+  mailId?: string;
+  /** Max profiles driven at once. Kept low (default 2) since runs are headful. */
+  concurrency?: number;
+  note?: string;
+  createdAt: string;
+}
+
+/** Per-profile outcome of a project run — one entry per driven profile. */
+export interface RunResult {
+  profileId: string;
+  ok: boolean;
+  error?: string;
+}

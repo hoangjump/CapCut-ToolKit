@@ -1,0 +1,1777 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CapCut Auto — Quản lý</title>
+  <style>
+    :root {
+      --blue: #2f6bff;
+      --blue-dark: #1f54d6;
+      --border: #e5e7eb;
+      --bg: #f8fafc;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --head-bg: #f1f3f5;
+      --green: #16a34a;
+      --red: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--text);
+      background: #fff;
+      font-size: 14px;
+    }
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--border);
+      height: 56px;
+    }
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 100%;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab.active { color: var(--text); border-bottom-color: var(--blue); }
+    .tab .ico { font-size: 18px; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 20px 24px;
+    }
+    button {
+      font: inherit;
+      cursor: pointer;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #fff;
+      padding: 10px 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    button:hover { background: var(--bg); }
+    .btn-primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+      font-weight: 600;
+    }
+    .btn-primary:hover { background: var(--blue-dark); }
+    .search {
+      flex: 1;
+      max-width: 460px;
+      position: relative;
+    }
+    .search input {
+      width: 100%;
+      font: inherit;
+      padding: 10px 14px 10px 38px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .search .ico {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: var(--head-bg);
+      text-align: left;
+      padding: 14px 16px;
+      font-weight: 600;
+      color: #374151;
+      white-space: nowrap;
+    }
+    tbody td {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    tbody tr:hover { background: var(--bg); }
+    .info-main { font-weight: 600; }
+    .info-sub { color: var(--muted); margin-top: 4px; font-size: 13px; }
+    .live { color: var(--green); font-weight: 600; }
+    .dead { color: var(--red); font-weight: 600; }
+    .unchecked { color: var(--muted); }
+    .tag {
+      display: inline-block;
+      background: #eef2ff;
+      color: var(--blue-dark);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 12px;
+      margin: 2px 4px 2px 0;
+    }
+    .actions { display: flex; gap: 8px; }
+    .icon-btn {
+      border: none;
+      background: none;
+      padding: 6px;
+      color: var(--muted);
+      border-radius: 6px;
+    }
+    .icon-btn:hover { background: #eef2ff; color: var(--blue); }
+    .icon-btn.danger:hover { background: #fef2f2; color: var(--red); }
+    .muted { color: var(--muted); }
+    .empty { text-align: center; color: var(--muted); padding: 48px; }
+    /* Modal */
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(15, 23, 42, .45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+    .overlay.open { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 12px;
+      width: 460px;
+      max-width: calc(100vw - 32px);
+      padding: 24px;
+      box-shadow: 0 20px 50px rgba(0,0,0,.2);
+    }
+    .modal h3 { margin: 0 0 16px; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 13px; }
+    .field input, .field select, .field textarea {
+      width: 100%; font: inherit;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .field textarea { min-height: 90px; resize: vertical; font-family: ui-monospace, monospace; }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: #111827; color: #fff;
+      padding: 12px 18px; border-radius: 8px;
+      opacity: 0; transform: translateY(8px);
+      transition: all .2s; z-index: 60;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.err { background: var(--red); }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---- Profiles view: master-detail ---- */
+    .profile-layout { display: flex; min-height: calc(100vh - 56px); }
+    .profile-list {
+      width: 280px;
+      border-right: 1px solid var(--border);
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .profile-list .add { width: 100%; justify-content: center; margin-bottom: 12px; }
+    .profile-stats {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 4px 14px; margin-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px; color: var(--muted);
+    }
+    .profile-stats .stat { display: inline-flex; align-items: center; gap: 6px; }
+    .profile-stats .stat b { color: var(--text); font-size: 15px; }
+    .profile-stats .stat .run-dot { width: 9px; height: 9px; }
+    .profile-item {
+      padding: 12px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 6px;
+      border: 1px solid transparent;
+    }
+    .profile-item:hover { background: var(--bg); }
+    .profile-item.active { background: #eef2ff; border-color: #c7d2fe; }
+    .profile-item .name { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .profile-item .meta { color: var(--muted); font-size: 12px; }
+    .meta { color: var(--muted); font-size: 12px; }
+    .pill { display: inline-block; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; background: var(--bg); }
+    .profile-item .pi-bot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+    .run-dot { width: 8px; height: 8px; border-radius: 50%; background: #cbd5e1; flex: none; }
+    .run-dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(22,163,74,.18); }
+    .pi-btn { border: 1px solid var(--border); background: #fff; border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+    .pi-btn.open { color: var(--green); border-color: #bbf7d0; }
+    .pi-btn.open:hover { background: #f0fdf4; }
+    .pi-btn.close { color: var(--red); border-color: #fecaca; }
+    .pi-btn.close:hover { background: #fef2f2; }
+    .pi-top { display: flex; align-items: center; }
+    .pi-bot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+    .profile-item .name { display: flex; align-items: center; gap: 8px; }
+    .cfg-name {
+      font: inherit; font-size: 22px; font-weight: 700;
+      border: 1px solid transparent; border-radius: 8px;
+      padding: 6px 10px; margin: -6px -10px; flex: 1; min-width: 0;
+      background: transparent; color: var(--text);
+    }
+    .cfg-name:hover { border-color: var(--border); }
+    .cfg-name:focus { border-color: var(--blue); outline: none; background: #fff; }
+    .profile-config { flex: 1; padding: 24px 32px; overflow-y: auto; }
+    .config-empty { color: var(--muted); padding: 64px; text-align: center; }
+    .config-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 1fr) minmax(220px, 320px) minmax(220px, 320px);
+      gap: 40px 48px;
+    }
+    .section-title { font-weight: 700; margin: 0 0 16px; font-size: 15px; }
+    /* toggle */
+    .toggle-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .switch { position: relative; width: 42px; height: 24px; flex: none; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0; cursor: pointer;
+      background: #cbd5e1; border-radius: 999px; transition: .2s;
+    }
+    .slider::before {
+      content: ""; position: absolute;
+      height: 18px; width: 18px; left: 3px; top: 3px;
+      background: #fff; border-radius: 50%; transition: .2s;
+    }
+    .switch input:checked + .slider { background: var(--blue); }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+    /* segmented control */
+    .seg-block { margin-bottom: 20px; }
+    .seg-label { font-weight: 600; margin-bottom: 8px; }
+    .seg {
+      display: inline-flex;
+      background: #f1f3f5;
+      border-radius: 8px;
+      padding: 4px;
+      gap: 2px;
+    }
+    .seg button {
+      border: none; background: none;
+      padding: 8px 18px; border-radius: 6px;
+      color: var(--muted); font-weight: 600;
+    }
+    .seg button.active { background: #fff; color: var(--blue); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+    .config-actions { margin-top: 8px; display: flex; gap: 12px; align-items: center; }
+    .link-row { color: var(--blue); font-weight: 600; cursor: pointer; margin: 4px 0 16px; display: inline-block; }
+    .cfg-field { margin-bottom: 18px; }
+    .cfg-field label { display: block; font-weight: 700; margin-bottom: 8px; }
+    .cfg-field input, .cfg-field textarea {
+      width: 100%; font: inherit;
+      padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    }
+    .cfg-field textarea { min-height: 120px; resize: vertical; font-family: ui-monospace, monospace; }
+    .saved-flash { color: var(--green); font-weight: 600; font-size: 13px; opacity: 0; transition: opacity .2s; }
+    .saved-flash.show { opacity: 1; }
+
+    /* ---- Create-profile modal (large) ---- */
+    .modal-lg {
+      width: 1000px;
+      max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 48px);
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .np-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+    }
+    .np-head-left { display: flex; align-items: center; gap: 12px; }
+    .np-head h3 { margin: 0; font-size: 18px; }
+    .np-plus {
+      width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 8px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 20px; color: var(--muted);
+    }
+    .np-topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+    }
+    .np-name { flex: 0 0 280px; font: inherit; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; }
+    .np-group { flex: 0 0 220px; font: inherit; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; }
+    .np-top-actions { margin-left: auto; display: flex; gap: 10px; }
+    .np-body { display: flex; min-height: 0; flex: 1; }
+    .np-main { flex: 1; min-width: 0; padding: 20px; overflow-y: auto; }
+    .np-side {
+      flex: 0 0 320px; border-left: 1px solid var(--border);
+      padding: 20px; background: #fafbfc; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    .np-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+    .np-tab { padding-bottom: 12px; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+    .np-tab.active { color: var(--text); border-bottom-color: var(--blue); }
+    .np-pane { display: none; }
+    .np-pane.active { display: block; }
+    .np-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .np-label-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .np-summary { border: 1px solid var(--border); border-radius: 8px; background: #fff; overflow: hidden; }
+    .np-sum-row { display: flex; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #f1f3f5; }
+    .np-sum-row:last-child { border-bottom: none; }
+    .np-sum-k { color: var(--muted); }
+    .np-sum-v { font-weight: 600; }
+    .np-note { border: 1px solid #bbf7d0; background: #f0fdf4; color: #15803d; border-radius: 8px; padding: 14px; font-size: 13px; line-height: 1.5; }
+    .np-pane .cfg-field select { width: 100%; font: inherit; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+    /* ---- Mail view ---- */
+    .mail-layout { display: flex; gap: 20px; align-items: flex-start; }
+    .mail-panel { flex: 0 0 340px; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+    .mail-list { flex: 1; min-width: 0; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px 12px; }
+    .mail-h { font-size: 14px; font-weight: 600; margin: 0 0 12px; }
+    .mail-panel .field { margin-bottom: 12px; }
+    .mail-panel textarea { width: 100%; min-height: 88px; font: inherit; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; resize: vertical; }
+    .row-inline { display: flex; gap: 8px; align-items: center; }
+    .row-inline input { flex: 1; font: inherit; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; }
+    .divider { height: 1px; background: var(--border); margin: 16px 0; }
+    .balance { font-weight: 600; color: var(--blue); }
+    .mail-code-out { font-weight: 600; color: #15803d; }
+    .mailbox-body { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .mailbox-msg { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .mailbox-msg .mm-head { padding: 8px 12px; background: #f8f9fa; font-size: 13px; border-bottom: 1px solid var(--border); }
+    .mailbox-msg iframe { width: 100%; height: 240px; border: 0; }
+    .mail-getcode { display: flex; gap: 6px; align-items: center; }
+    .mail-getcode select { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+    .pj-checks { display: flex; flex-wrap: wrap; gap: 8px 16px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 180px; overflow-y: auto; }
+    .pj-check { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; flex: 0 0 auto; }
+    .pj-check input { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="tabs">
+    <div class="tab active" data-view="proxies"><span class="ico">&#9776;</span> Quản lý proxy</div>
+    <div class="tab" data-view="profiles"><span class="ico">&#128100;</span> Hồ sơ</div>
+    <div class="tab" data-view="mail"><span class="ico">&#9993;</span> Mail</div>
+    <div class="tab" data-view="project"><span class="ico">&#9881;</span> Project</div>
+  </div>
+
+  <!-- ============ PROXY VIEW ============ -->
+  <div class="view active" id="view-proxies">
+    <div class="toolbar">
+      <button class="btn-primary" id="btnAdd">+ Thêm mới</button>
+      <div class="search">
+        <span class="ico">&#128269;</span>
+        <input id="search" placeholder="Tìm kiếm..." />
+      </div>
+      <button id="btnRefresh"><span id="refreshIco">&#8635;</span> Làm mới</button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:40px"><input type="checkbox" id="checkAll" /></th>
+          <th>Loại</th>
+          <th>Thông tin</th>
+          <th>Tags</th>
+          <th>Thời gian tạo</th>
+          <th>Trạng thái</th>
+          <th style="width:120px">Thao tác</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none">Chưa có proxy nào. Bấm "Thêm mới" để bắt đầu.</div>
+  </div>
+
+  <!-- ============ PROFILES VIEW ============ -->
+  <div class="view" id="view-profiles">
+    <div class="profile-layout">
+      <div class="profile-list">
+        <button class="btn-primary add" id="btnAddProfile">+ Tạo hồ sơ</button>
+        <div class="profile-stats" id="profileStats"></div>
+        <div id="profileItems"></div>
+      </div>
+      <div class="profile-config" id="profileConfig">
+        <div class="config-empty">Chọn một hồ sơ bên trái để cấu hình, hoặc tạo hồ sơ mới.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ MAIL VIEW ============ -->
+  <div class="view" id="view-mail">
+    <div class="mail-layout">
+      <div class="mail-panel">
+        <h3 class="mail-h">Cài đặt &amp; số dư</h3>
+        <div class="field">
+          <label>API key dongvanfb <span class="muted" id="mailKeyState"></span></label>
+          <div class="row-inline">
+            <input id="mail-apikey" type="password" placeholder="Dán API key..." />
+            <button class="btn-primary" id="mailSaveKey">Lưu</button>
+          </div>
+        </div>
+        <div class="row-inline">
+          <button id="mailBalance">Xem số dư</button>
+          <span class="balance" id="mailBalanceVal"></span>
+        </div>
+        <div class="divider"></div>
+        <h3 class="mail-h">Mua mail</h3>
+        <div class="field"><label>Account type</label><input id="mail-acctype" placeholder="vd: 1" /></div>
+        <div class="field"><label>Quality</label><input id="mail-quality" placeholder="vd: 3" /></div>
+        <button class="btn-primary" id="mailBuy">Mua (tốn tiền)</button>
+        <div class="divider"></div>
+        <h3 class="mail-h">Thêm mail thủ công</h3>
+        <div class="field">
+          <label>email|password|refresh_token|client_id</label>
+          <textarea id="mail-line" placeholder="email|pass|refresh|client (mỗi dòng 1 mail)"></textarea>
+        </div>
+        <button id="mailAdd">Thêm vào kho</button>
+      </div>
+      <div class="mail-list">
+        <div class="toolbar">
+          <span class="muted" id="mailCount"></span>
+          <button id="mailReload"><span>&#8635;</span> Tải lại</button>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Email</th><th>Provider</th><th style="width:230px">Lấy code</th><th style="width:150px">Thao tác</th></tr>
+          </thead>
+          <tbody id="mailRows"></tbody>
+        </table>
+        <div class="empty" id="mailEmpty" style="display:none">Chưa có mail nào.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mailbox messages modal -->
+  <div class="overlay" id="mailboxOverlay">
+    <div class="modal" style="max-width:820px">
+      <h3 id="mailboxTitle">Hộp thư</h3>
+      <div id="mailboxBody" class="mailbox-body"></div>
+      <div class="actions"><button id="mailboxClose">Đóng</button></div>
+    </div>
+  </div>
+
+  <!-- ============ PROJECT VIEW ============ -->
+  <div class="view" id="view-project">
+    <div class="profile-layout">
+      <div class="profile-list">
+        <button class="btn-primary add" id="btnAddProject">+ Tạo project</button>
+        <div id="projectItems"></div>
+      </div>
+      <div class="profile-config" id="projectConfig">
+        <div class="config-empty">Chọn một project bên trái để cấu hình, hoặc tạo project mới.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Proxy Add / Edit modal -->
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <h3 id="modalTitle">Thêm proxy</h3>
+      <div class="field">
+        <label>Loại</label>
+        <select id="f-type">
+          <option value="socks5">Socks5</option>
+          <option value="http">HTTP</option>
+          <option value="https">HTTPS</option>
+        </select>
+      </div>
+      <div id="bulkWrap">
+        <div class="field">
+          <label>Danh sách proxy</label>
+          <textarea id="f-lines" placeholder="host:port:user:pass&#10;host:port&#10;..."></textarea>
+          <div class="hint">Mỗi dòng một proxy, định dạng <code>host:port</code> hoặc <code>host:port:user:pass</code>. Có thể dán nhiều dòng.</div>
+        </div>
+      </div>
+      <div id="singleWrap" style="display:none">
+        <div class="field"><label>Host</label><input id="f-host" /></div>
+        <div class="field"><label>Port</label><input id="f-port" type="number" /></div>
+        <div class="field"><label>Username (tùy chọn)</label><input id="f-user" /></div>
+        <div class="field"><label>Password (tùy chọn)</label><input id="f-pass" /></div>
+      </div>
+      <div class="field">
+        <label>Tags (phân tách bởi dấu phẩy)</label>
+        <input id="f-tags" placeholder="vn, fb, ..." />
+      </div>
+      <div class="modal-actions">
+        <button id="btnCancel">Hủy</button>
+        <button class="btn-primary" id="btnSave">Lưu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- New profile modal -->
+  <div class="overlay" id="profileOverlay">
+    <div class="modal modal-lg">
+      <div class="np-head">
+        <div class="np-head-left">
+          <span class="np-plus">+</span>
+          <h3>Tạo profile</h3>
+        </div>
+        <button class="icon-btn" id="npClose" title="Đóng">&#10005;</button>
+      </div>
+
+      <div class="np-topbar">
+        <input id="np-name" class="np-name" placeholder="Tên profile" />
+        <select id="np-group" class="np-group">
+          <option value="Default group">Default group</option>
+        </select>
+        <div class="np-top-actions">
+          <button id="npRandom">&#8644; Tạo thông số ngẫu nhiên</button>
+          <button class="btn-primary" id="npSave">Thêm mới</button>
+        </div>
+      </div>
+
+      <div class="np-body">
+        <div class="np-main">
+          <div class="np-tabs">
+            <div class="np-tab active" data-nptab="quick">Thao tác nhanh</div>
+            <div class="np-tab" data-nptab="fingerprint">Fingerprint</div>
+            <div class="np-tab" data-nptab="software">Nâng cao</div>
+          </div>
+
+          <!-- Quick tab -->
+          <div class="np-pane active" id="nptab-quick">
+            <div class="np-grid2">
+              <div class="cfg-field">
+                <label>Trình duyệt</label>
+                <select id="np-browser"><option value="camoufox">Camoufox (Firefox)</option></select>
+              </div>
+              <div class="cfg-field">
+                <label>Taskbar title</label>
+                <input id="np-taskbar" placeholder="(tùy chọn)" />
+              </div>
+            </div>
+            <div class="cfg-field">
+              <label>URL khởi động</label>
+              <input id="np-urls" placeholder="https://google.com https://facebook.com" />
+            </div>
+            <div class="cfg-field">
+              <div class="np-label-row">
+                <label style="margin:0">Loại proxy</label>
+                <span class="link-row" style="margin:0" id="npPickProxy">Chọn từ thư viện proxy</span>
+              </div>
+              <select id="np-proxy"><option value="">None</option></select>
+            </div>
+            <span class="link-row" id="npCheckProxy">Kiểm tra proxy</span>
+            <div class="cfg-field" style="margin-top:8px">
+              <label>Cho phép request file tĩnh không qua proxy</label>
+              <div class="hint" style="margin-bottom:8px">Bạn có thể tiết kiệm băng thông hoặc cải thiện tốc độ load trang bằng cách cài đặt các extension file tĩnh không chạy qua proxy. Ví dụ: .css;.png;.jpg;.jpeg ... Lưu ý: cần có kiến thức chuyên môn để sử dụng hiệu quả</div>
+              <input id="np-noproxy" placeholder="Eg: .css;.png;.jpg" />
+            </div>
+          </div>
+
+          <!-- Fingerprint tab (OS / Language / WebRTC / Geo) -->
+          <div class="np-pane" id="nptab-fingerprint">
+            <div class="toggle-row" style="margin-bottom:14px">
+              <label class="switch"><input type="checkbox" id="np-geoip" checked><span class="slider"></span></label>
+              <span>Timezone + Geo theo IP proxy (geoip)</span>
+            </div>
+            <div class="np-seg-host"></div>
+            <div class="cfg-field" style="margin-top:14px">
+              <label>Độ phân giải màn hình</label>
+              <select id="np-screen">
+                <option value="real">Real</option>
+                <option value="1920x1080">1920x1080</option>
+                <option value="1680x1050">1680x1050</option>
+                <option value="1600x900">1600x900</option>
+                <option value="1536x864">1536x864</option>
+                <option value="1440x900">1440x900</option>
+                <option value="1366x768">1366x768</option>
+                <option value="1280x720">1280x720</option>
+              </select>
+            </div>
+            <div class="toggle-row" style="margin-top:14px">
+              <label class="switch"><input type="checkbox" id="np-maskMedia" checked><span class="slider"></span></label>
+              <span>Ẩn thiết bị Media (camera/mic/loa)</span>
+            </div>
+          </div>
+
+          <!-- Advanced tab -->
+          <div class="np-pane" id="nptab-software">
+            <div class="toggle-row">
+              <label class="switch"><input type="checkbox" id="np-clearCache" checked><span class="slider"></span></label>
+              <span>Xóa Cache tự động</span>
+            </div>
+            <div class="toggle-row">
+              <label class="switch"><input type="checkbox" id="np-limitWindow" checked><span class="slider"></span></label>
+              <span>Giới hạn kích thước trình duyệt theo cài đặt</span>
+            </div>
+            <div class="toggle-row">
+              <label class="switch"><input type="checkbox" id="np-restore"><span class="slider"></span></label>
+              <span>Khôi phục phiên làm việc trước</span>
+            </div>
+            <div class="cfg-field" style="margin-top:16px">
+              <label>Chrome start parameters</label>
+              <textarea id="np-params" placeholder="--param1&#10;--param2"></textarea>
+            </div>
+            <div class="cfg-field">
+              <label>Bookmarks</label>
+              <textarea id="np-bookmarks" placeholder="name|url"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="np-side">
+          <div class="np-summary" id="npSummary"></div>
+          <div class="np-note">Theo mặc định, chúng tôi đã đề xuất sẵn cho bạn cấu hình phù hợp nhất với thời điểm hiện tại. Bạn có thể tùy chỉnh cấu hình mặc định khi tạo profile tại menu "Cài đặt - Trình Duyệt" hoặc tùy chỉnh ở các Tab bên cạnh</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    async function parse(r) {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+    const api = {
+      list: (q) => fetch('/api/proxies?q=' + encodeURIComponent(q || '')).then(r => r.json()),
+      create: (body) => fetch('/api/proxies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse),
+      update: (id, body) => fetch('/api/proxies/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse),
+      remove: (id) => fetch('/api/proxies/' + id, { method: 'DELETE' }),
+      check: (id) => fetch('/api/proxies/' + id + '/check', { method: 'POST' }).then(parse),
+      checkAll: () => fetch('/api/proxies/check-all', { method: 'POST' }).then(parse),
+    };
+    const papi = {
+      list: () => fetch('/api/profiles').then(r => r.json()),
+      get: (id) => fetch('/api/profiles/' + id).then(parse),
+      create: (body) => fetch('/api/profiles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse),
+      update: (id, body) => fetch('/api/profiles/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse),
+      remove: (id) => fetch('/api/profiles/' + id, { method: 'DELETE' }),
+      open: (id) => fetch('/api/profiles/' + id + '/open', { method: 'POST' }).then(parse),
+      close: (id) => fetch('/api/profiles/' + id + '/close', { method: 'POST' }).then(parse),
+      rotateProxy: (id) => fetch('/api/profiles/' + id + '/rotate-proxy', { method: 'POST' }).then(parse),
+      running: () => fetch('/api/profiles/running').then(r => r.json()),
+    };
+    const mapi = {
+      settings: () => fetch('/api/settings').then(parse),
+      saveKey: (key) => fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dongvanfbApiKey: key }) }).then(parse),
+      balance: () => fetch('/api/mail/balance').then(parse),
+      buy: (body) => fetch('/api/mail/buy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse),
+      list: () => fetch('/api/mails').then(r => r.json()),
+      add: (body) => fetch('/api/mails', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse),
+      remove: (id) => fetch('/api/mails/' + id, { method: 'DELETE' }),
+      code: (id, type) => fetch('/api/mails/' + id + '/code', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) }).then(parse),
+      messages: (id) => fetch('/api/mails/' + id + '/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(parse),
+    };
+    const CODE_TYPES = ['all','facebook','google','instagram','tiktok','twitter','apple','amazon','lazada','shopee','telegram','wechat'];
+    const pjapi = {
+      flows: () => fetch('/api/flows').then(r => r.json()),
+      list: () => fetch('/api/projects').then(r => r.json()),
+      create: (body) => fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse),
+      update: (id, body) => fetch('/api/projects/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(parse),
+      remove: (id) => fetch('/api/projects/' + id, { method: 'DELETE' }),
+      run: (id) => fetch('/api/projects/' + id + '/run', { method: 'POST' }).then(parse),
+    };
+
+    function toast(msg, isErr) {
+      const t = $('toast');
+      t.textContent = msg;
+      t.className = 'toast show' + (isErr ? ' err' : '');
+      setTimeout(() => (t.className = 'toast'), 2600);
+    }
+    function fmtTime(iso) {
+      const d = new Date(iso);
+      const p = (n) => String(n).padStart(2, '0');
+      return `${p(d.getDate())}-${p(d.getMonth()+1)}-${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
+
+    // ============ Tab switching ============
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.onclick = () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        tab.classList.add('active');
+        $('view-' + tab.dataset.view).classList.add('active');
+        if (tab.dataset.view === 'profiles') renderProfiles();
+        if (tab.dataset.view === 'mail') renderMail();
+        if (tab.dataset.view === 'project') renderProjects();
+      };
+    });
+
+    // ============ PROXY view logic ============
+    let editingId = null;
+    function statusHtml(p) {
+      if (p.status === 'live') {
+        const lat = p.latencyMs != null ? ` (${p.latencyMs}ms)` : '';
+        return `<span class="live">Live</span>${lat}`;
+      }
+      if (p.status === 'dead') return `<span class="dead">Dead</span>`;
+      return `<span class="unchecked">-</span>`;
+    }
+    function infoHtml(p) {
+      const checked = p.checkedAt ? ` [ ${fmtTime(p.checkedAt)} ]` : '';
+      return `<div class="info-main">${p.display}</div>
+              <div class="info-sub">Trạng thái: ${statusHtml(p)}${checked}</div>`;
+    }
+    function typeLabel(t) {
+      return { socks5: 'Socks5', http: 'HTTP', https: 'HTTPS' }[t] || t;
+    }
+    async function render() {
+      const q = $('search').value;
+      const list = await api.list(q);
+      const rows = $('rows');
+      rows.innerHTML = '';
+      $('empty').style.display = list.length ? 'none' : 'block';
+      for (const p of list) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><input type="checkbox" /></td>
+          <td>${typeLabel(p.type)}</td>
+          <td>${infoHtml(p)}</td>
+          <td>${p.tags.map(t => `<span class="tag">${t}</span>`).join('') || '<span class="muted">-</span>'}</td>
+          <td>${fmtTime(p.createdAt)}</td>
+          <td>${statusHtml(p)}</td>
+          <td><div class="actions">
+            <button class="icon-btn" title="Kiểm tra" data-act="check" data-id="${p.id}">&#9658;</button>
+            <button class="icon-btn" title="Sửa" data-act="edit" data-id="${p.id}">&#9998;</button>
+            <button class="icon-btn danger" title="Xóa" data-act="del" data-id="${p.id}">&#128465;</button>
+          </div></td>`;
+        rows.appendChild(tr);
+      }
+    }
+    function openModal(proxy) {
+      editingId = proxy ? proxy.id : null;
+      $('modalTitle').textContent = proxy ? 'Sửa proxy' : 'Thêm proxy';
+      $('bulkWrap').style.display = proxy ? 'none' : 'block';
+      $('singleWrap').style.display = proxy ? 'block' : 'none';
+      $('f-type').value = proxy ? proxy.type : 'socks5';
+      $('f-lines').value = '';
+      $('f-host').value = proxy ? proxy.host : '';
+      $('f-port').value = proxy ? proxy.port : '';
+      $('f-user').value = proxy ? (proxy.username || '') : '';
+      $('f-pass').value = proxy ? (proxy.password || '') : '';
+      $('f-tags').value = proxy ? proxy.tags.join(', ') : '';
+      $('overlay').classList.add('open');
+    }
+    function closeModal() { $('overlay').classList.remove('open'); editingId = null; }
+    async function save() {
+      const type = $('f-type').value;
+      const tags = $('f-tags').value;
+      try {
+        if (editingId) {
+          await api.update(editingId, {
+            type, tags,
+            host: $('f-host').value.trim(),
+            port: $('f-port').value,
+            username: $('f-user').value.trim(),
+            password: $('f-pass').value.trim(),
+          });
+          toast('Đã cập nhật proxy');
+        } else {
+          const lines = $('f-lines').value.trim();
+          if (!lines) { toast('Nhập ít nhất một proxy', true); return; }
+          const created = await api.create({ type, tags, lines });
+          toast(`Đã thêm ${created.length} proxy`);
+        }
+        closeModal();
+        render();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+    $('btnAdd').onclick = () => openModal(null);
+    $('btnCancel').onclick = closeModal;
+    $('btnSave').onclick = save;
+    $('overlay').onclick = (e) => { if (e.target === $('overlay')) closeModal(); };
+    let searchTimer;
+    $('search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(render, 250); };
+    $('btnRefresh').onclick = async () => {
+      const ico = $('refreshIco');
+      ico.classList.add('spin');
+      try {
+        await api.checkAll();
+        toast('Đã kiểm tra tất cả proxy');
+        await render();
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        ico.classList.remove('spin');
+      }
+    };
+    $('rows').onclick = async (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const act = btn.dataset.act;
+      if (act === 'del') {
+        if (!confirm('Xóa proxy này?')) return;
+        await api.remove(id);
+        toast('Đã xóa proxy');
+        render();
+      } else if (act === 'check') {
+        btn.innerHTML = '&#8987;';
+        try {
+          const r = await api.check(id);
+          toast(r.checkResult.alive ? `Live (${r.checkResult.latencyMs}ms)` : `Dead: ${r.checkResult.error || ''}`, !r.checkResult.alive);
+        } catch (err) {
+          toast(err.message, true);
+        }
+        render();
+      } else if (act === 'edit') {
+        const list = await api.list($('search').value);
+        const proxy = list.find(p => p.id === id);
+        if (proxy) openModal(proxy);
+      }
+    };
+
+    // ============ PROFILES view logic ============
+    // Engine is Camoufox (hardened Firefox): canvas/audio/font/screen/cpu/memory
+    // AND WebGL spoofing happen in its C++ engine, coherently sampled per OS, so
+    // the only launch-time knobs left are OS to claim, locale source, and WebRTC.
+    const ANTI_DEFAULT = {
+      osProfile: 'auto', language: 'base-on-ip', webrtc: 'base-on-ip',
+      geoip: true, geolocation: 'prompt',
+      maskMediaDevices: true, screen: 'real',
+    };
+    // Screen resolutions offered by the dropdown. 'real' lets Camoufox pick one
+    // coherent with the OS; the rest pin a fixed window size.
+    const SCREEN_OPTS = [
+      ['real', 'Real'], ['1920x1080', '1920×1080'], ['1536x864', '1536×864'],
+      ['1440x900', '1440×900'], ['1366x768', '1366×768'], ['1280x720', '1280×720'],
+    ];
+    const BROWSER_DEFAULT = {
+      clearCacheOnStart: true, limitWindowToViewport: true, restorePreviousSession: false,
+      startupUrls: [], chromeParams: [], bookmarks: [], noProxyExtensions: [],
+    };
+    // segmented control definitions. `cat` groups each control under a modal tab:
+    // 'conn' (network identity) or 'hardware' (device/rendering fingerprint).
+    const SEGMENTS = [
+      { key: 'osProfile',     label: 'OS đồng bộ',     cat: 'hardware', opts: [['auto','Auto'],['windows','Windows'],['macos','macOS'],['linux','Linux']] },
+      { key: 'language',      label: 'Language',       cat: 'conn',     opts: [['real','Real'],['base-on-ip','Base on IP']] },
+      { key: 'webrtc',        label: 'WebRTC',         cat: 'conn',     opts: [['base-on-ip','Base on IP'],['real','Real'],['disabled','Disabled']] },
+      { key: 'geolocation',   label: 'Geo location',   cat: 'conn',     opts: [['prompt','Prompt'],['allow','Allow'],['disabled','Disabled']] },
+    ];
+    // Proxy rotation modes: static pins profile.proxy, pool draws from the proxy
+    // library, gateway keeps a fixed rotating endpoint (provider rotates egress).
+    const PROXY_MODES = [['static','Tĩnh'],['pool','Pool'],['gateway','Gateway']];
+    const PROXY_ROTATION_DEFAULT = { mode: 'static', pool: { tags: [], liveOnly: true }, rotateOnOpen: false, rotateOnFailure: false };
+
+    let profiles = [];
+    let selectedProfileId = null;
+    let runningIds = new Set();
+
+    async function refreshRunning() {
+      try {
+        const { running } = await papi.running();
+        runningIds = new Set(running || []);
+      } catch {
+        runningIds = new Set();
+      }
+    }
+
+    async function renderProfiles() {
+      [profiles] = await Promise.all([papi.list(), refreshRunning()]);
+      const runningCount = profiles.filter(p => runningIds.has(p.id)).length;
+      $('profileStats').innerHTML = `
+        <span class="stat"><b>${profiles.length}</b> hồ sơ</span>
+        <span class="stat"><span class="run-dot on"></span><b>${runningCount}</b> đang chạy</span>`;
+      const box = $('profileItems');
+      box.innerHTML = '';
+      if (!profiles.length) {
+        box.innerHTML = '<div class="muted" style="padding:8px">Chưa có hồ sơ nào.</div>';
+      }
+      for (const p of profiles) {
+        const running = runningIds.has(p.id);
+        const div = document.createElement('div');
+        div.className = 'profile-item' + (p.id === selectedProfileId ? ' active' : '');
+        div.dataset.id = p.id;
+        const proxyTxt = p.proxy ? `${p.proxy.server}` : 'không proxy';
+        const dot = `<span class="run-dot ${running ? 'on' : ''}" title="${running ? 'Đang chạy' : 'Đã đóng'}"></span>`;
+        const runBtn = running
+          ? `<button class="pi-btn close" data-run="close" data-id="${p.id}">&#9632; Đóng</button>`
+          : `<button class="pi-btn open" data-run="open" data-id="${p.id}">&#9658; Mở</button>`;
+        div.innerHTML = `
+          <div class="pi-top">
+            <div class="name">${dot}${p.name}</div>
+          </div>
+          <div class="pi-bot">
+            <span class="meta">${proxyTxt}</span>
+            ${runBtn}
+          </div>`;
+        div.onclick = (e) => {
+          if (e.target.closest('button[data-run]')) return;
+          selectProfile(p.id);
+        };
+        box.appendChild(div);
+      }
+      box.querySelectorAll('button[data-run]').forEach(btn => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          toggleRun(btn.dataset.id, btn.dataset.run, btn);
+        };
+      });
+      if (selectedProfileId && profiles.some(p => p.id === selectedProfileId)) {
+        renderConfig(profiles.find(p => p.id === selectedProfileId));
+      } else if (!profiles.length) {
+        selectedProfileId = null;
+        $('profileConfig').innerHTML = '<div class="config-empty">Chưa có hồ sơ. Bấm "Tạo hồ sơ".</div>';
+      }
+    }
+
+    async function toggleRun(id, action, btn) {
+      const original = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '&#8987;';
+      try {
+        if (action === 'open') {
+          await papi.open(id);
+          runningIds.add(id);
+          toast('Đã mở trình duyệt');
+        } else {
+          await papi.close(id);
+          runningIds.delete(id);
+          toast('Đã đóng trình duyệt');
+        }
+        renderProfiles();
+      } catch (e) {
+        btn.disabled = false;
+        btn.innerHTML = original;
+        toast(e.message, true);
+      }
+    }
+
+    function selectProfile(id) {
+      selectedProfileId = id;
+      document.querySelectorAll('.profile-item').forEach(el =>
+        el.classList.toggle('active', el.dataset.id === id));
+      const p = profiles.find(x => x.id === id);
+      if (p) renderConfig(p);
+    }
+
+    function segHtml(seg, current) {
+      const buttons = seg.opts.map(([val, lbl]) =>
+        `<button data-seg="${seg.key}" data-val="${val}" class="${current === val ? 'active' : ''}">${lbl}</button>`
+      ).join('');
+      return `<div class="seg-block">
+        <div class="seg-label">${seg.label}</div>
+        <div class="seg">${buttons}</div>
+      </div>`;
+    }
+
+    function renderConfig(p) {
+      const a = { ...ANTI_DEFAULT, ...(p.antiDetect || {}) };
+      const b = { ...BROWSER_DEFAULT, ...(p.browser || {}) };
+      // Camoufox handles canvas/audio/screen/cpu/memory/font/webgl/mediaDevices
+      // spoofing in its C++ engine, so the panel only exposes the few launch-time
+      // choices: OS to claim, WebRTC mode, and locale source.
+      const segCol1 = segHtml(SEGMENTS.find(s => s.key === 'osProfile'), a.osProfile)
+        + segHtml(SEGMENTS.find(s => s.key === 'webrtc'), a.webrtc);
+      const segCol2 = segHtml(SEGMENTS.find(s => s.key === 'language'), a.language)
+        + segHtml(SEGMENTS.find(s => s.key === 'geolocation'), a.geolocation);
+      // geoip is a plain toggle (not a segment): when on, Camoufox derives
+      // timezone + geo + locale + WebRTC IP from the proxy egress IP via MaxMind.
+      const geoipRow = `
+        <div class="toggle-row" style="margin-bottom:14px">
+          <label class="switch"><input type="checkbox" id="a-geoip" ${a.geoip ? 'checked' : ''}><span class="slider"></span></label>
+          <span>Timezone + Geo theo IP proxy (geoip)</span>
+        </div>`;
+      // Media-devices mask (toggle) + screen resolution (dropdown). Both are real
+      // Camoufox knobs: mediaDevices:enabled=false and the `window` [w,h] option.
+      const mediaRow = `
+        <div class="toggle-row" style="margin-bottom:14px">
+          <label class="switch"><input type="checkbox" id="a-maskMedia" ${a.maskMediaDevices ? 'checked' : ''}><span class="slider"></span></label>
+          <span>Ẩn thiết bị Media (camera/mic/loa)</span>
+        </div>`;
+      const resOpts = ['real','1920x1080','1680x1050','1600x900','1536x864','1440x900','1366x768','1280x720']
+        .map(r => `<option value="${r}" ${a.screen === r ? 'selected' : ''}>${r === 'real' ? 'Real' : r}</option>`).join('');
+      const screenRow = `
+        <div class="cfg-field" style="margin-bottom:14px">
+          <label>Độ phân giải màn hình</label>
+          <select id="a-screen">${resOpts}</select>
+        </div>`;
+      // Knobs the mock exposes but Camoufox/Firefox can't honor — shown disabled so
+      // the UI matches the reference without pretending they work. See README.
+      const unsupportedNote = `
+        <div style="margin-top:18px; padding-top:14px; border-top:1px dashed var(--border,#2a2a2a)">
+          <div class="meta" style="margin-bottom:8px">Camoufox tự lo trong engine (không chỉnh tay):</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; opacity:.5; pointer-events:none">
+            <span class="pill">Canvas: auto-noise</span>
+            <span class="pill">WebGL image: auto-noise</span>
+            <span class="pill">Audio: auto-noise</span>
+            <span class="pill">Client rect: auto</span>
+            <span class="pill">Hardware concurrency: theo OS</span>
+            <span class="pill">Font: Masked theo OS</span>
+          </div>
+          <div class="meta" style="margin:10px 0 8px">Không áp dụng (engine là Firefox, không phải Chromium):</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; opacity:.5; pointer-events:none">
+            <span class="pill">Trình duyệt: Chrome</span>
+            <span class="pill">Browser version kiểu Chrome</span>
+            <span class="pill">Đổi User-Agent tay</span>
+            <span class="pill">Mac: Apple Chip vs Intel</span>
+          </div>
+          <div class="meta" style="margin:10px 0 8px">Firefox / JS không hỗ trợ:</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; opacity:.5; pointer-events:none">
+            <span class="pill">Memory devices</span>
+            <span class="pill">Bluetooth</span>
+            <span class="pill">MAC address</span>
+            <span class="pill">Device name</span>
+          </div>
+        </div>`;
+
+      // Proxy rotation: mode segmented control + pool-only options + current-proxy line.
+      const pr = {
+        ...PROXY_ROTATION_DEFAULT,
+        ...(p.proxyRotation || {}),
+        pool: { ...PROXY_ROTATION_DEFAULT.pool, ...((p.proxyRotation || {}).pool || {}) },
+      };
+      const proxyModeSeg = segHtml({ key: 'proxyMode', label: 'Chế độ proxy', opts: PROXY_MODES }, pr.mode);
+      const curProxy = p.proxy ? p.proxy.server : 'chưa gán';
+      const poolStyle = pr.mode === 'pool' ? '' : 'display:none';
+
+      const running = runningIds.has(p.id);
+      $('profileConfig').innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px">
+          <input id="cfg-name" class="cfg-name" value="${p.name.replace(/"/g, '&quot;')}" title="Đổi tên hồ sơ" />
+          <div style="display:flex; gap:10px; align-items:center; flex:none">
+            <span class="saved-flash" id="savedFlash">&#10003; Đã lưu</span>
+            ${running
+              ? `<button class="pi-btn close" id="btnToggleRun" data-run="close">&#9632; Đóng</button>`
+              : `<button class="pi-btn open" id="btnToggleRun" data-run="open">&#9658; Mở</button>`}
+            <button class="icon-btn danger" id="btnDeleteProfile" title="Xóa hồ sơ">&#128465; Xóa</button>
+          </div>
+        </div>
+        <div class="config-grid">
+          <div>
+            <h3 class="section-title">Browser trigger</h3>
+            <div class="toggle-row">
+              <label class="switch"><input type="checkbox" id="b-clearCache" ${b.clearCacheOnStart ? 'checked' : ''}><span class="slider"></span></label>
+              <span>Xóa Cache tự động</span>
+            </div>
+            <div class="toggle-row">
+              <label class="switch"><input type="checkbox" id="b-limitWindow" ${b.limitWindowToViewport ? 'checked' : ''}><span class="slider"></span></label>
+              <span>Giới hạn kích thước trình duyệt theo cài đặt</span>
+            </div>
+            <div class="toggle-row">
+              <label class="switch"><input type="checkbox" id="b-restore" ${b.restorePreviousSession ? 'checked' : ''}><span class="slider"></span></label>
+              <span>Khôi phục phiên làm việc trước</span>
+            </div>
+
+            <div class="cfg-field" style="margin-top:20px">
+              <label>URL khởi động</label>
+              <input id="b-urls" placeholder="https://google.com https://facebook.com" value="${(b.startupUrls||[]).join(' ')}" />
+            </div>
+            <div class="cfg-field">
+              <label>Chrome start parameters</label>
+              <textarea id="b-params" placeholder="--param1 --param2 --param3">${(b.chromeParams||[]).join('\n')}</textarea>
+            </div>
+            <div class="cfg-field">
+              <label>Bookmarks</label>
+              <textarea id="b-bookmarks" placeholder="name|url">${(b.bookmarks||[]).map(bm => bm.name + '|' + bm.url).join('\n')}</textarea>
+            </div>
+          </div>
+          <div>${segCol1}${screenRow}${mediaRow}${geoipRow}</div>
+          <div>${segCol2}
+            <div class="config-actions">
+              <button id="btnResetFp">&#8635; Khôi phục cài đặt mặc định</button>
+            </div>
+          </div>
+        </div>
+        ${unsupportedNote}
+        <div class="proxy-section" style="margin-top:24px; border-top:1px solid var(--border,#2a2a2a); padding-top:16px">
+          <h3 class="section-title">Proxy</h3>
+          <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start">
+            <div>${proxyModeSeg}</div>
+            <div id="poolOpts" style="${poolStyle}">
+              <div class="cfg-field">
+                <label>Tags lọc (pool)</label>
+                <input id="pr-tags" placeholder="us, residential" value="${(pr.pool.tags||[]).join(', ')}" />
+              </div>
+              <div class="toggle-row">
+                <label class="switch"><input type="checkbox" id="pr-rotateOpen" ${pr.rotateOnOpen ? 'checked' : ''}><span class="slider"></span></label>
+                <span>Xoay proxy mỗi lần mở</span>
+              </div>
+              <div class="toggle-row">
+                <label class="switch"><input type="checkbox" id="pr-rotateFail" ${pr.rotateOnFailure ? 'checked' : ''}><span class="slider"></span></label>
+                <span>Đổi proxy khi lỗi/chết</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:12px; margin-top:12px">
+            <span class="meta">Proxy hiện tại: <strong id="curProxy">${curProxy}</strong></span>
+            <button class="pi-btn" id="btnRotateProxy" ${pr.mode === 'static' ? 'disabled' : ''}>&#8635; Xoay proxy</button>
+          </div>
+        </div>
+        <div class="proxy-section" style="margin-top:24px; border-top:1px solid var(--border,#2a2a2a); padding-top:16px">
+          <h3 class="section-title">Lấy OTP từ mail</h3>
+          <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center">
+            <select id="otp-mail" style="flex:0 0 260px; font:inherit; padding:9px 12px; border:1px solid var(--border); border-radius:8px"></select>
+            <select id="otp-type" style="flex:0 0 150px; font:inherit; padding:9px 12px; border:1px solid var(--border); border-radius:8px">${codeTypeOptions()}</select>
+            <button class="pi-btn" id="btnGetOtp">&#9993; Lấy code</button>
+          </div>
+          <div class="info-sub" id="otpResult" style="margin-top:10px"></div>
+        </div>
+      `;
+
+      // segmented control clicks
+      $('profileConfig').querySelectorAll('button[data-seg]').forEach(btn => {
+        btn.onclick = () => {
+          const key = btn.dataset.seg;
+          $('profileConfig').querySelectorAll(`button[data-seg="${key}"]`).forEach(b2 => b2.classList.remove('active'));
+          btn.classList.add('active');
+          saveConfig();
+        };
+      });
+      // toggles + text fields autosave on change
+      ['b-clearCache','b-limitWindow','b-restore','a-geoip','a-maskMedia','a-screen'].forEach(id => $(id).onchange = saveConfig);
+      ['b-urls','b-params','b-bookmarks'].forEach(id => {
+        let t; $(id).oninput = () => { clearTimeout(t); t = setTimeout(saveConfig, 600); };
+      });
+
+      // Proxy mode segment: on top of the generic handler above (which saves),
+      // show/hide the pool-only options and enable/disable the rotate button.
+      $('profileConfig').querySelectorAll('button[data-seg="proxyMode"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mode = btn.dataset.val;
+          $('poolOpts').style.display = mode === 'pool' ? '' : 'none';
+          $('btnRotateProxy').disabled = mode === 'static';
+        });
+      });
+      // Pool option toggles + tag filter autosave.
+      ['pr-rotateOpen','pr-rotateFail'].forEach(id => $(id).onchange = saveConfig);
+      { let t; $('pr-tags').oninput = () => { clearTimeout(t); t = setTimeout(saveConfig, 600); }; }
+      // Manual rotate: hit the endpoint (close+reopen if running), then refresh.
+      $('btnRotateProxy').onclick = async (e) => {
+        const btn = e.currentTarget;
+        const original = btn.innerHTML;
+        btn.disabled = true; btn.innerHTML = '&#8987;';
+        try {
+          const r = await papi.rotateProxy(p.id);
+          $('curProxy').textContent = r.proxy || 'chưa gán';
+          toast('Đã xoay proxy: ' + (r.proxy || '—'));
+          renderProfiles();
+        } catch (err) {
+          toast(err.message, true);
+          btn.disabled = false; btn.innerHTML = original;
+        }
+      };
+      $('btnResetFp').onclick = () => {
+        // reset segmented controls to default visually then save
+        for (const seg of SEGMENTS) {
+          $('profileConfig').querySelectorAll(`button[data-seg="${seg.key}"]`).forEach(b2 =>
+            b2.classList.toggle('active', b2.dataset.val === ANTI_DEFAULT[seg.key]));
+        }
+        $('a-geoip').checked = ANTI_DEFAULT.geoip;
+        $('a-maskMedia').checked = ANTI_DEFAULT.maskMediaDevices;
+        $('a-screen').value = ANTI_DEFAULT.screen;
+        saveConfig();
+        toast('Đã khôi phục fingerprint mặc định');
+      };
+      $('btnDeleteProfile').onclick = async () => {
+        if (!confirm(`Xóa hồ sơ "${p.name}"? (giữ lại dữ liệu session)`)) return;
+        await papi.remove(p.id);
+        selectedProfileId = null;
+        toast('Đã xóa hồ sơ');
+        renderProfiles();
+      };
+      // rename: persist on blur / Enter when the value actually changed
+      const nameInput = $('cfg-name');
+      const commitRename = async () => {
+        const next = nameInput.value.trim();
+        if (!next || next === p.name) { nameInput.value = p.name; return; }
+        try {
+          await papi.update(p.id, { name: next });
+          p.name = next;
+          toast('Đã đổi tên hồ sơ');
+          renderProfiles();
+        } catch (e) {
+          nameInput.value = p.name;
+          toast(e.message, true);
+        }
+      };
+      nameInput.onblur = commitRename;
+      nameInput.onkeydown = (e) => { if (e.key === 'Enter') nameInput.blur(); };
+      $('btnToggleRun').onclick = (e) =>
+        toggleRun(p.id, e.currentTarget.dataset.run, e.currentTarget);
+
+      // OTP: fill the mail dropdown from the library, then fetch a code for the
+      // selected mailbox (oauth2→graph fallback, no API key needed).
+      (async () => {
+        let mails = [];
+        try { mails = await mapi.list(); } catch {}
+        const sel = $('otp-mail');
+        sel.innerHTML = mails.length
+          ? mails.map(m => `<option value="${m.id}">${esc(m.email)}</option>`).join('')
+          : '<option value="">(kho mail trống)</option>';
+      })();
+      $('btnGetOtp').onclick = async () => {
+        const id = $('otp-mail').value;
+        if (!id) { toast('Chưa có mail trong kho — thêm ở tab Mail', true); return; }
+        const type = $('otp-type').value;
+        const out = $('otpResult');
+        out.textContent = 'Đang lấy code...';
+        try {
+          const r = await mapi.code(id, type);
+          out.innerHTML = r.code
+            ? `Code: <b>${esc(r.code)}</b> <span class="muted">(${r.source})</span>${r.content ? ` — ${esc(r.content)}` : ''}`
+            : `<span class="muted">Không có code (${r.source})</span>`;
+        } catch (e) { out.textContent = ''; toast(e.message, true); }
+      };
+    }
+
+    function collectAntiDetect() {
+      const cfg = {};
+      for (const seg of SEGMENTS) {
+        const active = $('profileConfig').querySelector(`button[data-seg="${seg.key}"].active`);
+        cfg[seg.key] = active ? active.dataset.val : ANTI_DEFAULT[seg.key];
+      }
+      // geoip + maskMediaDevices are toggles; screen is a dropdown (not segments).
+      cfg.geoip = $('a-geoip')?.checked ?? ANTI_DEFAULT.geoip;
+      cfg.maskMediaDevices = $('a-maskMedia')?.checked ?? ANTI_DEFAULT.maskMediaDevices;
+      cfg.screen = $('a-screen')?.value ?? ANTI_DEFAULT.screen;
+      return cfg;
+    }
+    function collectBrowser() {
+      const urls = $('b-urls').value.split(/\s+/).map(s => s.trim()).filter(Boolean);
+      const params = $('b-params').value.split('\n').map(s => s.trim()).filter(Boolean);
+      const bookmarks = $('b-bookmarks').value.split('\n').map(s => s.trim()).filter(Boolean)
+        .map(line => { const [name, ...rest] = line.split('|'); return { name: name.trim(), url: rest.join('|').trim() }; })
+        .filter(bm => bm.name && bm.url);
+      return {
+        clearCacheOnStart: $('b-clearCache').checked,
+        limitWindowToViewport: $('b-limitWindow').checked,
+        restorePreviousSession: $('b-restore').checked,
+        startupUrls: urls, chromeParams: params, bookmarks,
+      };
+    }
+    function collectProxyRotation() {
+      const active = $('profileConfig').querySelector('button[data-seg="proxyMode"].active');
+      const mode = active ? active.dataset.val : 'static';
+      const tags = ($('pr-tags')?.value || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+      return {
+        mode,
+        pool: { tags, liveOnly: true },
+        rotateOnOpen: $('pr-rotateOpen')?.checked ?? false,
+        rotateOnFailure: $('pr-rotateFail')?.checked ?? false,
+      };
+    }
+    let saveTimer;
+    async function saveConfig() {
+      if (!selectedProfileId) return;
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        try {
+          await papi.update(selectedProfileId, { antiDetect: collectAntiDetect(), browser: collectBrowser(), proxyRotation: collectProxyRotation() });
+          const f = $('savedFlash');
+          if (f) { f.classList.add('show'); setTimeout(() => f.classList.remove('show'), 1200); }
+        } catch (e) {
+          toast(e.message, true);
+        }
+      }, 150);
+    }
+
+    // Parse ".css;.png;.jpg" (or comma/space separated) into normalized exts.
+    function parseExtList(raw) {
+      return (raw || '').split(/[;,\s]+/).map(s => s.trim()).filter(Boolean)
+        .map(s => (s.startsWith('.') ? s : '.' + s).toLowerCase());
+    }
+
+    // ============ New-profile modal ============
+    // Working anti-detect config for the modal; segment clicks mutate this and
+    // re-render both the segment hosts and the summary panel.
+    let npAnti = { ...ANTI_DEFAULT };
+    let npSeq = 3516; // mirrors the "Profile NNNN" placeholder in the mock
+
+    function npRenderSegments() {
+      const html = SEGMENTS.map(seg => segHtml(seg, npAnti[seg.key])).join('');
+      document.querySelectorAll('#nptab-fingerprint .np-seg-host').forEach(el => el.innerHTML = html);
+      // wire clicks: update npAnti, re-highlight, refresh summary
+      document.querySelectorAll('.np-main button[data-seg]').forEach(btn => {
+        btn.onclick = () => {
+          npAnti[btn.dataset.seg] = btn.dataset.val;
+          document.querySelectorAll(`.np-main button[data-seg="${btn.dataset.seg}"]`)
+            .forEach(b2 => b2.classList.toggle('active', b2 === btn));
+          npRenderSummary();
+        };
+      });
+    }
+
+    // Right-hand fingerprint summary, mirroring the green panel in the mock.
+    function npRenderSummary() {
+      const proxyTxt = $('np-proxy').value ? 'Custom' : 'None';
+      const osTxt = { auto: 'Auto', windows: 'Windows', macos: 'macOS', linux: 'Linux' }[npAnti.osProfile];
+      const rows = [
+        ['Browser', 'Camoufox (Firefox)'],
+        ['OS', osTxt],
+        ['Taskbar', $('np-taskbar').value.trim() || '—'],
+        ['Proxy', proxyTxt],
+        ['Language', npAnti.language === 'base-on-ip' ? 'Base on IP' : 'Real'],
+        ['WebRTC', { 'base-on-ip': 'Base on IP', real: 'Real', disabled: 'Disabled' }[npAnti.webrtc]],
+        ['GeoIP', ($('np-geoip')?.checked ?? npAnti.geoip) ? 'On' : 'Off'],
+        ['Geo location', { prompt: 'Prompt', allow: 'Allow', disabled: 'Disabled' }[npAnti.geolocation]],
+        ['Màn hình', npAnti.screen === 'real' ? 'Real' : npAnti.screen],
+        ['Ẩn media', ($('np-maskMedia')?.checked ?? npAnti.maskMediaDevices) ? 'On' : 'Off'],
+      ];
+      $('npSummary').innerHTML = rows
+        .map(([k, v]) => `<div class="np-sum-row"><span>${k}</span><strong>${v}</strong></div>`)
+        .join('');
+    }
+
+    async function openProfileModal() {
+      npAnti = { ...ANTI_DEFAULT };
+      $('np-name').value = 'Profile ' + npSeq;
+      $('np-taskbar').value = '';
+      $('np-urls').value = '';
+      $('np-noproxy').value = '';
+      $('np-params').value = '';
+      $('np-bookmarks').value = '';
+      $('np-clearCache').checked = true;
+      $('np-limitWindow').checked = true;
+      $('np-restore').checked = false;
+      if ($('np-geoip')) $('np-geoip').checked = ANTI_DEFAULT.geoip;
+      if ($('np-maskMedia')) $('np-maskMedia').checked = ANTI_DEFAULT.maskMediaDevices;
+      if ($('np-screen')) $('np-screen').value = ANTI_DEFAULT.screen;
+      // reset to first tab
+      document.querySelectorAll('.np-tab').forEach((t, i) => t.classList.toggle('active', i === 0));
+      document.querySelectorAll('.np-pane').forEach((p, i) => p.classList.toggle('active', i === 0));
+      // proxy dropdown from the proxy library
+      await npLoadProxies();
+      npRenderSegments();
+      npRenderSummary();
+      $('profileOverlay').classList.add('open');
+    }
+    function closeProfileModal() { $('profileOverlay').classList.remove('open'); }
+
+    // (Re)populate the proxy dropdown from the proxy library. Each option carries
+    // the proxy record id in data-pid so "Kiểm tra proxy" can check it server-side.
+    async function npLoadProxies() {
+      const sel = $('np-proxy');
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">None</option>';
+      try {
+        const list = await api.list('');
+        for (const px of list) {
+          const url = `${px.type}://${px.host}:${px.port}`;
+          const opt = document.createElement('option');
+          opt.value = JSON.stringify({ server: url, username: px.username, password: px.password });
+          opt.dataset.pid = px.id;
+          opt.textContent = px.display + (px.status === 'live' ? ' ✓' : px.status === 'dead' ? ' ✗' : '');
+          sel.appendChild(opt);
+        }
+      } catch {}
+      // keep the previous selection if it still exists
+      if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+    }
+
+    // "Chọn từ thư viện proxy" — refresh the list and focus the dropdown.
+    $('npPickProxy').onclick = async () => {
+      await npLoadProxies();
+      $('np-proxy').focus();
+      toast('Đã tải lại danh sách proxy');
+    };
+
+    // "Kiểm tra proxy" — check the currently selected library proxy server-side.
+    $('npCheckProxy').onclick = async () => {
+      const sel = $('np-proxy');
+      const opt = sel.options[sel.selectedIndex];
+      const pid = opt && opt.dataset.pid;
+      if (!pid) { toast('Chọn một proxy từ thư viện trước', true); return; }
+      const link = $('npCheckProxy');
+      const original = link.textContent;
+      link.textContent = 'Đang kiểm tra…';
+      try {
+        const r = await api.check(pid);
+        toast(r.checkResult.alive ? `Live (${r.checkResult.latencyMs}ms)` : `Dead: ${r.checkResult.error || ''}`, !r.checkResult.alive);
+        await npLoadProxies();
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        link.textContent = original;
+      }
+    };
+
+    // modal tab switching
+    document.querySelectorAll('.np-tab').forEach(tab => {
+      tab.onclick = () => {
+        document.querySelectorAll('.np-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.np-pane').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        $('nptab-' + tab.dataset.nptab).classList.add('active');
+      };
+    });
+
+    // randomize fingerprint knobs (noise/masked/random where available)
+    $('npRandom').onclick = () => {
+      const rnd = (opts) => opts[Math.floor(Math.random() * opts.length)][0];
+      for (const seg of SEGMENTS) npAnti[seg.key] = rnd(seg.opts);
+      npSeq = Math.floor(1000 + Math.random() * 9000);
+      $('np-name').value = 'Profile ' + npSeq;
+      npRenderSegments();
+      npRenderSummary();
+      toast('Đã tạo thông số ngẫu nhiên');
+    };
+
+    $('btnAddProfile').onclick = openProfileModal;
+    $('npClose').onclick = closeProfileModal;
+    $('npCancel') && ($('npCancel').onclick = closeProfileModal);
+    $('np-taskbar').oninput = npRenderSummary;
+    $('np-proxy').onchange = npRenderSummary;
+    $('np-geoip') && ($('np-geoip').onchange = () => { npAnti.geoip = $('np-geoip').checked; npRenderSummary(); });
+    $('np-maskMedia') && ($('np-maskMedia').onchange = () => { npAnti.maskMediaDevices = $('np-maskMedia').checked; npRenderSummary(); });
+    $('np-screen') && ($('np-screen').onchange = () => { npAnti.screen = $('np-screen').value; npRenderSummary(); });
+    $('profileOverlay').onclick = (e) => { if (e.target === $('profileOverlay')) closeProfileModal(); };
+
+    $('npSave').onclick = async () => {
+      const name = $('np-name').value.trim();
+      if (!name) { toast('Nhập tên profile', true); return; }
+      let proxy;
+      const pv = $('np-proxy').value;
+      if (pv) { try { proxy = JSON.parse(pv); } catch {} }
+      const startupUrls = $('np-urls').value.split(/\s+/).map(s => s.trim()).filter(Boolean);
+      const chromeParams = $('np-params').value.split('\n').map(s => s.trim()).filter(Boolean);
+      const bookmarks = $('np-bookmarks').value.split('\n').map(s => s.trim()).filter(Boolean)
+        .map(line => { const [bn, ...rest] = line.split('|'); return { name: bn.trim(), url: rest.join('|').trim() }; })
+        .filter(bm => bm.name && bm.url);
+      const body = {
+        name,
+        group: $('np-group').value,
+        taskbarTitle: $('np-taskbar').value.trim() || undefined,
+        proxy,
+        antiDetect: { ...npAnti },
+        browser: {
+          clearCacheOnStart: $('np-clearCache').checked,
+          limitWindowToViewport: $('np-limitWindow').checked,
+          restorePreviousSession: $('np-restore').checked,
+          startupUrls, chromeParams, bookmarks,
+          noProxyExtensions: parseExtList($('np-noproxy').value),
+        },
+      };
+      try {
+        const created = await papi.create(body);
+        closeProfileModal();
+        selectedProfileId = created.id;
+        toast('Đã tạo profile');
+        renderProfiles();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+
+    // ============ MAIL view logic ============
+    function esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function codeTypeOptions() {
+      return CODE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
+    }
+
+    async function loadKeyState() {
+      try {
+        const s = await mapi.settings();
+        $('mailKeyState').textContent = s.hasKey ? `(đã lưu: ${s.masked})` : '(chưa có)';
+      } catch {}
+    }
+
+    async function renderMail() {
+      loadKeyState();
+      let list = [];
+      try { list = await mapi.list(); } catch (e) { toast(e.message, true); }
+      const rows = $('mailRows');
+      rows.innerHTML = '';
+      $('mailCount').textContent = list.length ? `${list.length} mail` : '';
+      $('mailEmpty').style.display = list.length ? 'none' : 'block';
+      for (const m of list) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><div class="info-main">${esc(m.email)}</div>
+              <div class="info-sub" id="code-${m.id}"></div></td>
+          <td>${esc(m.provider || '—')}</td>
+          <td>
+            <div class="row-inline">
+              <select class="mail-type" data-id="${m.id}">${codeTypeOptions()}</select>
+              <button class="icon-btn" title="Lấy code" data-mact="code" data-id="${m.id}">&#9993;</button>
+            </div>
+          </td>
+          <td>
+            <button class="icon-btn" title="Hộp thư" data-mact="inbox" data-id="${m.id}">&#128233;</button>
+            <button class="icon-btn danger" title="Xóa" data-mact="del" data-id="${m.id}">&#128465;</button>
+          </td>`;
+        rows.appendChild(tr);
+      }
+    }
+
+    $('mailSaveKey').onclick = async () => {
+      const key = $('mail-apikey').value.trim();
+      if (!key) { toast('Nhập API key', true); return; }
+      try {
+        const s = await mapi.saveKey(key);
+        $('mail-apikey').value = '';
+        $('mailKeyState').textContent = s.hasKey ? `(đã lưu: ${s.masked})` : '(chưa có)';
+        toast('Đã lưu API key');
+      } catch (e) { toast(e.message, true); }
+    };
+
+    $('mailBalance').onclick = async () => {
+      try {
+        const r = await mapi.balance();
+        $('mailBalanceVal').textContent = `Số dư: ${r.balance}`;
+      } catch (e) { toast(e.message, true); }
+    };
+
+    $('mailBuy').onclick = async () => {
+      const accountType = $('mail-acctype').value.trim();
+      const quality = $('mail-quality').value.trim();
+      if (!accountType || !quality) { toast('Nhập account type và quality', true); return; }
+      if (!confirm(`Mua mail (account_type=${accountType}, quality=${quality})? Thao tác này tốn tiền.`)) return;
+      try {
+        const r = await mapi.buy({ accountType, quality });
+        toast(`Mua ok: ${r.bought} mail, thêm ${r.added}. Giá ${r.price ?? '—'}, số dư ${r.balance ?? '—'}`);
+        renderMail();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    $('mailAdd').onclick = async () => {
+      const raw = $('mail-line').value.trim();
+      if (!raw) { toast('Nhập ít nhất một mail', true); return; }
+      const lines = raw.split('\n').map(s => s.trim()).filter(Boolean);
+      let ok = 0;
+      for (const line of lines) {
+        try { await mapi.add({ line }); ok++; } catch (e) { toast(e.message, true); }
+      }
+      if (ok) { $('mail-line').value = ''; toast(`Đã thêm ${ok} mail`); renderMail(); }
+    };
+
+    $('mailReload').onclick = renderMail;
+
+    $('mailRows').onclick = async (e) => {
+      const btn = e.target.closest('button[data-mact]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const act = btn.dataset.mact;
+      if (act === 'del') {
+        try { await mapi.remove(id); toast('Đã xóa mail'); renderMail(); }
+        catch (err) { toast(err.message, true); }
+      } else if (act === 'code') {
+        const type = $('mailRows').querySelector(`select.mail-type[data-id="${id}"]`).value;
+        const cell = $('code-' + id);
+        cell.textContent = 'Đang lấy code...';
+        try {
+          const r = await mapi.code(id, type);
+          cell.innerHTML = r.code
+            ? `Code: <b>${esc(r.code)}</b> <span class="muted">(${r.source})</span>`
+            : `<span class="muted">Không có code (${r.source})</span>`;
+        } catch (err) { cell.textContent = ''; toast(err.message, true); }
+      } else if (act === 'inbox') {
+        openMailbox(id);
+      }
+    };
+
+    async function openMailbox(id) {
+      $('mailboxOverlay').classList.add('open');
+      $('mailboxBody').innerHTML = '<div class="muted">Đang tải hộp thư...</div>';
+      try {
+        const r = await mapi.messages(id);
+        const msgs = r.messages || [];
+        if (!msgs.length) { $('mailboxBody').innerHTML = '<div class="muted">Hộp thư trống.</div>'; return; }
+        $('mailboxBody').innerHTML = msgs.map(m => {
+          const from = (m.from || []).map(f => esc(f.address || f.name || '')).join(', ');
+          // Message body is third-party HTML — render in a sandboxed iframe so it
+          // can't run script or touch this page.
+          const html = (m.message || '').replace(/"/g, '&quot;');
+          return `<div class="msg">
+            <div class="msg-head">
+              <div><b>${esc(m.subject || '(không tiêu đề)')}</b></div>
+              <div class="muted">${esc(from)} · ${esc(m.date || '')}${m.code ? ` · code: ${esc(m.code)}` : ''}</div>
+            </div>
+            <iframe class="msg-body" sandbox="" srcdoc="${html}"></iframe>
+          </div>`;
+        }).join('');
+      } catch (e) {
+        $('mailboxBody').innerHTML = `<div class="muted">Lỗi: ${esc(e.message)}</div>`;
+      }
+    }
+    $('mailboxClose').onclick = () => $('mailboxOverlay').classList.remove('open');
+
+    // ============ PROJECT view logic ============
+    let projects = [];
+    let selectedProjectId = null;
+    let flowList = [];
+
+    async function renderProjects() {
+      const [pj, fl] = await Promise.all([pjapi.list(), pjapi.flows()]);
+      projects = pj;
+      flowList = fl;
+      const box = $('projectItems');
+      box.innerHTML = '';
+      if (!projects.length) {
+        box.innerHTML = '<div class="muted" style="padding:8px">Chưa có project nào.</div>';
+      }
+      for (const p of projects) {
+        const div = document.createElement('div');
+        div.className = 'profile-item' + (p.id === selectedProjectId ? ' active' : '');
+        div.dataset.id = p.id;
+        const flowLbl = (flowList.find(f => f.name === p.flowName) || {}).label || p.flowName;
+        div.innerHTML = `
+          <div class="pi-top"><div class="name">${esc(p.name)}</div></div>
+          <div class="pi-bot">
+            <span class="meta">${esc(flowLbl)} · ${p.profileIds.length} profile</span>
+          </div>`;
+        div.onclick = () => selectProject(p.id);
+        box.appendChild(div);
+      }
+      if (selectedProjectId && projects.some(p => p.id === selectedProjectId)) {
+        renderProjectConfig(projects.find(p => p.id === selectedProjectId));
+      } else if (!projects.length) {
+        selectedProjectId = null;
+        $('projectConfig').innerHTML = '<div class="config-empty">Chưa có project. Bấm "Tạo project".</div>';
+      }
+    }
+
+    function selectProject(id) {
+      selectedProjectId = id;
+      document.querySelectorAll('#projectItems .profile-item').forEach(el =>
+        el.classList.toggle('active', el.dataset.id === id));
+      const p = projects.find(x => x.id === id);
+      if (p) renderProjectConfig(p);
+    }
+
+    function flowOptions(sel) {
+      return flowList.map(f => `<option value="${esc(f.name)}" ${f.name === sel ? 'selected' : ''}>${esc(f.label)}</option>`).join('');
+    }
+
+    async function renderProjectConfig(p) {
+      // Multi-select profiles + optional mailbox come from their stores.
+      const [allProfiles, allMails] = await Promise.all([papi.list(), mapi.list().catch(() => [])]);
+      const profOpts = allProfiles.map(pr =>
+        `<label class="pj-check"><input type="checkbox" class="pj-prof" value="${pr.id}" ${p.profileIds.includes(pr.id) ? 'checked' : ''}> ${esc(pr.name)}</label>`
+      ).join('') || '<span class="muted">Chưa có hồ sơ nào.</span>';
+      const mailOpts = ['<option value="">— Không gán —</option>']
+        .concat(allMails.map(m => `<option value="${m.id}" ${m.id === p.mailId ? 'selected' : ''}>${esc(m.email)}</option>`))
+        .join('');
+      const flowDesc = (flowList.find(f => f.name === p.flowName) || {}).description || '';
+      $('projectConfig').innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:20px">
+          <input id="pj-name" class="cfg-name" value="${esc(p.name)}" title="Đổi tên project" />
+          <div style="display:flex; gap:10px; align-items:center; flex:none">
+            <span class="saved-flash" id="pjSavedFlash">&#10003; Đã lưu</span>
+            <button class="pi-btn open" id="pjRun">&#9658; Chạy</button>
+            <button class="icon-btn danger" id="pjDelete" title="Xóa project">&#128465; Xóa</button>
+          </div>
+        </div>
+        <div class="cfg-field">
+          <label>Flow</label>
+          <select id="pj-flow">${flowOptions(p.flowName)}</select>
+          <div class="meta" id="pj-flowdesc" style="margin-top:6px">${esc(flowDesc)}</div>
+        </div>
+        <div class="cfg-field" style="margin-top:16px">
+          <label>Chọn profile chạy</label>
+          <div class="pj-checks" id="pj-profiles">${profOpts}</div>
+        </div>
+        <div class="config-grid" style="margin-top:16px">
+          <div class="cfg-field">
+            <label>Mail (tùy chọn, cho bước OTP)</label>
+            <select id="pj-mail">${mailOpts}</select>
+          </div>
+          <div class="cfg-field">
+            <label>Số luồng song song</label>
+            <input id="pj-concurrency" type="number" min="1" max="10" value="${p.concurrency || 2}" />
+          </div>
+        </div>
+        <div class="cfg-field" style="margin-top:16px">
+          <label>Ghi chú</label>
+          <textarea id="pj-note" placeholder="(tùy chọn)">${esc(p.note || '')}</textarea>
+        </div>
+        <div id="pjResults" style="margin-top:20px"></div>`;
+
+      // Autosave on change (mirrors the profile panel).
+      const save = () => saveProject(p.id);
+      $('pj-flow').onchange = () => {
+        const d = (flowList.find(f => f.name === $('pj-flow').value) || {}).description || '';
+        $('pj-flowdesc').textContent = d;
+        save();
+      };
+      $('pj-mail').onchange = save;
+      $('pj-concurrency').onchange = save;
+      $('projectConfig').querySelectorAll('.pj-prof').forEach(c => c.onchange = save);
+      { let t; $('pj-note').oninput = () => { clearTimeout(t); t = setTimeout(save, 600); }; }
+      const nameInput = $('pj-name');
+      const commitRename = () => { if (nameInput.value.trim()) save(); };
+      nameInput.onblur = commitRename;
+      nameInput.onkeydown = (e) => { if (e.key === 'Enter') nameInput.blur(); };
+
+      $('pjDelete').onclick = async () => {
+        if (!confirm(`Xóa project "${p.name}"?`)) return;
+        await pjapi.remove(p.id);
+        selectedProjectId = null;
+        toast('Đã xóa project');
+        renderProjects();
+      };
+      $('pjRun').onclick = () => runProjectUI(p.id);
+    }
+
+    function collectProject() {
+      const profileIds = [...$('projectConfig').querySelectorAll('.pj-prof:checked')].map(c => c.value);
+      return {
+        name: $('pj-name').value.trim(),
+        flowName: $('pj-flow').value,
+        profileIds,
+        mailId: $('pj-mail').value || undefined,
+        concurrency: Number($('pj-concurrency').value) || 2,
+        note: $('pj-note').value,
+      };
+    }
+
+    async function saveProject(id) {
+      try {
+        await pjapi.update(id, collectProject());
+        const f = $('pjSavedFlash');
+        if (f) { f.classList.add('show'); setTimeout(() => f.classList.remove('show'), 1200); }
+        const p = projects.find(x => x.id === id);
+        if (p) Object.assign(p, collectProject());
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+
+    async function runProjectUI(id) {
+      const btn = $('pjRun');
+      const original = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '&#8987; Đang chạy...';
+      $('pjResults').innerHTML = '<div class="muted">Đang chạy flow trên các profile...</div>';
+      try {
+        const r = await pjapi.run(id);
+        const results = r.results || [];
+        $('pjResults').innerHTML = `
+          <h3 class="section-title">Kết quả</h3>
+          <table style="margin-top:8px"><tbody>${results.map(rr => `
+            <tr>
+              <td>${rr.ok ? '<span class="live">✓</span>' : '<span class="dead">✗</span>'}</td>
+              <td class="info-sub">${esc(rr.profileId)}</td>
+              <td class="info-sub">${esc(rr.error || 'OK')}</td>
+            </tr>`).join('')}</tbody></table>`;
+        const okCount = results.filter(rr => rr.ok).length;
+        toast(`Chạy xong: ${okCount}/${results.length} thành công`, okCount < results.length);
+      } catch (e) {
+        $('pjResults').innerHTML = `<div class="dead">Lỗi: ${esc(e.message)}</div>`;
+        toast(e.message, true);
+      } finally {
+        btn.disabled = false; btn.innerHTML = original;
+      }
+    }
+
+    $('btnAddProject').onclick = async () => {
+      const flows = flowList.length ? flowList : await pjapi.flows();
+      flowList = flows;
+      if (!flows.length) { toast('Không có flow nào để chọn', true); return; }
+      const name = prompt('Tên project:', 'Project mới');
+      if (!name || !name.trim()) return;
+      try {
+        const created = await pjapi.create({ name: name.trim(), flowName: flows[0].name, profileIds: [] });
+        selectedProjectId = created.id;
+        toast('Đã tạo project');
+        await renderProjects();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+
+    render();
+  </script>
+</body>
+</html>
