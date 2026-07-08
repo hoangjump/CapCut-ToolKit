@@ -1,15 +1,21 @@
 {
-  "name": "capcut-auto",
+  "name": "teamhatde-auto",
   "version": "0.1.0",
   "description": "Multi-profile Playwright browser system with anti-detect, session persistence and per-profile proxy",
   "type": "module",
+  "main": "dist/electron/main.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "server": "node dist/server/index.js",
     "server:dev": "tsx watch src/server/index.ts",
-    "typecheck": "tsc --noEmit"
+    "desktop:dev": "npm run build && electron .",
+    "desktop:pack": "npm run build && npm run build:web && electron-builder --dir",
+    "dist:mac": "npm run build && npm run build:web && electron-builder --mac",
+    "dist:win": "npm run build && npm run build:web && electron-builder --win",
+    "typecheck": "tsc --noEmit",
+    "build:web": "npm --prefix web install && npm --prefix web run build"
   },
   "dependencies": {
     "camoufox-js": "^0.11.1",
@@ -24,7 +30,47 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "com.teamhatde.auto",
+    "productName": "TeamHatDe-Auto",
+    "asar": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "public/**/*",
+      "web/dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "releaseType": "draft"
+      }
+    ]
   }
 }

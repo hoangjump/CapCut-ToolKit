@@ -2,7 +2,7 @@ import { randomUUID, randomInt } from 'node:crypto';
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Profile, ProxyConfig, AntiDetectConfig, BrowserSettings } from './types.js';
+import type { Profile, ProxyConfig, ProxyRotation, AntiDetectConfig, BrowserSettings } from './types.js';
 import { defaultAntiDetect, defaultBrowserSettings } from './types.js';
 
 export interface CreateProfileInput {
@@ -10,6 +10,7 @@ export interface CreateProfileInput {
   group?: string;
   taskbarTitle?: string;
   proxy?: ProxyConfig;
+  proxyRotation?: ProxyRotation;
   antiDetect?: AntiDetectConfig;
   browser?: BrowserSettings;
   notes?: string;
@@ -61,6 +62,7 @@ export class ProfileManager {
       group: input.group,
       taskbarTitle: input.taskbarTitle,
       proxy: input.proxy,
+      proxyRotation: input.proxyRotation,
       antiDetect: input.antiDetect ?? defaultAntiDetect(),
       browser: input.browser ?? defaultBrowserSettings(),
       seed: randomInt(0, 2 ** 31),

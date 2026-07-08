@@ -1,7 +1,7 @@
 services:
   proxy-manager:
     build: .
-    image: capcut-auto
+    image: teamhatde-auto
     container_name: capcut-proxy-manager
     ports:
       - "${PORT:-3000}:3000"
@@ -9,9 +9,8 @@ services:
       # Endpoint dùng để xác nhận proxy thực sự định tuyến (trả JSON {ip}).
       PROXY_CHECK_URL: "${PROXY_CHECK_URL:-https://api.ipify.org?format=json}"
     volumes:
-      # Proxy list + session/cookie persist qua các lần restart.
-      - proxy-data:/data
+      # Bind mount thư mục local ./profiles-store vào /data (STORE_ROOT trong
+      # container). Nhờ vậy chạy npm (STORE_ROOT=./profiles-store) và chạy Docker
+      # dùng CHUNG một kho: project/mail/proxy/settings hiện đầy đủ ở cả hai.
+      - ./profiles-store:/data
     restart: unless-stopped
-
-volumes:
-  proxy-data:

@@ -14,12 +14,60 @@ export interface FlowContext {
   /** The open browser session (context + profile + proxy relay). */
   session: Session;
   profile: Profile;
-  /** Mailbox bound to the project, if any — credentials for OTP steps. */
+  /** Mailbox bound to the project, if any — credentials for OTP steps. Note:
+   *  buyMail() replaces this with the freshly-bought mailbox for this profile. */
   mail?: MailCredentials;
-  /** Poll the bound mailbox for a confirmation code. Throws if no mail bound. */
+  /** Buy a fresh mailbox from dongvanfb for THIS profile, save it to the store,
+   *  and make it the current mailbox so getOtp() afterwards reads codes from it.
+   *  Each profile in a batch buys its own — needed for registration flows where
+   *  every profile needs a distinct email. Throws if no API key is configured.
+   *  Returns the full mail credentials (email|password|refresh_token|client_id)
+   *  so a flow can log them to a sheet. */
+  buyMail: (input?: { accountType?: string; quality?: string }) => Promise<BoughtMail>;
+  /** Poll the current mailbox (bound project mail, or the one buyMail() bought)
+   *  for a confirmation code. Throws if no mailbox is available. */
   getOtp: (type: MailCodeType) => Promise<string>;
+  /** Poll the current mailbox's inbox and pull a code out of the message body
+   *  with a regex — for senders dongvan's typed getCode doesn't cover (e.g.
+   *  CapCut: "your verification code is 747139"). The regex must have one capture
+   *  group holding the code. Default matches "verification code is <digits>".
+   *  Throws if no mailbox is available or no match after retries. */
+  getOtpByRegex: (pattern?: RegExp) => Promise<string>;
+  /** Record fields for the end-of-run sheet row as the flow discovers them. The
+   *  runner writes exactly ONE row per profile (success OR failure) AFTER the
+   *  flow ends — so a profile that throws mid-flow still shows up, with its
+   *  error in the fail column. Mail creds are captured automatically by
+   *  buyMail(); the flow only needs to report the checkout URL / status. */
+  report: (partial: { checkoutUrl?: string; status?: string }) => void;
   /** Scoped to `flow:<profileName>` so batch logs stay readable. */
   log: Logger;
+}
+
+/** Full mailbox credentials returned by ctx.buyMail() — everything needed to
+ *  reconstruct the "email|password|refresh_token|client_id" line for a sheet. */
+export interface BoughtMail {
+  email: string;
+  password?: string;
+  refreshToken: string;
+  clientId: string;
+}
+
+/** One row pushed to the Google Sheet. Fields the flow has at hand; the Apps
+ *  Script side maps these to columns. `mailLine` is the full pipe-joined
+ *  credential string, `checkoutUrl` the payment link (empty if none). */
+export interface SheetRow {
+  profileName: string;
+  email: string;
+  password?: string;
+  refreshToken?: string;
+  clientId?: string;
+  /** "email|password|refresh_token|client_id" — the full line for re-import. */
+  mailLine: string;
+  checkoutUrl?: string;
+  status?: string;
+  /** Failure reason when the flow threw — written to the fail column (M). Empty
+   *  on success. Lets every profile show up in the sheet, pass or fail. */
+  errorMessage?: string;
 }
 
 /** A flow is just an async function driving one profile via its context. Add a

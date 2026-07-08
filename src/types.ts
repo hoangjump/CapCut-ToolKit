@@ -70,6 +70,10 @@ export interface AntiDetectConfig {
    *  `mediaDevices:enabled=false` so navigator.mediaDevices.enumerateDevices()
    *  returns nothing. Turn off if the profile needs real video/voice calls. */
   maskMediaDevices: boolean;
+  /** Block image loading via Camoufox's `block_images`. Speeds up runs and cuts
+   *  bandwidth (handy on metered proxies); leave off when a flow needs to see or
+   *  interact with images. */
+  blockImages: boolean;
   /** Screen resolution to claim. 'real' lets Camoufox pick one coherent with the
    *  OS; a "WIDTHxHEIGHT" string (e.g. "1920x1080") pins a fixed window size via
    *  Camoufox's `window` option so screen/window dims report that resolution. */
@@ -84,6 +88,7 @@ export function defaultAntiDetect(): AntiDetectConfig {
     geoip: true,
     geolocation: 'prompt',
     maskMediaDevices: true,
+    blockImages: false,
     screen: 'real',
   };
 }
@@ -204,6 +209,18 @@ export interface GetCodeInput extends MailCredentials {
  *  locally, only ever returned to the UI masked. */
 export interface AppSettings {
   dongvanfbApiKey?: string;
+  /** Apps Script Web App URL. When set, each registered account (mail full +
+   *  checkout link) is POSTed here to append a row to the bound Google Sheet. */
+  sheetWebhookUrl?: string;
+  /** mktproxy.com API key (billed real money). Stored locally, only ever
+   *  returned to the UI masked. Used to buy proxies + query balance/orders. */
+  mktproxyApiKey?: string;
+  /** Telegram bot token (from @BotFather). When set together with a chat id,
+   *  each successfully registered account is posted to that chat. */
+  telegramBotToken?: string;
+  /** Telegram chat id the bot posts success notifications to (a user, group, or
+   *  channel id — group/channel ids are negative). */
+  telegramChatId?: string;
 }
 
 /** A saved automation job: run a named flow across a set of profiles, optionally
@@ -216,8 +233,25 @@ export interface ProjectRecord {
   flowName: string;
   /** Profiles this project drives when run. */
   profileIds: string[];
+  /** "Dùng một lần": nếu >0 và không chọn profile sẵn, mỗi lần Chạy sẽ tự tạo
+   *  bấy nhiêu profile tạm, chạy flow xong thì xóa sạch (kèm wipe data). Dùng cho
+   *  flow đăng ký — mỗi tài khoản một profile sạch, không để lại rác. */
+  ephemeralCount?: number;
   /** Optional mailbox (MailRecord id) bound in for getOtp() steps. */
   mailId?: string;
+  /** Defaults for flows that call ctx.buyMail() (buy a fresh mailbox per profile
+   *  from dongvanfb). Needed by registration flows where each profile wants its
+   *  own email. Requires the API key configured in the Mail tab. */
+  buyAccountType?: string;
+  buyQuality?: string;
+  /** Khi tạo profile tạm (ephemeral), rút proxy từ pool theo bộ lọc này thay vì
+   *  chạy IP thật. Mỗi profile tạm là profile mới nên tự động rút một proxy Live
+   *  riêng từ kho. Absent = profile tạm chạy không proxy (IP thật). */
+  ephemeralProxyPool?: ProxyPoolFilter;
+  /** Chặn tải hình ảnh cho profile tạm khi chạy (Camoufox block_images): chạy
+   *  nhanh hơn, tiết kiệm băng thông proxy. Chỉ áp cho profile tạm — profile lưu
+   *  sẵn dùng cấu hình antiDetect riêng của nó. Absent/false = tải ảnh bình thường. */
+  blockImages?: boolean;
   /** Max profiles driven at once. Kept low (default 2) since runs are headful. */
   concurrency?: number;
   note?: string;

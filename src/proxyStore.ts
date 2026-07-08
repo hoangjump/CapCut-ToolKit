@@ -19,6 +19,12 @@ export interface ProxyRecord {
   latencyMs?: number;
   checkedAt?: string;
   createdAt: string;
+  /** Proxy dạng API (vd mktproxy xoay): host/port là ảnh chụp gần nhất; IP thật
+   *  lấy/động qua API bằng `apiKey` (key đơn hàng). Khi có, nút Test sẽ resolve
+   *  lại IP hiện tại trước khi check. Vắng = proxy tĩnh thường. */
+  apiProvider?: 'mktproxy';
+  /** Key đơn hàng proxy xoay (dùng cho /proxies/new, /rotate-ip). Bí mật. */
+  apiKey?: string;
 }
 
 export interface CreateProxyInput {
@@ -28,6 +34,8 @@ export interface CreateProxyInput {
   username?: string;
   password?: string;
   tags?: string[];
+  apiProvider?: 'mktproxy';
+  apiKey?: string;
 }
 
 /** "host:port:user:pass" hoặc "host:port" → các phần. user/pass optional. */
@@ -91,6 +99,8 @@ export class ProxyStore {
       tags: input.tags ?? [],
       alive: null,
       createdAt: new Date().toISOString(),
+      apiProvider: input.apiProvider,
+      apiKey: input.apiKey,
     };
     this.proxies.set(record.id, record);
     await this.persist();

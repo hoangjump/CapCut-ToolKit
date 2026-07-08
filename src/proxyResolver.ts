@@ -41,8 +41,36 @@ function poolCandidates(store: ProxyStore, rotation: ProxyRotation, excludeId?: 
   return withoutExcluded.length ? withoutExcluded : list;
 }
 
+export function emptyPoolMessage(store: ProxyStore, rotation: ProxyRotation): string {
+  const filter = rotation.pool ?? {};
+  const wantTags = filter.tags ?? [];
+  let matchingTags = store.list();
+  if (wantTags.length) matchingTags = matchingTags.filter((p) => wantTags.every((t) => p.tags.includes(t)));
+  if (matchingTags.length) {
+    return `Không có proxy Live nào trong pool khớp bộ lọc (${matchingTags.length} proxy khớp tag nhưng 0 proxy Live). Vào Quản lý proxy bấm Check lại, thêm proxy Live, hoặc tắt pool Live-only nếu chấp nhận rủi ro.`;
+  }
+  return wantTags.length
+    ? `Không có proxy nào khớp tag: ${wantTags.join(', ')}`
+    : 'Pool proxy đang trống. Thêm proxy trước khi chạy project dùng proxy pool.';
+}
+
 function pickRandom<T>(items: T[]): T {
   return items[randomInt(0, items.length)];
+}
+
+/** Every proxy in the store matching a pool rotation's filter (live + tags), in
+ *  no particular order. BrowserManager subtracts its in-use lease set from this
+ *  to decide what's free to draw — so proxy selection can enforce "one IP per
+ *  concurrent session" without two opens racing onto the same proxy. Separate
+ *  from resolveProxy (which also handles static/gateway + assigned-reuse). */
+export function poolMatching(store: ProxyStore, rotation: ProxyRotation): ProxyRecord[] {
+  const filter = rotation.pool ?? {};
+  const liveOnly = filter.liveOnly ?? true;
+  const wantTags = filter.tags ?? [];
+  let list = store.list();
+  if (liveOnly) list = list.filter((p) => p.alive === true);
+  if (wantTags.length) list = list.filter((p) => wantTags.every((t) => p.tags.includes(t)));
+  return list;
 }
 
 /**
@@ -79,7 +107,7 @@ export function resolveProxy(
 
   const candidates = poolCandidates(store, rotation, profile.assignedProxyId);
   if (!candidates.length) {
-    throw new Error('Không có proxy Live nào trong pool khớp bộ lọc');
+    throw new Error(emptyPoolMessage(store, rotation));
   }
 
   const chosen = pickRandom(candidates);

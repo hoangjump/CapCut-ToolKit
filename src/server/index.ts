@@ -1,5 +1,8 @@
-import express, { type Request, type Response } from 'express';
-import { fileURLToPath } from 'node:url';
+import express, { type Express, type Request, type Response } from 'express';
+import { existsSync } from 'node:fs';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   ProxyStore,
@@ -12,11 +15,15 @@ import { checkProxy } from '../proxyChecker.js';
 import { ProfileManager } from '../profileManager.js';
 import { BrowserManager } from '../browserManager.js';
 import { MailStore, parseMailLine, providerFromEmail } from '../mailStore.js';
+import { UsedIpStore } from '../usedIpStore.js';
 import { SettingsStore, maskKey } from '../settingsStore.js';
-import { getBalance, buyMail, getCode, getMessages } from '../mailClient.js';
+import { getBalance, getAccountTypes, buyMail, getCode, getMessages } from '../mailClient.js';
+import * as mktproxy from '../mktproxyClient.js';
 import { ProjectStore } from '../projectStore.js';
 import { runProject } from '../automation/runner.js';
+import type { SheetRow } from '../automation/types.js';
 import { flowMetas } from '../flows/index.js';
+import { profilePresets, projectPresets } from '../presets.js';
 import {
   defaultAntiDetect,
   defaultBrowserSettings,
@@ -27,12 +34,35 @@ import {
   type Profile,
   type ProjectRecord,
   type ProxyRotation,
+  type ProxyPoolFilter,
+  type ProxyConfig,
 } from '../types.js';
-import { createLogger } from '../logger.js';
+import { createLogger, subscribeLogs, recentLogs } from '../logger.js';
 
 const log = createLogger('server');
-const PORT = Number(process.env.PORT ?? 3000);
-const STORE_ROOT = process.env.STORE_ROOT ?? join(process.cwd(), 'profiles-store');
+
+export interface ServerConfig {
+  host?: string;
+  port?: number;
+  storeRoot?: string;
+  headless?: boolean | 'virtual';
+  publicDir?: string;
+}
+
+export interface CreatedApp {
+  app: Express;
+  storeRoot: string;
+  headless: boolean | 'virtual';
+  publicDir: string;
+  close: () => Promise<void>;
+}
+
+export interface StartedServer extends CreatedApp {
+  server: Server;
+  url: string;
+  port: number;
+}
+
 // Browser display mode. Camoufox (Firefox) is most convincing headful; its true
 // headless mode has detectable tells. In a container (no X server) we run it
 // headful inside a virtual display (Xvfb) instead of going truly headless.
@@ -47,45 +77,108 @@ function parseHeadless(): boolean | 'virtual' {
   if (env === 'virtual') return 'virtual';
   return true;
 }
-const HEADLESS = parseHeadless();
+
+/** Normalize a project's ephemeral proxy-pool config from the request body.
+ *  Accepts { tags?: string[], liveOnly?: boolean }. Returns undefined when the
+ *  caller didn't enable a pool (falsey/empty) so ephemeral profiles fall back to
+ *  a direct connection. An empty tags array means "any live proxy". */
+function parseEphemeralPool(raw: unknown): ProxyPoolFilter | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as { tags?: unknown; liveOnly?: unknown };
+  const tags = Array.isArray(obj.tags)
+    ? obj.tags.map(String).map((t) => t.trim()).filter(Boolean)
+    : [];
+  const liveOnly = obj.liveOnly === undefined ? true : Boolean(obj.liveOnly);
+  return { tags, liveOnly };
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// In dev (tsx) __dirname = src/server; in prod (tsc) = dist/server. UI lives at
-// <projectRoot>/public in both cases.
-const PUBLIC_DIR = join(__dirname, '..', '..', 'public');
+// In dev (tsx) __dirname = src/server; in prod (tsc) = dist/server. Project root
+// is two levels up in both cases.
+const PROJECT_ROOT = join(__dirname, '..', '..');
+// Ưu tiên UI mới (React/shadcn build ở web/dist); nếu chưa build thì fallback về
+// UI cũ public/index.html (vanilla) để không bao giờ trắng màn hình.
+function resolveDefaultPublicDir(): string {
+  const webDist = join(PROJECT_ROOT, 'web', 'dist');
+  return existsSync(join(webDist, 'index.html')) ? webDist : join(PROJECT_ROOT, 'public');
+}
+const DEFAULT_PUBLIC_DIR = resolveDefaultPublicDir();
 
 const VALID_TYPES: ProxyType[] = ['http', 'https', 'socks5'];
 
-/** Shape returned to the UI — adds derived display string + status label. */
+/** Shape returned to the UI — adds derived display string + status label.
+ *  KHÔNG trả apiKey (bí mật) về UI, chỉ cờ isApi để hiển thị nhãn. */
 function toDto(p: ProxyRecord) {
+  const { apiKey, ...rest } = p;
+  void apiKey;
   return {
-    ...p,
+    ...rest,
     display: proxyDisplay(p),
     status: p.alive === null ? 'unchecked' : p.alive ? 'live' : 'dead',
+    isApi: Boolean(p.apiProvider),
+    apiProvider: p.apiProvider,
   };
 }
 
-async function main(): Promise<void> {
-  const store = new ProxyStore(STORE_ROOT);
+export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> {
+  const storeRoot = config.storeRoot ?? process.env.STORE_ROOT ?? join(process.cwd(), 'profiles-store');
+  const headless = config.headless ?? parseHeadless();
+  const publicDir = config.publicDir ?? DEFAULT_PUBLIC_DIR;
+
+  const store = new ProxyStore(storeRoot);
   await store.init();
 
-  const profiles = new ProfileManager(STORE_ROOT);
+  const profiles = new ProfileManager(storeRoot);
   await profiles.init();
 
-  const browsers = new BrowserManager(profiles, store, { headless: HEADLESS });
+  // IP đã dùng reg CapCut — để mỗi IP chỉ reg 1 lần.
+  const usedIps = new UsedIpStore(storeRoot);
+  await usedIps.init();
 
-  const mails = new MailStore(STORE_ROOT);
+  // resolveApiProxy: mỗi lần pool rút proxy dạng API (mktproxy) cho một profile
+  // đăng ký → XOAY tới khi ra egress IP CHƯA dùng reg rồi mới trả config gateway.
+  // resolveFreshApiProxy là function declaration (hoisted) nên tham chiếu ở đây
+  // hợp lệ dù khai báo bên dưới.
+  const browsers = new BrowserManager(profiles, store, { headless }, {
+    resolveApiProxy: (rec) => resolveFreshApiProxy(rec),
+  });
+
+  const mails = new MailStore(storeRoot);
   await mails.init();
 
-  const settings = new SettingsStore(STORE_ROOT);
+  const settings = new SettingsStore(storeRoot);
   await settings.init();
 
-  const projects = new ProjectStore(STORE_ROOT);
+  const projects = new ProjectStore(storeRoot);
   await projects.init();
 
   const app = express();
   app.use(express.json());
-  app.use(express.static(PUBLIC_DIR));
+  app.use(express.static(publicDir));
+
+  // Live log stream (SSE). Sends the ring buffer first so a client connecting
+  // mid-run sees recent history, then streams each new line. The log bus in
+  // logger.ts captures every scope, so this shows server + per-profile flow logs.
+  app.get('/api/logs/stream', (req: Request, res: Response) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write('retry: 3000\n\n');
+    const send = (entry: unknown) => {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    };
+    for (const entry of recentLogs()) send(entry);
+    const unsubscribe = subscribeLogs(send);
+    // Heartbeat keeps the connection alive through proxies/idle periods.
+    const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+    req.on('close', () => {
+      clearInterval(ping);
+      unsubscribe();
+    });
+  });
 
   app.get('/api/proxies', (req: Request, res: Response) => {
     const q = String(req.query.q ?? '').toLowerCase().trim();
@@ -110,6 +203,24 @@ async function main(): Promise<void> {
         : typeof body.tags === 'string' && body.tags.trim()
           ? body.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
           : [];
+
+      // Proxy dạng API (mktproxy xoay): tạo entry giữ key đơn hàng, rồi resolve
+      // IP hiện tại qua /proxies/new để điền host/port + xác thực key. Key sai /
+      // chưa có IP → xóa entry và báo lỗi.
+      if (body.apiProvider === 'mktproxy' && body.apiKey) {
+        const rec = await store.create({
+          type, tags, host: '', port: 0,
+          apiProvider: 'mktproxy', apiKey: String(body.apiKey).trim(),
+        });
+        const refreshed = await refreshApiProxy(rec);
+        if (!refreshed.host) {
+          await store.delete(rec.id);
+          res.status(400).json({ error: 'Key proxy API không hợp lệ hoặc chưa có IP (đơn mới thử lại sau vài giây).' });
+          return;
+        }
+        res.status(201).json([toDto(refreshed)]);
+        return;
+      }
 
       const created: ProxyRecord[] = [];
       if (typeof body.lines === 'string' && body.lines.trim()) {
@@ -171,13 +282,134 @@ async function main(): Promise<void> {
     }
   });
 
-  // Check a single proxy and persist the result.
+  // Proxy dạng API (mktproxy xoay): resolve IP hiện tại qua /proxies/new (fallback
+  // /rotate-ip) rồi cập nhật ảnh chụp host/port/user/pass trên record để check +
+  // để profile dùng bản mới nhất. Proxy tĩnh: trả nguyên record. Lỗi API thì giữ
+  // ảnh chụp cũ (vẫn check được gateway).
+  // IP công khai của máy đang chạy app (gọi TRỰC TIẾP, không qua proxy). Dùng để
+  // whitelist cho proxy auth_type=ip_whitelist.
+  async function getPublicIp(): Promise<string | null> {
+    try {
+      const res = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(8_000) });
+      const j = (await res.json()) as { ip?: string };
+      return j?.ip || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Whitelist IP máy cho proxy xoay dạng ip_whitelist (best-effort). Proxy dùng
+  // userpass thì endpoint này có thể lỗi — bỏ qua, không chặn luồng. Đây chính là
+  // thứ khắc phục "read ECONNRESET": proxy chỉ nhận kết nối từ IP đã whitelist.
+  async function ensureWhitelist(itemKey: string): Promise<void> {
+    const accountKey = settings.getMktproxyKey();
+    const ip = await getPublicIp();
+    if (!ip) return;
+    if (!accountKey) {
+      log.warn('mktproxy: chưa có API key TÀI KHOẢN → không whitelist được IP (proxy ip_whitelist sẽ bị ECONNRESET). Nhập key tài khoản ở card "Mua proxy".');
+      return;
+    }
+    try {
+      await mktproxy.updateIpWhitelist(accountKey, itemKey, [ip]);
+      log.info(`mktproxy: whitelist IP ${ip} cho đơn ${itemKey.slice(0, 6)}…`);
+    } catch (e) {
+      log.warn(`mktproxy: whitelist lỗi (${(e as Error).message}) — key TÀI KHOẢN phải đúng (KHÁC key đơn proxy).`);
+    }
+  }
+
+  async function refreshApiProxy(proxy: ProxyRecord): Promise<ProxyRecord> {
+    if (proxy.apiProvider !== 'mktproxy' || !proxy.apiKey) return proxy;
+    // Whitelist IP máy trước — proxy ip_whitelist sẽ reset kết nối nếu IP chưa
+    // được cho phép (ECONNRESET). Chạy mỗi lần test để bám theo IP hiện tại.
+    await ensureWhitelist(proxy.apiKey);
+    try {
+      // rotate-ip để KÍCH HOẠT egress: proxies/new chỉ đọc cache, đơn có thể chưa
+      // "live" nên connect bị reset dù đã whitelist. rotate-ip trong cooldown trả
+      // proxy hiện tại (an toàn, không tốn thêm). Fallback proxies/new nếu lỗi.
+      let rp = await mktproxy.rotateIp(proxy.apiKey).catch(() => null);
+      if (!rp || !rp.value) rp = await mktproxy.getCurrentProxy(proxy.apiKey).catch(() => null);
+      if (!rp) return proxy;
+      // DÙNG ĐÚNG protocol NCC trả (proxy này là HTTP, không phải socks5) — sai
+      // giao thức là ECONNRESET. value thường không kèm user:pass (auth theo IP).
+      const proto: ProxyType = rp?.protocol === 'socks5' ? 'socks5' : rp?.protocol === 'http' ? 'http' : proxy.type;
+      const line = ((proto === 'socks5' ? rp?.socks5 : rp?.http) || rp?.value || '').trim();
+      if (!line) return proxy;
+      const parsed = parseProxyLine(line);
+      return await store.update(proxy.id, {
+        type: proto, host: parsed.host, port: parsed.port, username: parsed.username, password: parsed.password,
+      });
+    } catch (e) {
+      log.warn(`mktproxy: refresh proxy API lỗi (${proxy.id}): ${(e as Error).message}`);
+      return proxy;
+    }
+  }
+
+  /** Dựng ProxyConfig gateway từ response rotate + cập nhật ảnh chụp record. */
+  function buildApiConfig(record: ProxyRecord, rp: mktproxy.MktRotatingProxy): ProxyConfig | undefined {
+    const proto: ProxyType = rp.protocol === 'socks5' ? 'socks5' : rp.protocol === 'http' ? 'http' : record.type;
+    const line = ((proto === 'socks5' ? rp.socks5 : rp.http) || rp.value || '').trim();
+    let host = '';
+    let port = 0;
+    let username: string | undefined;
+    let password: string | undefined;
+    try {
+      const p = parseProxyLine(line);
+      host = p.host; port = p.port; username = p.username; password = p.password;
+    } catch {
+      if (rp.ip && rp.port) { host = rp.ip; port = Number(rp.port); }
+      else return undefined;
+    }
+    void store.update(record.id, { type: proto, host, port, username, password }).catch(() => {});
+    return { server: `${proto}://${host}:${port}`, username, password };
+  }
+
+  /**
+   * Rút proxy dạng API cho MỘT profile đăng ký: whitelist IP máy, rồi XOAY
+   * (rotate-ip) tới khi egress `real_ip` CHƯA từng dùng reg CapCut (usedIps) →
+   * đánh dấu đã dùng → trả config gateway. Tôn trọng cooldown (chờ `second` giây
+   * giữa các lần xoay), trần chờ 4 phút; hết cách thì dùng IP hiện tại để không
+   * treo. Nhờ vậy mỗi account một IP mới (100 account / 5 proxy ≈ 20 IP/proxy).
+   */
+  async function resolveFreshApiProxy(record: ProxyRecord): Promise<ProxyConfig | undefined> {
+    if (record.apiProvider !== 'mktproxy' || !record.apiKey) {
+      if (!record.host) return undefined;
+      return { server: `${record.type}://${record.host}:${record.port}`, username: record.username, password: record.password };
+    }
+    await ensureWhitelist(record.apiKey);
+    const deadline = Date.now() + 4 * 60_000;
+    let last: mktproxy.MktRotatingProxy | null = null;
+    for (let i = 0; i < 30 && Date.now() < deadline; i += 1) {
+      let rp = await mktproxy.rotateIp(record.apiKey).catch(() => null);
+      if (!rp || !rp.value) rp = await mktproxy.getCurrentProxy(record.apiKey).catch(() => null);
+      if (!rp || !rp.value) break;
+      last = rp;
+      const egress = rp.realIp || rp.ip || '';
+      if (!egress || !usedIps.has(egress)) {
+        await usedIps.add(egress);
+        log.info(`mktproxy: dùng IP mới ${egress || '(không rõ)'} cho reg (đơn ${record.apiKey.slice(0, 6)}…, đã dùng ${usedIps.count()})`);
+        return buildApiConfig(record, rp);
+      }
+      const waitS = Math.min(rp.second && rp.second > 0 ? rp.second : 60, 65);
+      if (Date.now() + waitS * 1000 >= deadline) break;
+      log.info(`mktproxy: IP ${egress} đã dùng reg — chờ ${waitS}s xoay lại (đơn ${record.apiKey.slice(0, 6)}…)`);
+      await new Promise((r) => setTimeout(r, waitS * 1000 + 500));
+    }
+    if (last?.value) {
+      await usedIps.add(last.realIp || last.ip);
+      log.warn('mktproxy: không lấy được IP mới sau khi chờ — dùng IP hiện tại');
+      return buildApiConfig(record, last);
+    }
+    return undefined;
+  }
+
+  // Check a single proxy and persist the result. Proxy API được resolve IP mới trước.
   app.post('/api/proxies/:id/check', async (req: Request, res: Response) => {
-    const proxy = store.get(String(req.params.id));
+    let proxy = store.get(String(req.params.id));
     if (!proxy) {
       res.status(404).json({ error: 'Proxy not found' });
       return;
     }
+    proxy = await refreshApiProxy(proxy);
     const result = await checkProxy(proxy);
     const updated = await store.update(proxy.id, {
       alive: result.alive,
@@ -239,6 +471,7 @@ async function main(): Promise<void> {
         group: typeof body.group === 'string' ? body.group.trim() || undefined : undefined,
         taskbarTitle: typeof body.taskbarTitle === 'string' ? body.taskbarTitle.trim() || undefined : undefined,
         proxy: body.proxy,
+        proxyRotation: body.proxyRotation,
         antiDetect: body.antiDetect,
         browser: body.browser,
         notes: body.notes,
@@ -347,8 +580,21 @@ async function main(): Promise<void> {
 
   // ---- Settings ----------------------------------------------------------
   // API key bills real money — never return it raw, only a masked preview.
+  function settingsDto() {
+    return {
+      hasKey: Boolean(settings.getApiKey()),
+      masked: maskKey(settings.getApiKey()),
+      sheetWebhookUrl: settings.getSheetWebhookUrl() ?? '',
+      hasMktproxyKey: Boolean(settings.getMktproxyKey()),
+      mktproxyMasked: maskKey(settings.getMktproxyKey()),
+      hasTelegram: Boolean(settings.getTelegramBotToken() && settings.getTelegramChatId()),
+      telegramMasked: maskKey(settings.getTelegramBotToken()),
+      telegramChatId: settings.getTelegramChatId() ?? '',
+    };
+  }
+
   app.get('/api/settings', (_req: Request, res: Response) => {
-    res.json({ hasKey: Boolean(settings.getApiKey()), masked: maskKey(settings.getApiKey()) });
+    res.json(settingsDto());
   });
 
   app.put('/api/settings', async (req: Request, res: Response) => {
@@ -357,9 +603,205 @@ async function main(): Promise<void> {
       if (body.dongvanfbApiKey !== undefined) {
         await settings.setApiKey(String(body.dongvanfbApiKey));
       }
-      res.json({ hasKey: Boolean(settings.getApiKey()), masked: maskKey(settings.getApiKey()) });
+      if (body.sheetWebhookUrl !== undefined) {
+        await settings.setSheetWebhookUrl(String(body.sheetWebhookUrl));
+      }
+      if (body.mktproxyApiKey !== undefined) {
+        await settings.setMktproxyKey(String(body.mktproxyApiKey));
+      }
+      if (body.telegramBotToken !== undefined) {
+        await settings.setTelegramBotToken(String(body.telegramBotToken));
+      }
+      if (body.telegramChatId !== undefined) {
+        await settings.setTelegramChatId(String(body.telegramChatId));
+      }
+      res.json(settingsDto());
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // ---- mktproxy.com (mua proxy) ------------------------------------------
+  // products is public; balance/buy/orders need the stored X-API-Key.
+  function requireMktKey(res: Response): string | null {
+    const key = settings.getMktproxyKey();
+    if (!key) {
+      res.status(400).json({ error: 'Chưa cấu hình API key mktproxy (vào phần Cài đặt).' });
+      return null;
+    }
+    return key;
+  }
+
+  app.get('/api/mktproxy/products', async (_req: Request, res: Response) => {
+    try {
+      res.json({ products: await mktproxy.listProducts(settings.getMktproxyKey()) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/mktproxy/balance', async (_req: Request, res: Response) => {
+    const key = requireMktKey(res);
+    if (!key) return;
+    try {
+      res.json({ balance: await mktproxy.getBalance(key) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/mktproxy/orders', async (req: Request, res: Response) => {
+    const key = requireMktKey(res);
+    if (!key) return;
+    try {
+      const status = req.query.status ? String(req.query.status) : undefined;
+      res.json({ orders: await mktproxy.listOrders(key, { status }) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/mktproxy/orders/:code', async (req: Request, res: Response) => {
+    const key = requireMktKey(res);
+    if (!key) return;
+    try {
+      res.json(await mktproxy.getOrder(key, String(req.params.code)));
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import an order's delivered proxies into the ProxyStore library (dùng ngay ở
+  // chế độ pool). Idempotent-ish: skips proxies whose host:port already exist.
+  // PROXY XOAY: item chỉ có `key` (chưa kèm chuỗi proxy) — đơn xoay trả gateway
+  // qua endpoint riêng. Ta gọi /proxies/new (đọc cache); nếu đơn mới chưa kích
+  // hoạt (NO_PROXY_DATA) thì gọi /proxies/rotate-ip để lấy proxy lần đầu, rồi
+  // chọn biến thể http/socks5 theo `type`.
+  async function importProxiesToStore(
+    proxies: mktproxy.MktProxyItem[],
+    type: ProxyType,
+    tags: string[],
+  ): Promise<ProxyRecord[]> {
+    const existing = new Set(store.list().map((p) => `${p.host}:${p.port}`));
+    const created: ProxyRecord[] = [];
+    for (const item of proxies) {
+      let line = (item.proxy || '').trim();
+      let itemType: ProxyType = type;
+      // viaApi: đơn xoay giao qua key (không kèm chuỗi sẵn) — resolve IP hiện tại
+      // và ĐÁNH DẤU là proxy dạng API (giữ key để Test/xoay lại sau này).
+      const viaApi = !line && !!item.key;
+      if (viaApi && item.key) {
+        await ensureWhitelist(item.key);
+        try {
+          // rotate-ip để kích hoạt egress (xem ghi chú ở refreshApiProxy).
+          let rp = await mktproxy.rotateIp(item.key).catch(() => null);
+          if (!rp || !rp.value) rp = await mktproxy.getCurrentProxy(item.key).catch(() => null);
+          // Lưu đúng protocol NCC trả (tránh ECONNRESET do sai giao thức).
+          itemType = rp?.protocol === 'socks5' ? 'socks5' : rp?.protocol === 'http' ? 'http' : type;
+          line = ((itemType === 'socks5' ? rp?.socks5 : rp?.http) || rp?.value || '').trim();
+          log.info(`mktproxy: proxy xoay (key ${item.key.slice(0, 6)}…) → ${line || 'chưa lấy được'} [${itemType}]`);
+        } catch (e) {
+          log.warn(`mktproxy: lấy proxy xoay lỗi (key ${item.key.slice(0, 6)}…): ${(e as Error).message}`);
+        }
+      }
+      if (!line) continue;
+      let parsed;
+      try {
+        parsed = parseProxyLine(line);
+      } catch {
+        continue; // dòng proxy không parse được thì bỏ qua
+      }
+      if (existing.has(`${parsed.host}:${parsed.port}`)) continue;
+      created.push(await store.create({
+        type: itemType, tags, ...parsed,
+        ...(viaApi ? { apiProvider: 'mktproxy' as const, apiKey: item.key } : {}),
+      }));
+      existing.add(`${parsed.host}:${parsed.port}`);
+    }
+    return created;
+  }
+
+  // Buy proxy(s) then poll the order until delivered, importing the resulting
+  // proxies into the library. Body: { productCode, quantity?, duration?,
+  // protocol?, customFields?, tags?, ipWhitelist? }.
+  app.post('/api/mktproxy/buy', async (req: Request, res: Response) => {
+    const key = requireMktKey(res);
+    if (!key) return;
+    const body = req.body ?? {};
+    if (!body.productCode) {
+      res.status(400).json({ error: 'productCode là bắt buộc' });
+      return;
+    }
+    const protocol = body.protocol === 'socks5' ? 'socks5' : body.protocol === 'http' ? 'http' : undefined;
+    const importType: ProxyType = protocol === 'socks5' ? 'socks5' : 'http';
+    const tags: string[] = Array.isArray(body.tags)
+      ? body.tags.map(String).map((t: string) => t.trim()).filter(Boolean)
+      : typeof body.tags === 'string' && body.tags.trim()
+        ? body.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
+        : ['mktproxy'];
+    try {
+      const buy = await mktproxy.buyProxy(key, {
+        productCode: String(body.productCode),
+        quantity: body.quantity !== undefined ? Number(body.quantity) : undefined,
+        duration: body.duration !== undefined ? Number(body.duration) : undefined,
+        protocol,
+        customFields: body.customFields && typeof body.customFields === 'object' ? body.customFields : undefined,
+        externalRef: body.externalRef ? String(body.externalRef) : undefined,
+        ipWhitelist: Array.isArray(body.ipWhitelist) ? body.ipWhitelist.map(String) : undefined,
+      });
+
+      // Collect delivered proxies: from the buy response if present, else poll
+      // GET /orders/{code} until in_use (max ~30s) — some products provision async.
+      let proxies = buy.proxies;
+      let orderStatus = 'delivered';
+      if (proxies.length === 0 && buy.orderCode) {
+        const deadline = Date.now() + 30_000;
+        for (;;) {
+          const order = await mktproxy.getOrder(key, buy.orderCode);
+          orderStatus = order.status;
+          if (order.proxies.length) {
+            proxies = order.proxies;
+            break;
+          }
+          if (['failed', 'expired'].includes(order.status)) break;
+          if (Date.now() >= deadline) break;
+          await new Promise((r) => setTimeout(r, 3_000));
+        }
+      }
+
+      const imported = await importProxiesToStore(proxies, importType, tags);
+      log.info(`mktproxy buy: đơn ${buy.orderCode || '—'} status=${orderStatus} nhận=${proxies.length} nạp=${imported.length}`);
+      if (!imported.length) {
+        log.warn(`mktproxy buy: NẠP 0 PROXY. items=${JSON.stringify(proxies)} rawBuy=${JSON.stringify(buy.raw).slice(0, 600)}`);
+      }
+      res.json({
+        orderCode: buy.orderCode,
+        orderStatus,
+        delivered: proxies.length,
+        imported: imported.length,
+        proxies: imported.map(toDto),
+      });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Import an already-completed order's proxies (khi mua async chưa kịp giao lúc
+  // bấm Mua, dùng nút này để nạp sau). Body: { tags?, protocol? }.
+  app.post('/api/mktproxy/orders/:code/import', async (req: Request, res: Response) => {
+    const key = requireMktKey(res);
+    if (!key) return;
+    const body = req.body ?? {};
+    const type: ProxyType = body.protocol === 'socks5' ? 'socks5' : 'http';
+    const tags: string[] = Array.isArray(body.tags)
+      ? body.tags.map(String).map((t: string) => t.trim()).filter(Boolean)
+      : ['mktproxy'];
+    try {
+      const order = await mktproxy.getOrder(key, String(req.params.code));
+      const imported = await importProxiesToStore(order.proxies, type, tags);
+      res.json({ orderStatus: order.status, delivered: order.proxies.length, imported: imported.length, proxies: imported.map(toDto) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
     }
   });
 
@@ -380,6 +822,16 @@ async function main(): Promise<void> {
     if (!key) return;
     try {
       res.json({ balance: await getBalance(key) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/mail/account-types', async (_req: Request, res: Response) => {
+    const key = requireApiKey(res);
+    if (!key) return;
+    try {
+      res.json({ accountTypes: await getAccountTypes(key) });
     } catch (err) {
       res.status(502).json({ error: (err as Error).message });
     }
@@ -524,6 +976,10 @@ async function main(): Promise<void> {
     res.json(flowMetas());
   });
 
+  app.get('/api/presets', (_req: Request, res: Response) => {
+    res.json({ profilePresets, projectPresets });
+  });
+
   // ---- Projects (automation jobs) -----------------------------------------
   app.get('/api/projects', (_req: Request, res: Response) => {
     res.json(projects.list());
@@ -555,6 +1011,11 @@ async function main(): Promise<void> {
         profileIds: Array.isArray(body.profileIds) ? body.profileIds.map(String) : [],
         mailId: body.mailId ? String(body.mailId) : undefined,
         concurrency: body.concurrency !== undefined ? Number(body.concurrency) : undefined,
+        ephemeralCount: body.ephemeralCount !== undefined ? Number(body.ephemeralCount) : undefined,
+        buyAccountType: body.buyAccountType ? String(body.buyAccountType) : undefined,
+        buyQuality: body.buyQuality ? String(body.buyQuality) : undefined,
+        ephemeralProxyPool: parseEphemeralPool(body.ephemeralProxyPool),
+        blockImages: body.blockImages === true ? true : undefined,
         note: body.note ? String(body.note) : undefined,
       });
       res.status(201).json(created);
@@ -577,6 +1038,11 @@ async function main(): Promise<void> {
       if (Array.isArray(body.profileIds)) patch.profileIds = body.profileIds.map(String);
       if (body.mailId !== undefined) patch.mailId = body.mailId ? String(body.mailId) : undefined;
       if (body.concurrency !== undefined) patch.concurrency = Number(body.concurrency);
+      if (body.ephemeralCount !== undefined) patch.ephemeralCount = Number(body.ephemeralCount);
+      if (body.buyAccountType !== undefined) patch.buyAccountType = body.buyAccountType ? String(body.buyAccountType) : undefined;
+      if (body.buyQuality !== undefined) patch.buyQuality = body.buyQuality ? String(body.buyQuality) : undefined;
+      if (body.ephemeralProxyPool !== undefined) patch.ephemeralProxyPool = parseEphemeralPool(body.ephemeralProxyPool);
+      if (body.blockImages !== undefined) patch.blockImages = body.blockImages === true ? true : undefined;
       if (body.note !== undefined) patch.note = String(body.note);
       const updated = await projects.update(id, patch);
       res.json(updated);
@@ -602,8 +1068,12 @@ async function main(): Promise<void> {
       res.status(404).json({ error: 'Project not found' });
       return;
     }
-    if (!project.profileIds.length) {
-      res.status(400).json({ error: 'Project chưa chọn profile nào' });
+    // Two ways to pick profiles: fixed profileIds saved on the project, or
+    // ephemeralCount > 0 meaning "spin up N throwaway profiles for this run and
+    // delete them after". Fixed ids win when present.
+    const ephemeralCount = project.profileIds.length ? 0 : (project.ephemeralCount ?? 0);
+    if (!project.profileIds.length && ephemeralCount < 1) {
+      res.status(400).json({ error: 'Project chưa chọn profile, cũng chưa đặt số profile tạm để tạo' });
       return;
     }
     // Resolve the bound mailbox (if any) into credentials for OTP steps.
@@ -616,25 +1086,176 @@ async function main(): Promise<void> {
       }
       mail = { email: rec.email, refreshToken: rec.refreshToken, clientId: rec.clientId };
     }
+    // Build the buyMail dependency only when an API key is configured. A flow that
+    // calls ctx.buyMail() without a key gets a clear error (runner handles absent dep).
+    const apiKey = settings.getApiKey();
+    const buyMailDep = apiKey
+      ? async ({ accountType, quality, profileName }: { accountType: string; quality: string; profileName: string }) => {
+          const result = await buyMail(apiKey, { accountType, quality });
+          const first = result.mails[0];
+          if (!first) throw new Error('Mua mail thành công nhưng không nhận được dữ liệu mail');
+          // Persist to the store so the mailbox is visible/reusable in the Mail tab.
+          const [saved] = await mails.createMany([
+            {
+              email: first.email,
+              password: first.password,
+              refreshToken: first.refreshToken,
+              clientId: first.clientId,
+              provider: providerFromEmail(first.email),
+              orderCode: result.orderCode,
+              note: `auto-mua cho ${profileName}`,
+            },
+          ]);
+          const rec = saved ?? mails.list().find((m) => m.email.toLowerCase() === first.email.toLowerCase());
+          return {
+            cred: { email: first.email, refreshToken: first.refreshToken, clientId: first.clientId },
+            email: first.email,
+            password: first.password ?? rec?.password,
+          };
+        }
+      : undefined;
+    // Build the appendSheet dependency only when a Sheet webhook URL is configured.
+    // POSTs one JSON row to the Apps Script web app; the runner wraps this so a
+    // network hiccup logs + continues rather than failing the registration.
+    const sheetUrl = settings.getSheetWebhookUrl();
+    const appendSheetDep = sheetUrl
+      ? async (row: unknown) => {
+          const res = await fetch(sheetUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(row),
+          });
+          if (!res.ok) throw new Error(`Sheet webhook HTTP ${res.status}`);
+        }
+      : undefined;
+    // Build the Telegram notify dependency only when both bot token + chat id are
+    // set. Sends a Markdown message per successful registration (email + full
+    // credential line + checkout link). The runner swallows failures so a
+    // Telegram hiccup never changes the run outcome.
+    const tgToken = settings.getTelegramBotToken();
+    const tgChatId = settings.getTelegramChatId();
+    const notifyDep = tgToken && tgChatId
+      ? async (row: SheetRow) => {
+          const lines = [
+            '✅ *CapCut đăng ký thành công*',
+            row.email ? `📧 \`${row.email}\`` : '',
+            row.mailLine ? `🔑 \`${row.mailLine}\`` : '',
+            row.checkoutUrl ? `💳 [Link thanh toán](${row.checkoutUrl})` : '',
+          ].filter(Boolean);
+          const res = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: tgChatId,
+              text: lines.join('\n'),
+              parse_mode: 'Markdown',
+              disable_web_page_preview: true,
+            }),
+          });
+          if (!res.ok) throw new Error(`Telegram HTTP ${res.status}`);
+        }
+      : undefined;
+    // Ephemeral profiles: create N throwaway profiles now, run against them, and
+    // delete them (with their browser data) in `finally` so nothing is left
+    // behind — even if the flow throws. Fixed profiles are left untouched.
+    // If the project set an ephemeralProxyPool, each temp profile launches in
+    // pool mode: resolveProxy draws a fresh Live proxy (matching the tag filter)
+    // per profile at open time — so N temp profiles get N different IPs instead
+    // of all leaking the real one.
+    const ephemeralPool = project.ephemeralProxyPool;
+    const ephemeralIds: string[] = [];
+    for (let i = 0; i < ephemeralCount; i += 1) {
+      const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+      const created = await profiles.create({
+        name: `tmp-${project.name}-${stamp}-${i + 1}`,
+        proxyRotation: ephemeralPool
+          ? { mode: 'pool', pool: ephemeralPool, rotateOnOpen: true, rotateOnFailure: true }
+          : undefined,
+        antiDetect: project.blockImages
+          ? { ...defaultAntiDetect(), blockImages: true }
+          : undefined,
+      });
+      ephemeralIds.push(created.id);
+    }
+    const runIds = project.profileIds.length ? project.profileIds : ephemeralIds;
     try {
       const results = await runProject(
         browsers,
-        { profileIds: project.profileIds, flowName: project.flowName, mail },
-        { concurrency: project.concurrency, headless: false, storeRoot: STORE_ROOT },
+        {
+          profileIds: runIds,
+          flowName: project.flowName,
+          mail,
+          buyAccountType: project.buyAccountType,
+          buyQuality: project.buyQuality,
+        },
+        { concurrency: project.concurrency, headless, storeRoot },
+        { buyMail: buyMailDep, appendSheet: appendSheetDep, notify: notifyDep },
       );
       res.json({ results });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
+    } finally {
+      // Tear down throwaway profiles + their userDataDir. Best-effort: a failed
+      // delete shouldn't mask the run result.
+      for (const id of ephemeralIds) {
+        try {
+          await browsers.close(id).catch(() => {});
+          await profiles.delete(id, { wipeData: true });
+        } catch (e) {
+          log.warn(`xóa profile tạm ${id} lỗi: ${(e as Error).message}`);
+        }
+      }
     }
   });
 
-  app.listen(PORT, () => {
-    log.info(`proxy manager listening on http://localhost:${PORT}`);
-    log.info(`serving UI from ${PUBLIC_DIR}`);
-  });
+  return {
+    app,
+    storeRoot,
+    headless,
+    publicDir,
+    close: async () => {
+      await browsers.closeAll();
+    },
+  };
 }
 
-main().catch((err) => {
-  log.error(err instanceof Error ? err.stack ?? err.message : String(err));
-  process.exitCode = 1;
-});
+export async function startServer(config: ServerConfig = {}): Promise<StartedServer> {
+  const created = await createApp(config);
+  const host = config.host ?? '0.0.0.0';
+  const port = config.port ?? Number(process.env.PORT ?? 3000);
+
+  const server = await new Promise<Server>((resolve, reject) => {
+    const listening = created.app.listen(port, host, () => resolve(listening));
+    listening.once('error', reject);
+  });
+
+  const address = server.address() as AddressInfo | null;
+  const resolvedPort = address?.port ?? port;
+  const urlHost = host === '0.0.0.0' ? 'localhost' : host;
+  const url = `http://${urlHost}:${resolvedPort}`;
+
+  log.info(`proxy manager listening on ${url}`);
+  log.info(`serving UI from ${created.publicDir}`);
+
+  return {
+    ...created,
+    server,
+    url,
+    port: resolvedPort,
+    close: async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      }).catch((err) => {
+        if ((err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') throw err;
+      });
+      await created.close();
+    },
+  };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startServer().catch((err) => {
+    log.error(err instanceof Error ? err.stack ?? err.message : String(err));
+    process.exitCode = 1;
+  });
+}

@@ -42,6 +42,42 @@ export class SettingsStore {
     await this.persist();
   }
 
+  getSheetWebhookUrl(): string | undefined {
+    return this.settings.sheetWebhookUrl;
+  }
+
+  async setSheetWebhookUrl(url: string | undefined): Promise<void> {
+    this.settings.sheetWebhookUrl = url?.trim() || undefined;
+    await this.persist();
+  }
+
+  getMktproxyKey(): string | undefined {
+    return this.settings.mktproxyApiKey;
+  }
+
+  async setMktproxyKey(key: string | undefined): Promise<void> {
+    this.settings.mktproxyApiKey = key?.trim() || undefined;
+    await this.persist();
+  }
+
+  getTelegramBotToken(): string | undefined {
+    return this.settings.telegramBotToken;
+  }
+
+  async setTelegramBotToken(token: string | undefined): Promise<void> {
+    this.settings.telegramBotToken = token?.trim() || undefined;
+    await this.persist();
+  }
+
+  getTelegramChatId(): string | undefined {
+    return this.settings.telegramChatId;
+  }
+
+  async setTelegramChatId(id: string | undefined): Promise<void> {
+    this.settings.telegramChatId = id?.trim() || undefined;
+    await this.persist();
+  }
+
   private async persist(): Promise<void> {
     await writeFile(this.file, JSON.stringify(this.settings, null, 2), 'utf8');
   }

@@ -2,14 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ProjectRecord } from './types.js';
+import type { ProjectRecord, ProxyPoolFilter } from './types.js';
 
 export interface CreateProjectInput {
   name: string;
   flowName: string;
   profileIds?: string[];
   mailId?: string;
+  buyAccountType?: string;
+  buyQuality?: string;
   concurrency?: number;
+  ephemeralCount?: number;
+  ephemeralProxyPool?: ProxyPoolFilter;
+  blockImages?: boolean;
   note?: string;
 }
 
@@ -47,7 +52,12 @@ export class ProjectStore {
       flowName: input.flowName,
       profileIds: input.profileIds ?? [],
       mailId: input.mailId,
+      buyAccountType: input.buyAccountType,
+      buyQuality: input.buyQuality,
       concurrency: input.concurrency,
+      ephemeralCount: input.ephemeralCount,
+      ephemeralProxyPool: input.ephemeralProxyPool,
+      blockImages: input.blockImages,
       note: input.note,
       createdAt: new Date().toISOString(),
     };

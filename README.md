@@ -1,4 +1,4 @@
-# CapCut Auto — Multi-profile browser manager
+# TeamHatDe-Auto — Multi-profile browser manager
 
 Hệ thống quản lý nhiều profile trình duyệt với anti-detect fingerprint, lưu
 session theo từng profile và gán proxy riêng cho mỗi profile. Engine là
@@ -282,3 +282,36 @@ Tab Project (master-detail, chạy automation hàng loạt):
   file flow + đăng ký một dòng ở [src/flows/index.ts](src/flows/index.ts).
 - `npm run dev` (demo CLI) và việc mở/đóng qua web UI đã chạy thật headful trên
   local với Camoufox. Chế độ `virtual` trong Docker đã được kiểm thử khi build image.
+
+## Proxy từ mktproxy.com (nguồn dạng API)
+
+Tool tích hợp mua/dùng proxy từ [mktproxy.com](https://mktproxy.com) (`https://api.mktproxy.com/api`).
+Client: [src/mktproxyClient.ts](src/mktproxyClient.ts); route: `/api/mktproxy/*` +
+proxy dạng API trong [src/proxyStore.ts](src/proxyStore.ts) (`apiProvider`/`apiKey`).
+
+### HAI loại key — KHÁC nhau, đừng nhầm
+
+| Key | Dạng | Gửi qua | Dùng cho |
+|-----|------|---------|----------|
+| **Key SERVER** (tài khoản) | `mkt_...` | header `X-API-Key` | `GET /balance`, `POST /buy-proxy`, `GET /orders`, **header** của `POST /update-ip-whitelist`. Lấy ở mktproxy.com → **Profile**. |
+| **Key PROXY** (theo đơn) | hex 24 ký tự `6a4a...` | query/body `key` (KHÔNG header) | `GET /proxies/new`, `GET /proxies/current`, `POST /proxies/rotate-ip`, và `key` trong **body** của `/update-ip-whitelist`. Mỗi đơn proxy xoay có key riêng — đây chính là "proxy" để gen IP. |
+
+Trong UI: **key SERVER** nhập ở card "Mua proxy" (để mua + xem số dư); **key PROXY**
+nhập ở "Thêm mới → API (mktproxy)" (tạo một entry proxy dạng **API** trong thư viện).
+
+### Proxy xoay `auth_type = ip_whitelist` — flow đúng (đã xác minh bằng gọi API thật)
+
+Loại "Proxy Rotate VN" là **HTTP** (`protocol: "http"`), **không user/pass**, auth theo
+**IP nguồn**. Muốn dùng được:
+
+1. **Whitelist IP máy**: `POST /update-ip-whitelist` với header `X-API-Key = key SERVER`
+   và body `{ key: <key PROXY>, ip_whitelist: [<IP công khai của máy>] }`.
+2. **Kích hoạt egress**: `POST /proxies/rotate-ip { key: <key PROXY> }`. (Chỉ gọi
+   `proxies/new` là đọc cache → đơn chưa "live" → connect bị **ECONNRESET**. Trong
+   cooldown 60s, `rotate-ip` trả proxy hiện tại nên gọi lại vô hại.)
+3. **Connect** gateway `host:port` (protocol theo field `protocol`, thường **HTTP**,
+   không creds) **TỪ IP đã whitelist**.
+
+Tool tự làm 1→2 mỗi lần **Test** hoặc mua proxy API; lưu proxy theo đúng protocol NCC
+trả. Vì auth theo IP, **cần key SERVER hợp lệ** trong cài đặt để whitelist; nếu chỉ có
+key PROXY thì không whitelist được (báo `Invalid API key`).

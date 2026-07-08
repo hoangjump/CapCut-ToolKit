@@ -26,6 +26,14 @@ export interface BuyResult {
   mails: BoughtMail[];
 }
 
+/** One row from /user/account_type — a purchasable mail product. */
+export interface AccountType {
+  id: number;
+  name: string;
+  quality: number;
+  price: number;
+}
+
 export interface CodeResult {
   status: boolean;
   code: string;
@@ -92,21 +100,42 @@ export async function getBalance(apikey: string): Promise<number> {
   return Number(body?.balance ?? 0);
 }
 
+/** GET /user/account_type — lists purchasable mail products (id, name,
+ *  quality, price). buy() needs id→account_type and its paired quality. */
+export async function getAccountTypes(apikey: string): Promise<AccountType[]> {
+  const url = `${API_HOST}/user/account_type?apikey=${encodeURIComponent(apikey)}`;
+  const body = await requestJson(url, { method: 'GET' }, 'Danh sách loại mail');
+  const rows: any[] = Array.isArray(body?.data) ? body.data : [];
+  return rows.map((r) => ({
+    id: Number(r?.id),
+    name: String(r?.name ?? ''),
+    quality: Number(r?.quality ?? 0),
+    price: Number(r?.price ?? 0),
+  }));
+}
+
 /** GET /user/buy — purchases mail(s). Bills real money. Parses list_data rows. */
 export async function buyMail(apikey: string, input: BuyMailInput): Promise<BuyResult> {
   const params = new URLSearchParams({
     apikey,
     account_type: input.accountType,
     quality: input.quality,
+    quantity: String(input.count ?? 1),
     type: 'full',
   });
   const url = `${API_HOST}/user/buy?${params.toString()}`;
   const body = await requestJson(url, { method: 'GET' }, 'Mua mail');
   const data = body?.data ?? {};
-  const rows: string[] = Array.isArray(data.list_data) ? data.list_data : [];
+  // list_data may live under data.* or at the root, depending on the endpoint.
+  const rawRows = data.list_data ?? body?.list_data ?? data.mails ?? body?.mails;
+  const rows: string[] = Array.isArray(rawRows) ? rawRows : [];
   const mails = rows.map(parseListDataRow).filter((m): m is BoughtMail => m !== null);
+  if (mails.length === 0) {
+    // Bought but parsed nothing — dump the raw payload so we can see its real shape.
+    log.warn(`Mua mail: parse được 0 mail. Raw response: ${JSON.stringify(body)}`);
+  }
   return {
-    orderCode: data.order_code,
+    orderCode: data.order_code ?? body?.order_code,
     price: typeof data.price === 'number' ? data.price : undefined,
     balance: typeof data.balance === 'number' ? data.balance : undefined,
     mails,
