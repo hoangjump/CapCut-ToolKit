@@ -901,6 +901,18 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     }
   });
 
+  // Xóa hàng loạt: body {ids: string[]} xóa các id đó; không body = xóa SẠCH kho.
+  // Đăng ký TRƯỚC '/api/mails/:id' để "mails" không bị bắt nhầm thành :id.
+  app.delete('/api/mails', async (req: Request, res: Response) => {
+    try {
+      const ids = req.body?.ids;
+      const removed = Array.isArray(ids) ? await mails.deleteMany(ids.map(String)) : await mails.clear();
+      res.json({ removed });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
   app.delete('/api/mails/:id', async (req: Request, res: Response) => {
     try {
       await mails.delete(String(req.params.id));

@@ -163,6 +163,9 @@ export const mailApi = {
   list: () => fetch('/api/mails').then((r) => parse<MailRecord[]>(r)),
   add: (body: any) => post('/api/mails', body).then((r) => parse<MailRecord>(r)),
   remove: (id: string) => fetch('/api/mails/' + id, { method: 'DELETE' }),
+  // Xóa hàng loạt: truyền ids để xóa các mail đó; bỏ trống = xóa sạch kho.
+  removeMany: (ids?: string[]) =>
+    fetch('/api/mails', { method: 'DELETE', headers: jsonHeaders, body: JSON.stringify(ids ? { ids } : {}) }).then((r) => parse<{ removed: number }>(r)),
   code: (id: string, type: string) => post(`/api/mails/${id}/code`, { type }).then((r) => parse<CodeResult>(r)),
   messages: (id: string) => post(`/api/mails/${id}/messages`, {}).then((r) => parse<{ messages: MailMessage[] }>(r)),
 };

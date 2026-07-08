@@ -60,13 +60,17 @@ function doPost(e) {
   }
 }
 
-// Dò dấu ngăn tham số công thức theo LOCALE của sheet: ghi 1.1 vào ô nháp Z2 rồi
-// xem nó hiển thị dạng "1,1" (locale phẩy-thập-phân -> ngăn tham số bằng ';') hay
-// "1.1" (-> ','). Không phụ thuộc bảng map locale, đúng cho mọi vùng.
+// Dò dấu ngăn tham số công thức theo LOCALE của sheet bằng cách GHI THỬ =SUM(1,1)
+// rồi đọc KẾT QUẢ SỐ — hai locale cho hai số khác nhau rõ ràng, KHÔNG bao giờ lỗi,
+// nên không phụ thuộc chuỗi "#ERROR!" (tuỳ parser) hay định dạng số của ô.
+//   - locale ',' : dấu ',' là ngăn tham số -> SUM(1;1) = 2  -> dùng ','
+//   - locale ';' : dấu ',' là thập phân    -> "1,1" = 1.1   -> SUM(1.1) = 1.1 -> dùng ';'
+// getValue() trả số thô bất kể number format; flush() ép tính trước khi đọc.
 function argSeparator(sheet) {
   var probe = sheet.getRange('Z2'); // ô nháp (Z1 đang giữ con trỏ dòng)
-  probe.setValue(1.1);
-  var usesComma = probe.getDisplayValue().indexOf(',') !== -1;
+  probe.setFormula('=SUM(1,1)');
+  SpreadsheetApp.flush();
+  var v = probe.getValue();
   probe.clearContent();
-  return usesComma ? ';' : ',';
+  return v === 2 ? ',' : ';';
 }

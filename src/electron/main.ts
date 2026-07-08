@@ -74,6 +74,16 @@ async function mergeLegacyStore(sourceStore: string, targetStore: string): Promi
 }
 
 async function migrateLegacyStore(targetStore: string): Promise<void> {
+  await mkdir(targetStore, { recursive: true });
+
+  // CHỐT MIGRATE CHỈ CHẠY MỘT LẦN. Trước đây hàm này chạy MỖI lần mở app: nó merge
+  // store cũ (capcut-auto/…) vào store hiện tại theo union id. Hậu quả: user xóa
+  // 1 proxy/mail ở store mới, nhưng bản cũ vẫn còn record đó → lần mở sau nó được
+  // THÊM LẠI (bug "xóa xong mở lại vẫn còn"). Dùng marker: migrate xong ghi file
+  // đánh dấu, các lần sau thấy marker là bỏ qua hẳn, không đụng vào store nữa.
+  const marker = join(targetStore, '.legacy-migrated');
+  if (existsSync(marker)) return;
+
   const appSupportDir = dirname(app.getPath('userData'));
   const candidates = [
     process.env.STORE_ROOT,
@@ -87,16 +97,18 @@ async function migrateLegacyStore(targetStore: string): Promise<void> {
   const unique = [...new Set(candidates.map((candidate) => join(candidate)))];
   const matches = unique.filter((candidate) => candidate !== targetStore && isValidStore(candidate));
   if (matches.length !== 1) {
-    await mkdir(targetStore, { recursive: true });
     if (matches.length > 1) {
       log.warn(`bỏ qua migrate profiles-store vì tìm thấy nhiều nguồn: ${matches.join(', ')}`);
     }
+    // Không có nguồn hợp lệ (cài mới) hoặc nhiều nguồn mập mờ: vẫn ghi marker để
+    // khỏi dò lại mỗi lần mở. Store mới bắt đầu trống, do người dùng tự quản.
+    await writeFile(marker, new Date().toISOString(), 'utf8');
     return;
   }
 
-  await mkdir(dirname(targetStore), { recursive: true });
   await mergeLegacyStore(matches[0], targetStore);
-  log.info(`merged profiles-store: ${matches[0]} -> ${targetStore}`);
+  await writeFile(marker, new Date().toISOString(), 'utf8');
+  log.info(`merged profiles-store (một lần): ${matches[0]} -> ${targetStore}`);
 }
 
 function camoufoxInstalled(installDir: string): boolean {

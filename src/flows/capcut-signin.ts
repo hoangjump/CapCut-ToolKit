@@ -235,12 +235,25 @@ export const capcutSigninFlow: RegisteredFlow = {
     // "waiting for span[aria-label='Close'] to be hidden — 44×"). Đặt noWaitAfter
     // để chạy handler xong là đi tiếp ngay; dẹp popup vai trò để reachDashboard
     // lo riêng bằng Skip. ---
-    const popupClose = page.locator("span[aria-label='Close']");
+    // Dashboard mới ("Seedance/Ultra") bật NHIỀU popup XẾP CHỒNG cùng lúc
+    // ("What's new", "CapCut Ultra is live"…), mỗi popup một nút X cùng selector
+    // span[aria-label='Close']. Nếu đăng ký handler bằng locator khớp NHIỀU element,
+    // chính việc Playwright dò visible để chạy handler đã ném strict-mode violation
+    // ("resolved to 2 elements") và làm hỏng luôn thao tác đang chờ. Nên:
+    //   - trigger = .first() (một element → không vi phạm strict), và
+    //   - trong handler bấm LẶP nút Close đầu tiên cho tới khi hết (đóng mọi popup
+    //     chồng nhau), thay vì chỉ đóng 1.
+    const popupClose = page.locator("span[aria-label='Close']").first();
     await page.addLocatorHandler(
       popupClose,
-      async (overlay) => {
-        log.info(`[${profile.name}] popup chắn thao tác — đóng`);
-        await overlay.first().click({ timeout: 5_000 }).catch(() => {});
+      async () => {
+        for (let i = 0; i < 5; i++) {
+          const close = page.locator("span[aria-label='Close']").first();
+          if (!(await close.isVisible().catch(() => false))) break;
+          log.info(`[${profile.name}] popup chắn thao tác — đóng (${i + 1})`);
+          await close.click({ timeout: 5_000 }).catch(() => {});
+          await page.waitForTimeout(400);
+        }
       },
       { noWaitAfter: true },
     );
@@ -326,6 +339,27 @@ export const capcutSigninFlow: RegisteredFlow = {
     // Upgrade header. Từ đây dùng appPage (có thể là tab mới do Open CapCut mở). ---
     const appPage = await reachDashboard(page, log, profile.name);
     if (appPage !== page) log.info(`[${profile.name}] dashboard ở tab: ${appPage.url()}`);
+
+    // --- Bước 11c: DẸP 2 POPUP dashboard mới ("What's new" + "CapCut Ultra is
+    // live"). Chúng gắn với trang /my-edit, xếp CHỒNG nhau và mỗi cái một nút X
+    // cùng selector span[aria-label='Close'] → đóng tại chỗ hay dính strict-mode
+    // ("resolved to 2 elements") làm gãy thao tác đang chờ. Cách chắc ăn (đã xác
+    // nhận chạy được): điều hướng thẳng sang /profile — popup của /my-edit KHÔNG
+    // hiện lại ở đây — rồi bấm nút "Skip". Class thật `skip-mrkR37` có đuôi hash
+    // CSS-module TỰ SINH, đổi mỗi lần CapCut deploy, nên bắt theo prefix `skip-`
+    // + text "Skip" cho bền. Bấm xong coi như đã qua onboarding + hết popup. ---
+    await appPage.goto('https://www.capcut.com/profile', { waitUntil: 'domcontentloaded' }).catch(() => {});
+    const skipOnboarding = appPage.locator("[class*='skip-']").filter({ hasText: exactText('Skip') }).first();
+    const skipVisible = await skipOnboarding
+      .waitFor({ state: 'visible', timeout: 8_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (skipVisible) {
+      await clickLocator(skipOnboarding, log, `[${profile.name}] bấm Skip ở /profile`);
+      await appPage.waitForTimeout(1_500);
+    } else {
+      log.info(`[${profile.name}] /profile không thấy nút Skip — coi như đã sạch popup`);
+    }
 
     // Xác nhận nút Upgrade header đã hiện trước khi bấm. reachDashboard thường đã
     // dừng đúng lúc thấy header (chờ này trả về ngay); nếu hết budget mà chưa vào

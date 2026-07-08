@@ -125,6 +125,23 @@ export class MailStore {
     await this.persist();
   }
 
+  /** Xóa nhiều mail theo id (bỏ qua id không tồn tại). Trả số đã xóa. */
+  async deleteMany(ids: string[]): Promise<number> {
+    let removed = 0;
+    for (const id of ids) if (this.mails.delete(id)) removed += 1;
+    if (removed) await this.persist();
+    return removed;
+  }
+
+  /** Xóa sạch kho mail. Trả số đã xóa. */
+  async clear(): Promise<number> {
+    const count = this.mails.size;
+    if (!count) return 0;
+    this.mails.clear();
+    await this.persist();
+    return count;
+  }
+
   private async persist(): Promise<void> {
     await writeFile(this.file, JSON.stringify(this.list(), null, 2), 'utf8');
   }

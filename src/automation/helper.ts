@@ -9,7 +9,7 @@ const DEFAULT_TIMEOUT = 30_000;
 /** Human-like pause before each interactive step. Random in [PACE_MIN, PACE_MAX]
  *  ms — override via env (or set PACE_MAX_MS=0 to disable for fast debugging). */
 const PACE_MIN_MS = Number(process.env.PACE_MIN_MS ?? 1_000);
-const PACE_MAX_MS = Number(process.env.PACE_MAX_MS ?? 5_000);
+const PACE_MAX_MS = Number(process.env.PACE_MAX_MS ?? 3_000);
 
 /** Where screenshots land. Set once by the runner before flows run. */
 let shotsDir = join(process.cwd(), 'profiles-store', 'shots');

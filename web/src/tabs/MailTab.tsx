@@ -28,6 +28,8 @@ export function MailTab() {
   const [buyType, setBuyType] = useState('');
   const [manual, setManual] = useState('');
   const [mails, setMails] = useState<MailRecord[]>([]);
+  const [q, setQ] = useState('');
+  const [page, setPage] = useState(1);
   const [codeType, setCodeType] = useState<Record<string, string>>({});
   const [codeResult, setCodeResult] = useState<Record<string, string>>({});
   const [inbox, setInbox] = useState<{ open: boolean; email: string; loading: boolean; msgs: MailMessage[]; error?: string }>({ open: false, email: '', loading: false, msgs: [] });
@@ -100,11 +102,25 @@ export function MailTab() {
   async function del(id: string) {
     try { await mailApi.remove(id); toast.success('Đã xóa mail'); loadMails(); } catch (e) { toast.error((e as Error).message); }
   }
+  async function delAll() {
+    if (!confirm(`Xóa sạch ${mails.length} mail trong kho? Không thể hoàn tác.`)) return;
+    try { const r = await mailApi.removeMany(); toast.success(`Đã xóa ${r.removed} mail`); setPage(1); loadMails(); }
+    catch (e) { toast.error((e as Error).message); }
+  }
   async function openInbox(m: MailRecord) {
     setInbox({ open: true, email: m.email, loading: true, msgs: [] });
     try { const r = await mailApi.messages(m.id); setInbox({ open: true, email: m.email, loading: false, msgs: r.messages || [] }); }
     catch (e) { setInbox({ open: true, email: m.email, loading: false, msgs: [], error: (e as Error).message }); }
   }
+
+  const PAGE_SIZE = 50;
+  const needle = q.trim().toLowerCase();
+  const filtered = needle
+    ? mails.filter((m) => `${m.email} ${m.provider ?? ''}`.toLowerCase().includes(needle))
+    : mails;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  const pageMails = filtered.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
   return (
     <div className="grid grid-cols-[360px_1fr] gap-5">
@@ -156,13 +172,22 @@ export function MailTab() {
       <Card>
         <CardHeader className="flex-row items-center gap-3 space-y-0">
           <CardTitle className="mr-auto">Kho mail {mails.length ? `(${mails.length})` : ''}</CardTitle>
+          <Input
+            placeholder="Tìm email / provider..."
+            value={q}
+            onChange={(e) => { setQ(e.target.value); setPage(1); }}
+            className="max-w-56"
+          />
           <Button variant="outline" onClick={loadMails}><RefreshCw className="h-4 w-4" /> Tải lại</Button>
+          <Button variant="outline" onClick={delAll} disabled={!mails.length} className="text-destructive">
+            <Trash2 className="h-4 w-4" /> Xóa hết
+          </Button>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Provider</TableHead><TableHead className="w-72">Lấy code</TableHead><TableHead className="w-28 text-right">Thao tác</TableHead></TableRow></TableHeader>
             <TableBody>
-              {mails.map((m) => (
+              {pageMails.map((m) => (
                 <TableRow key={m.id}>
                   <TableCell><div className="font-medium">{m.email}</div>{codeResult[m.id] && <div className="text-xs text-muted-foreground">{codeResult[m.id]}</div>}</TableCell>
                   <TableCell className="text-muted-foreground">{m.provider || '—'}</TableCell>
@@ -184,6 +209,14 @@ export function MailTab() {
             </TableBody>
           </Table>
           {!mails.length && <div className="py-10 text-center text-muted-foreground">Chưa có mail nào.</div>}
+          {mails.length > 0 && !filtered.length && <div className="py-10 text-center text-muted-foreground">Không có mail khớp "{q}".</div>}
+          {pageCount > 1 && (
+            <div className="flex items-center justify-center gap-3 pt-4">
+              <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={curPage <= 1}>Trước</Button>
+              <span className="text-sm text-muted-foreground">Trang {curPage}/{pageCount} · {filtered.length} mail</span>
+              <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={curPage >= pageCount}>Sau</Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
