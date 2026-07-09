@@ -129,6 +129,65 @@ async function clickLocator(locator: Locator, log: FlowLog, label: string, timeo
 }
 
 /**
+ * XOÁ THẲNG các lớp popup xếp chồng (What's new, CapCut Ultra is live, promo…)
+ * thay vì bấm X từng cái. Lý do: dashboard mới bật 7-8 popup CHỒNG nhau, nút X
+ * hay bị lớp trên chắn hoặc bấm không tắt → click trượt. Xoá node ở tầng DOM
+ * chắc và nhanh hơn.
+ *
+ * Neo vào nút Close (span[aria-label='Close'] — selector đã xác nhận đúng) rồi
+ * leo lên container modal gần nhất mà xoá, kèm lớp mask/overlay nền (cái hay còn
+ * sót lại chắn click dù popup đã đóng). CHỈ xoá cụm có nút Close → không đụng
+ * nội dung trang thật. Quét MỌI frame (popup hay nằm trong iframe). Lặp tới khi
+ * hết lớp hoặc chạm trần vòng lặp (React có thể dựng lại → cần quét lại).
+ *
+ * KHÔNG dùng cho popup vai trò "Which role…": nó phải bấm Skip mới cho wizard đi
+ * tiếp (xoá cứng có thể làm wizard không chuyển màn). reachDashboard lo cái đó
+ * bằng Skip TRƯỚC khi gọi hàm này; đây chỉ dọn các popup promo còn lại.
+ */
+async function sweepPopups(page: Page, log: FlowLog, profileName: string, rounds = 8): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    let removed = 0;
+    for (const frame of page.frames()) {
+      const n = await frame
+        .evaluate(() => {
+          const doc = (globalThis as any).document;
+          if (!doc) return 0;
+          let count = 0;
+          const closes = doc.querySelectorAll("span[aria-label='Close']");
+          for (const close of Array.from(closes) as any[]) {
+            // Bỏ qua nút Close của popup vai trò ("Which role…") — để Skip lo.
+            const container =
+              close.closest("[role='dialog'],[class*='modal'],[class*='Modal'],[class*='dialog'],[class*='Dialog'],[class*='popup'],[class*='Popup']") ??
+              close.parentElement;
+            if (!container) continue;
+            const txt = (container.textContent ?? '').toLowerCase();
+            if (txt.includes('which role') || txt.includes('what best describes')) continue;
+            // Xoá lớp mask/overlay anh em (nền mờ tách rời hay chắn click).
+            const parent = container.parentElement;
+            if (parent) {
+              for (const sib of Array.from(parent.children) as any[]) {
+                const cls = String(sib.className ?? '').toLowerCase();
+                if (sib !== container && (cls.includes('mask') || cls.includes('overlay') || cls.includes('backdrop'))) {
+                  sib.remove();
+                  count++;
+                }
+              }
+            }
+            container.remove();
+            count++;
+          }
+          return count;
+        })
+        .catch(() => 0);
+      removed += n;
+    }
+    if (removed === 0) break;
+    log.info(`[${profileName}] xoá ${removed} lớp popup (vòng ${i + 1})`);
+    await page.waitForTimeout(400);
+  }
+}
+
+/**
  * Đưa flow từ màn sau-OTP vào tới DASHBOARD. Onboarding của CapCut KHÔNG cố định
  * thứ tự và có thể hiện TRỄ: lúc là wizard "Get started with space" với nút
  * "Open CapCut", lúc là popup vai trò "Which role…" với nút "Skip", lúc vào
@@ -377,6 +436,13 @@ export const capcutSigninFlow: RegisteredFlow = {
     // X trùng đúng selector span[aria-label='Close'] mà handler đang canh — nếu
     // không gỡ, handler tự đóng luôn bảng giá ngay khi nó hiện → mất gói 7 ngày.
     await page.removeLocatorHandler(popupClose).catch(() => {});
+
+    // Dọn các lớp popup promo xếp chồng ("What's new", "CapCut Ultra"…) chắn nút
+    // Upgrade. Xoá thẳng element (nhanh + chắc hơn click X từng cái); popup vai trò
+    // "Which role…" được chừa lại cho Skip (reachDashboard đã lo). Chạy sau khi gỡ
+    // handler để không đụng modal bảng giá sắp mở.
+    await sweepPopups(appPage, log, profile.name);
+
     await helper.pace();
     const [maybeNewTab] = await Promise.all([
       appPage.context().waitForEvent('page', { timeout: 20_000 }).catch(() => null),
@@ -411,18 +477,26 @@ export const capcutSigninFlow: RegisteredFlow = {
         clickLocator(upgradeButton, log, `[${profile.name}] bấm Upgrade gói Pro`),
       ]);
       if (checkout) {
-        await checkout.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
         // Cổng thanh toán mở tab bằng window.open('') → tab khởi tạo là about:blank
-        // rồi JS mới điều hướng sang URL thật. Chờ URL RỜI about:blank (poll tới 30s)
-        // trước khi log/chụp, nếu không sẽ bắt trúng lúc còn trống.
-        await checkout
-          .waitForURL((u) => u.href !== 'about:blank' && u.href !== '', { timeout: 30_000 })
-          .catch(() => {});
-        await checkout.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
-        const checkoutUrl = checkout.url();
+        // rồi JS mới điều hướng sang URL thật (cashier pipopay). Ta CHỈ cần bắt được
+        // URL pipopay là đủ để báo Telegram + ghi sheet — KHÔNG chờ trang load hết
+        // (cashier nặng, load đủ tốn nhiều giây vô ích). Poll URL nhanh (200ms/lần):
+        // hễ thấy 'pipopay' là report NGAY; nếu không kịp thấy pipopay thì fallback
+        // lấy URL đầu tiên rời about:blank.
+        const deadline = Date.now() + 30_000;
+        let checkoutUrl = '';
+        while (Date.now() < deadline) {
+          const u = checkout.url();
+          if (u.includes('pipopay')) { checkoutUrl = u; break; }
+          if (!checkoutUrl && u !== 'about:blank' && u !== '') checkoutUrl = u;
+          if (checkout.isClosed()) break;
+          await checkout.waitForTimeout(200);
+        }
+        if (!checkoutUrl) checkoutUrl = checkout.url();
         report({ checkoutUrl, status: 'checkout' });
         log.info(`[${profile.name}] popup thanh toán: ${checkoutUrl}`);
-        await snapshotPage(checkout, `capcut-checkout-${profile.name}`);
+        // Chụp lại (không chờ load) để có bằng chứng — bỏ qua nếu tab đã đóng.
+        await snapshotPage(checkout, `capcut-checkout-${profile.name}`).catch(() => {});
       } else {
         report({ status: 'signup-ok' });
         log.info(`[${profile.name}] bấm Upgrade nhưng không thấy popup thanh toán mở`);
