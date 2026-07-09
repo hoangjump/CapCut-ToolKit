@@ -290,6 +290,37 @@ async function reachDashboard(
   return appPage;
 }
 
+/**
+ * Chờ selector hiện, nhưng nếu trang TREO (spinner xoay mãi, cashier/bảng giá nạp
+ * không xong) thì tự STOP + RELOAD để nạp lại đầy đủ, rồi chờ tiếp. Lặp tối đa
+ * `reloads` lần. Trả locator handle nếu thấy, null nếu hết lượt vẫn không thấy.
+ *
+ * Lý do: đôi khi trang kẹt ở trạng thái loading dở (request treo, JS chưa chạy
+ * hết) — chờ thêm bao lâu cũng vô ích, chỉ reload mới cứu. window.stop() cắt các
+ * request đang treo trước khi reload để bản nạp lại sạch.
+ */
+async function waitWithReload(
+  page: Page,
+  selector: string,
+  log: FlowLog,
+  profileName: string,
+  opts: { perTryMs?: number; reloads?: number } = {},
+): Promise<import('playwright-core').ElementHandle | null> {
+  const perTryMs = opts.perTryMs ?? 15_000;
+  const reloads = opts.reloads ?? 2;
+  for (let attempt = 0; attempt <= reloads; attempt++) {
+    const found = await page
+      .waitForSelector(selector, { state: 'visible', timeout: perTryMs })
+      .catch(() => null);
+    if (found) return found;
+    if (attempt === reloads) break;
+    log.warn(`[${profileName}] trang treo (chưa thấy ${selector} sau ${perTryMs / 1000}s) — stop + reload (${attempt + 1}/${reloads})`);
+    await page.evaluate(() => (globalThis as any).stop?.()).catch(() => {});
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
+  }
+  return null;
+}
+
 export const capcutSigninFlow: RegisteredFlow = {
   meta: {
     name: 'capcut-signin',
@@ -459,9 +490,7 @@ export const capcutSigninFlow: RegisteredFlow = {
     // --- Bước 13: chờ gói dùng thử 7 ngày render (tối đa 15s) rồi quyết định.
     // Dùng waitForSelector có chờ thay vì exists() tức thời — bảng giá cần thời
     // gian dựng. Luôn chụp lại bảng giá để đối chiếu DOM mà không phải mua thêm. ---
-    const trial = await pricing
-      .waitForSelector(TRIAL_7DAYS, { state: 'visible', timeout: 15_000 })
-      .catch(() => null);
+    const trial = await waitWithReload(pricing, TRIAL_7DAYS, log, profile.name, { perTryMs: 15_000, reloads: 2 });
     await snapshotPage(pricing, `capcut-pricing-${profile.name}`);
 
     if (trial) {
