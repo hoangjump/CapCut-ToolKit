@@ -525,6 +525,20 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     }
   });
 
+  // Xóa TẤT CẢ profile. Đóng mọi browser đang mở trước (ProfileManager không sở
+  // hữu context) để không rớt lại tiến trình Chromium mồ côi. Phải đăng ký TRƯỚC
+  // '/api/profiles/:id' để Express không bắt nhầm chuỗi rỗng thành :id.
+  app.delete('/api/profiles', async (req: Request, res: Response) => {
+    try {
+      const wipeData = String(req.query.wipeData ?? '') === 'true';
+      await browsers.closeAll();
+      const removed = await profiles.deleteAll({ wipeData });
+      res.json({ removed });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
   app.delete('/api/profiles/:id', async (req: Request, res: Response) => {
     try {
       const wipeData = String(req.query.wipeData ?? '') === 'true';

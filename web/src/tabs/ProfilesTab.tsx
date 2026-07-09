@@ -79,13 +79,29 @@ export function ProfilesTab({ runSignal }: { runSignal: number }) {
     } catch (e) { toast.error((e as Error).message); }
   }
 
+  async function delAll() {
+    if (!profiles.length) return;
+    if (!confirm(`Xóa TẤT CẢ ${profiles.length} hồ sơ? (giữ lại dữ liệu session) — không thể hoàn tác.`)) return;
+    try {
+      const r = await profileApi.removeAll();
+      toast.success(`Đã xóa ${r.removed} hồ sơ`);
+      setSelectedId(null);
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+  }
+
   return (
     <div className="grid grid-cols-[320px_1fr] gap-5">
       <Card className="h-fit">
         <CardHeader className="space-y-2">
           <Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Tạo hồ sơ</Button>
-          <div className="text-sm text-muted-foreground">
-            <b>{profiles.length}</b> hồ sơ · <b>{profiles.filter((p) => running.has(p.id)).length}</b> đang chạy
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm text-muted-foreground">
+              <b>{profiles.length}</b> hồ sơ · <b>{profiles.filter((p) => running.has(p.id)).length}</b> đang chạy
+            </div>
+            {!!profiles.length && (
+              <Button variant="outline" size="sm" onClick={delAll}><Trash2 className="h-3.5 w-3.5 text-destructive" /> Xóa tất cả</Button>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-1.5">

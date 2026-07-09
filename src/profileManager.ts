@@ -93,6 +93,20 @@ export class ProfileManager {
     await this.persist();
   }
 
+  /** Removes ALL profiles at once. Returns how many were deleted. Caller must
+   *  close any open browser contexts first (ProfileManager doesn't own them). */
+  async deleteAll(opts: { wipeData?: boolean } = {}): Promise<number> {
+    const ids = [...this.profiles.keys()];
+    this.profiles.clear();
+    if (opts.wipeData) {
+      for (const id of ids) {
+        await rm(this.userDataDir(id), { recursive: true, force: true });
+      }
+    }
+    await this.persist();
+    return ids.length;
+  }
+
   private async persist(): Promise<void> {
     await writeFile(this.metaFile, JSON.stringify(this.list(), null, 2), 'utf8');
   }
