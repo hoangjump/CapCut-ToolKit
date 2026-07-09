@@ -132,17 +132,24 @@ async function clickLocator(locator: Locator, log: FlowLog, label: string, timeo
  * XOÁ THẲNG các lớp popup xếp chồng (What's new, CapCut Ultra is live, promo…)
  * thay vì bấm X từng cái. Lý do: dashboard mới bật 7-8 popup CHỒNG nhau, nút X
  * hay bị lớp trên chắn hoặc bấm không tắt → click trượt. Xoá node ở tầng DOM
- * chắc và nhanh hơn.
- *
- * Neo vào nút Close (span[aria-label='Close'] — selector đã xác nhận đúng) rồi
- * leo lên container modal gần nhất mà xoá, kèm lớp mask/overlay nền (cái hay còn
- * sót lại chắn click dù popup đã đóng). CHỈ xoá cụm có nút Close → không đụng
- * nội dung trang thật. Quét MỌI frame (popup hay nằm trong iframe). Lặp tới khi
+ * chắc và nhanh hơn. Quét MỌI frame (popup hay nằm trong iframe). Lặp tới khi
  * hết lớp hoặc chạm trần vòng lặp (React có thể dựng lại → cần quét lại).
+ *
+ * Hai pass mỗi vòng:
+ *   A) Popup CÓ nút Close: neo span[aria-label='Close'] → leo .lv-modal → xoá cả
+ *      .lv-modal-wrapper (dạng "CapCut Ultra", "What's new"). CHỈ xoá cụm có nút
+ *      Close → không đụng nội dung trang thật.
+ *   B) "Xác" chắn click còn trơ lại KHÔNG có Close nên pass A bỏ sót:
+ *      - .lv-modal-mask: nền mờ tách rời (aria-hidden, display:block), hay còn lại
+ *        chắn click sau khi modal đã đóng. Xoá hết.
+ *      - .lv-modal-wrapper RỖNG (không còn .lv-modal bên trong, vd z-index:1101):
+ *        lớp bọc trơ chắn click. Xoá.
  *
  * KHÔNG dùng cho popup vai trò "Which role…": nó phải bấm Skip mới cho wizard đi
  * tiếp (xoá cứng có thể làm wizard không chuyển màn). reachDashboard lo cái đó
- * bằng Skip TRƯỚC khi gọi hàm này; đây chỉ dọn các popup promo còn lại.
+ * bằng Skip TRƯỚC khi gọi hàm này; đây chỉ dọn các popup promo còn lại. Popup vai
+ * trò dùng class `wrapper-*` (KHÔNG phải `.lv-modal-wrapper`) nên pass B không
+ * đụng tới; thêm guard theo text cho chắc.
  */
 async function sweepPopups(page: Page, log: FlowLog, profileName: string, rounds = 8): Promise<void> {
   for (let i = 0; i < rounds; i++) {
@@ -153,6 +160,17 @@ async function sweepPopups(page: Page, log: FlowLog, profileName: string, rounds
           const doc = (globalThis as any).document;
           if (!doc) return 0;
           let count = 0;
+          // Chừa popup vai trò ("Which of the following… best describes you") cho
+          // Skip lo — xoá cứng có thể làm wizard không chuyển màn.
+          const isRolePopup = (el: any): boolean => {
+            const t = String(el.textContent ?? '').toLowerCase();
+            return (
+              t.includes('which role') ||
+              t.includes('which of the following') ||
+              t.includes('best describes')
+            );
+          };
+          // --- Pass A: popup CÓ nút Close ---
           const closes = doc.querySelectorAll("span[aria-label='Close']");
           for (const close of Array.from(closes) as any[]) {
             // Popup CapCut là Arco Design (class prefix `lv-`): khung modal thật là
@@ -161,30 +179,21 @@ async function sweepPopups(page: Page, log: FlowLog, profileName: string, rounds
             // 'lv-modal-close-icon' (chứa 'modal') → closest khớp nhầm CHÍNH NÓ, chỉ
             // xoá mỗi cái X còn popup vẫn nguyên (bug bản trước).
             const modal = close.closest('.lv-modal') ?? close.closest("[role='dialog']");
-            if (!modal) continue;
-            const txt = (modal.textContent ?? '').toLowerCase();
-            // Chừa popup vai trò ("Which of the following… best describes you") cho
-            // Skip lo — xoá cứng có thể làm wizard không chuyển màn.
-            if (
-              txt.includes('which role') ||
-              txt.includes('which of the following') ||
-              txt.includes('best describes')
-            ) continue;
-            // Xoá cả cụm: bọc ngoài (.lv-modal-wrapper) + nền mờ (.lv-modal-mask,
-            // element tách rời hay chắn click sau khi modal đóng). Mask thường là
-            // anh em của wrapper trong cùng container.
+            if (!modal || isRolePopup(modal)) continue;
             const wrapper = modal.closest('.lv-modal-wrapper') ?? modal;
-            const host = wrapper.parentElement;
-            if (host) {
-              for (const sib of Array.from(host.children) as any[]) {
-                const cls = String(sib.className ?? '').toLowerCase();
-                if (sib !== wrapper && (cls.includes('mask') || cls.includes('overlay') || cls.includes('backdrop'))) {
-                  sib.remove();
-                  count++;
-                }
-              }
-            }
             wrapper.remove();
+            count++;
+          }
+          // --- Pass B: dọn "xác" chắn click (mask nền + wrapper rỗng) ---
+          for (const mask of Array.from(doc.querySelectorAll('.lv-modal-mask')) as any[]) {
+            mask.remove();
+            count++;
+          }
+          for (const w of Array.from(doc.querySelectorAll('.lv-modal-wrapper')) as any[]) {
+            // Rỗng = không còn .lv-modal bên trong → chỉ là lớp chắn trơ. Wrapper còn
+            // chứa modal thật (chưa bị pass A xoá) thì giữ.
+            if (isRolePopup(w) || w.querySelector('.lv-modal')) continue;
+            w.remove();
             count++;
           }
           return count;
@@ -410,30 +419,12 @@ export const capcutSigninFlow: RegisteredFlow = {
     const appPage = await reachDashboard(page, log, profile.name);
     if (appPage !== page) log.info(`[${profile.name}] dashboard ở tab: ${appPage.url()}`);
 
-    // --- Bước 11c: DẸP 2 POPUP dashboard mới ("What's new" + "CapCut Ultra is
-    // live"). Chúng gắn với trang /my-edit, xếp CHỒNG nhau và mỗi cái một nút X
-    // cùng selector span[aria-label='Close'] → đóng tại chỗ hay dính strict-mode
-    // ("resolved to 2 elements") làm gãy thao tác đang chờ. Cách chắc ăn (đã xác
-    // nhận chạy được): điều hướng thẳng sang /profile — popup của /my-edit KHÔNG
-    // hiện lại ở đây — rồi bấm nút "Skip". Class thật `skip-mrkR37` có đuôi hash
-    // CSS-module TỰ SINH, đổi mỗi lần CapCut deploy, nên bắt theo prefix `skip-`
-    // + text "Skip" cho bền. Bấm xong coi như đã qua onboarding + hết popup. ---
-    await appPage.goto('https://www.capcut.com/profile', { waitUntil: 'domcontentloaded' }).catch(() => {});
-    const skipOnboarding = appPage.locator("[class*='skip-']").filter({ hasText: exactText('Skip') }).first();
-    const skipVisible = await skipOnboarding
-      .waitFor({ state: 'visible', timeout: 8_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (skipVisible) {
-      await clickLocator(skipOnboarding, log, `[${profile.name}] bấm Skip ở /profile`);
-      await appPage.waitForTimeout(1_500);
-    } else {
-      log.info(`[${profile.name}] /profile không thấy nút Skip — coi như đã sạch popup`);
-    }
-
     // Xác nhận nút Upgrade header đã hiện trước khi bấm. reachDashboard thường đã
     // dừng đúng lúc thấy header (chờ này trả về ngay); nếu hết budget mà chưa vào
     // được thì chờ tối đa 30s ở đây để fail CÓ ẢNH thay vì bấm nhầm.
+    // (Không còn nhảy sang /profile: popup dashboard mới — "What's new", "CapCut
+    // Ultra is live" và các "xác" mask/wrapper trơ — được sweepPopups dẹp thẳng
+    // tại tab hiện tại ở Bước 12, rồi bấm Upgrade luôn.)
     await appPage.waitForSelector(BTN_UPGRADE_HEADER, { state: 'visible', timeout: 30_000 });
 
     // --- Bước 12: mở màn nâng cấp VIP. Nút này có thể mở bảng giá NGAY TRÊN
