@@ -155,25 +155,36 @@ async function sweepPopups(page: Page, log: FlowLog, profileName: string, rounds
           let count = 0;
           const closes = doc.querySelectorAll("span[aria-label='Close']");
           for (const close of Array.from(closes) as any[]) {
-            // Bỏ qua nút Close của popup vai trò ("Which role…") — để Skip lo.
-            const container =
-              close.closest("[role='dialog'],[class*='modal'],[class*='Modal'],[class*='dialog'],[class*='Dialog'],[class*='popup'],[class*='Popup']") ??
-              close.parentElement;
-            if (!container) continue;
-            const txt = (container.textContent ?? '').toLowerCase();
-            if (txt.includes('which role') || txt.includes('what best describes')) continue;
-            // Xoá lớp mask/overlay anh em (nền mờ tách rời hay chắn click).
-            const parent = container.parentElement;
-            if (parent) {
-              for (const sib of Array.from(parent.children) as any[]) {
+            // Popup CapCut là Arco Design (class prefix `lv-`): khung modal thật là
+            // .lv-modal, nền mờ .lv-modal-mask, bọc ngoài .lv-modal-wrapper. LEO tới
+            // .lv-modal — KHÔNG dùng [class*='modal'] vì chính nút close có class
+            // 'lv-modal-close-icon' (chứa 'modal') → closest khớp nhầm CHÍNH NÓ, chỉ
+            // xoá mỗi cái X còn popup vẫn nguyên (bug bản trước).
+            const modal = close.closest('.lv-modal') ?? close.closest("[role='dialog']");
+            if (!modal) continue;
+            const txt = (modal.textContent ?? '').toLowerCase();
+            // Chừa popup vai trò ("Which of the following… best describes you") cho
+            // Skip lo — xoá cứng có thể làm wizard không chuyển màn.
+            if (
+              txt.includes('which role') ||
+              txt.includes('which of the following') ||
+              txt.includes('best describes')
+            ) continue;
+            // Xoá cả cụm: bọc ngoài (.lv-modal-wrapper) + nền mờ (.lv-modal-mask,
+            // element tách rời hay chắn click sau khi modal đóng). Mask thường là
+            // anh em của wrapper trong cùng container.
+            const wrapper = modal.closest('.lv-modal-wrapper') ?? modal;
+            const host = wrapper.parentElement;
+            if (host) {
+              for (const sib of Array.from(host.children) as any[]) {
                 const cls = String(sib.className ?? '').toLowerCase();
-                if (sib !== container && (cls.includes('mask') || cls.includes('overlay') || cls.includes('backdrop'))) {
+                if (sib !== wrapper && (cls.includes('mask') || cls.includes('overlay') || cls.includes('backdrop'))) {
                   sib.remove();
                   count++;
                 }
               }
             }
-            container.remove();
+            wrapper.remove();
             count++;
           }
           return count;
