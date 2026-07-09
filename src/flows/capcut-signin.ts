@@ -480,18 +480,22 @@ export const capcutSigninFlow: RegisteredFlow = {
       ]);
       if (checkout) {
         // Cổng thanh toán mở tab bằng window.open('') → tab khởi tạo là about:blank
-        // rồi JS mới điều hướng sang URL thật (cashier pipopay). Ta CHỈ cần bắt được
-        // URL pipopay là đủ để báo Telegram + ghi sheet — KHÔNG chờ trang load hết
-        // (cashier nặng, load đủ tốn nhiều giây vô ích). Poll URL nhanh (200ms/lần):
-        // hễ thấy 'pipopay' là report NGAY; nếu không kịp thấy pipopay thì fallback
-        // lấy URL đầu tiên rời about:blank.
+        // rồi JS mới điều hướng sang URL thật (cashier pipopay). URL pipopay là cái
+        // cần bắt để báo Telegram + ghi sheet. Poll nhanh (200ms/lần): hễ thấy
+        // 'pipopay' thì chờ THÊM 200ms cho JS gắn nốt query/session rồi chốt URL —
+        // đủ để link mở ra chuẩn mà không phải chờ cả chuỗi load nặng của cashier.
+        // Fallback: URL đầu tiên rời about:blank.
         const deadline = Date.now() + 30_000;
         let checkoutUrl = '';
         while (Date.now() < deadline) {
-          const u = checkout.url();
-          if (u.includes('pipopay')) { checkoutUrl = u; break; }
-          if (!checkoutUrl && u !== 'about:blank' && u !== '') checkoutUrl = u;
           if (checkout.isClosed()) break;
+          const u = checkout.url();
+          if (!checkoutUrl && u !== 'about:blank' && u !== '') checkoutUrl = u;
+          if (u.includes('pipopay')) {
+            await checkout.waitForTimeout(200);
+            checkoutUrl = checkout.url();
+            break;
+          }
           await checkout.waitForTimeout(200);
         }
         if (!checkoutUrl) checkoutUrl = checkout.url();
