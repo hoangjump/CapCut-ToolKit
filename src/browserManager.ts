@@ -38,12 +38,23 @@ const IS_WINDOWS = process.platform === 'win32';
  *    hợp bị nhiều cửa sổ tranh nhau, đường GPU nghẽn kéo mỗi thao tác dài hàng
  *    chục giây; ép software render đi đường CPU thường nhanh & ổn định hơn.
  *  - fission.autostart=false + dom.ipc.processCount=1: gom nội dung về ít tiến
- *    trình/1 process, cắt overhead khi 5 profile đẻ ra hàng chục tiến trình. */
+ *    trình/1 process, cắt overhead khi 5 profile đẻ ra hàng chục tiến trình.
+ *  - widget.windows.window_occlusion_tracking.enabled=false: TẮT occlusion
+ *    tracking. Firefox/Win đánh dấu cửa sổ BỊ CHE (chồng lên nhau, hoặc minimize)
+ *    là "occluded" rồi NGỪNG render + throttle nó → page.mouse.move (Camoufox vẽ
+ *    con trỏ thật ở tầng C++, cần cửa sổ đang render) đứng, flow kẹt ở bước click
+ *    → timeout → fail. Đây là thủ phạm "mở 10 con chỉ reg ra 2-3": các cửa sổ bị
+ *    che không thao tác được. Tắt đi thì cửa sổ LUÔN render như đang hiện dù bị
+ *    che/minimize. Kết hợp auto-tile (windowTiler) cho chắc.
+ *  - dom.min_background_timeout_value=1000: giữ throttle timer tab nền ở mức mặc
+ *    định nhẹ (không tăng), tránh setTimeout của SPA bị kéo giãn khi cửa sổ nền. */
 const WIN_PERF_PREFS: Record<string, unknown> = IS_WINDOWS
   ? {
       'gfx.webrender.software': true,
       'fission.autostart': false,
       'dom.ipc.processCount': 1,
+      'widget.windows.window_occlusion_tracking.enabled': false,
+      'dom.min_background_timeout_value': 1000,
     }
   : {};
 
@@ -293,6 +304,15 @@ export class BrowserManager {
       if (proxyRelayUrl) void closeAnonymizedProxy(proxyRelayUrl, true);
       throw err;
     }
+
+    // Chặn video (media) ở mọi trang của context: CapCut nhúng clip demo/marketing
+    // tự phát → tốn băng thông proxy tính tiền + tải render vô ích cho flow reg.
+    // Chặn ở tầng route (resourceType 'media') bắt cả <video>/<audio> lẫn fetch
+    // stream, không đụng ảnh/SVG (nút bấm nhiều cái là SVG — chặn sẽ gãy flow).
+    await context.route('**/*', (route) => {
+      if (route.request().resourceType() === 'media') return route.abort();
+      return route.continue();
+    });
 
     const session: Session = { profile: launchProfile, context, proxyRelayUrl, leasedProxyId };
     this.sessions.set(profileId, session);
