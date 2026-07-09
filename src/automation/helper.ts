@@ -6,6 +6,16 @@ import type { Logger } from '../logger.js';
 /** Default per-action timeout — flows can override per call. */
 const DEFAULT_TIMEOUT = 30_000;
 
+/** True khi chạy trên Windows. Cú lướt chuột (moveMouseTo) tách theo nền tảng:
+ *  mỗi bước là một page.mouse.move → trên Win bắt vẽ lại con trỏ, máy vẽ chậm
+ *  nên nhiều bước = lướt lê thê; Mac compositor phần cứng nhanh nên không thấy.
+ *  Win dùng ít bước (nhanh), Mac giữ nhiều bước (mượt, cong tự nhiên hơn). */
+const IS_WINDOWS = process.platform === 'win32';
+const GLIDE_STEPS_MIN = IS_WINDOWS ? 8 : 18;
+const GLIDE_STEPS_MAX = IS_WINDOWS ? 12 : 26;
+const GLIDE_WAIT_MIN = IS_WINDOWS ? 4 : 6;
+const GLIDE_WAIT_MAX = IS_WINDOWS ? 10 : 18;
+
 /** Human-like pause before each interactive step. Random in [PACE_MIN, PACE_MAX]
  *  ms — override via env (or set PACE_MAX_MS=0 to disable for fast debugging). */
 const PACE_MIN_MS = Number(process.env.PACE_MIN_MS ?? 1_000);
@@ -76,21 +86,29 @@ export class PageHelper {
       x: box.x + randFloat(0.2, 0.8) * box.width,
       y: box.y + randFloat(0.2, 0.8) * box.height,
     };
-    const start = this.cursor;
-    // Two random control points give the path a natural, non-straight arc.
-    const c1 = { x: randFloat(start.x, target.x), y: randFloat(start.y, target.y) };
-    const c2 = { x: randFloat(start.x, target.x), y: randFloat(start.y, target.y) };
-
-    const steps = randInt(18, 26);
     try {
-      for (let i = 1; i <= steps; i++) {
-        const t = i / steps;
-        const u = 1 - t;
-        // Cubic Bézier: (1-t)^3·P0 + 3(1-t)^2·t·C1 + 3(1-t)·t^2·C2 + t^3·P1
-        const x = u * u * u * start.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * target.x;
-        const y = u * u * u * start.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * target.y;
-        await this.page.mouse.move(x, y);
-        await this.page.waitForTimeout(randInt(6, 18));
+      if (IS_WINDOWS) {
+        // Camoufox `humanize` (bật ở browserManager) TỰ vẽ đường cong người cho
+        // MỖI page.mouse.move ở tầng C++. Nên trên Win chỉ di 1 CÚ tới đích →
+        // engine animate đúng 1 quỹ đạo (≤0.5s). Trước đây lướt 8-12 bước, mỗi
+        // bước lại bị engine animate = CHỒNG LỚP → con trỏ "di mãi", khựng khi
+        // máy vẽ chậm. Bỏ hẳn vòng lặp trên Win, giao đường cong cho Camoufox.
+        await this.page.mouse.move(target.x, target.y);
+      } else {
+        // Mac (giữ nguyên — đang mượt): Bézier nhiều bước tự vẽ đường cong.
+        const start = this.cursor;
+        const c1 = { x: randFloat(start.x, target.x), y: randFloat(start.y, target.y) };
+        const c2 = { x: randFloat(start.x, target.x), y: randFloat(start.y, target.y) };
+        const steps = randInt(GLIDE_STEPS_MIN, GLIDE_STEPS_MAX);
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          const u = 1 - t;
+          // Cubic Bézier: (1-t)^3·P0 + 3(1-t)^2·t·C1 + 3(1-t)·t^2·C2 + t^3·P1
+          const x = u * u * u * start.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * target.x;
+          const y = u * u * u * start.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * target.y;
+          await this.page.mouse.move(x, y);
+          await this.page.waitForTimeout(randInt(GLIDE_WAIT_MIN, GLIDE_WAIT_MAX));
+        }
       }
       this.cursor = target;
     } catch (err) {

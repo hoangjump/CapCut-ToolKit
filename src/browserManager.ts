@@ -26,6 +26,26 @@ function isGeoipIpError(err: unknown): boolean {
   );
 }
 
+/** True khi đang chạy trên Windows. Dùng để tách tối ưu theo nền tảng: Windows
+ *  cần giảm tải render/CPU khi nhiều cửa sổ headful tranh compositor; Mac
+ *  compositing bằng phần cứng vốn nhanh nên KHÔNG áp các pref này (sẽ chậm đi). */
+const IS_WINDOWS = process.platform === 'win32';
+
+/** Prefs giảm tải CPU/render CHỈ cho Windows. Rỗng trên Mac/Linux. Áp qua
+ *  firefox_user_prefs mỗi launch.
+ *  - gfx.webrender.software: render bằng CPU thay GPU. Trên máy Win GPU yếu/tích
+ *    hợp bị nhiều cửa sổ tranh nhau, đường GPU nghẽn kéo mỗi thao tác dài hàng
+ *    chục giây; ép software render đi đường CPU thường nhanh & ổn định hơn.
+ *  - fission.autostart=false + dom.ipc.processCount=1: gom nội dung về ít tiến
+ *    trình/1 process, cắt overhead khi 5 profile đẻ ra hàng chục tiến trình. */
+const WIN_PERF_PREFS: Record<string, unknown> = IS_WINDOWS
+  ? {
+      'gfx.webrender.software': true,
+      'fission.autostart': false,
+      'dom.ipc.processCount': 1,
+    }
+  : {};
+
 export interface Session {
   profile: Profile;
   context: BrowserContext;
@@ -211,7 +231,20 @@ export class BrowserManager {
         // human-like ở tầng browser (con trỏ di chuyển THẬT, thấy trên cửa sổ) —
         // khác page.mouse.move của Playwright chỉ phát sự kiện chứ không nhấc con
         // trỏ thật. Đây là "mock con trỏ" vốn có; codex bỏ nó nên nhìn như mất.
-        humanize: true,
+        //
+        // humanize tách theo nền tảng:
+        //  - Mac: true — engine tự chọn thời lượng (tới ~1.5s). Compositing phần
+        //    cứng của Mac vẽ nhanh nên cú di mượt, KHÔNG bị lê; giữ true cho tự
+        //    nhiên nhất.
+        //  - Windows: cap 0.5s. Nhiều cửa sổ headful tranh compositor, 1.5s đó bị
+        //    kéo thành hàng chục giây ("con trỏ di mãi chưa xong"). Trần 0.5s vẫn
+        //    cong + human nhưng không lê khi máy vẽ chậm.
+        humanize: IS_WINDOWS ? 0.5 : true,
+        // showcursor: highlighter (chấm con trỏ) của Camoufox là 1 lớp overlay vẽ
+        // mỗi frame. Trên Win nhiều cửa sổ headful, lớp này tốn render → góp phần
+        // khựng. Tắt trên Win (chuyển động chuột humanize VẪN chạy, chỉ ẩn chấm).
+        // Mac giữ mặc định (render rẻ, tiện nhìn con trỏ khi theo dõi).
+        showcursor: IS_WINDOWS ? false : undefined,
         // Browser geolocation permission. 'prompt' (Firefox default) asks the user,
         // 'allow' grants silently so the position (set by geoip) is served without a
         // dialog, 'disabled' turns the navigator.geolocation API off entirely.
@@ -290,14 +323,18 @@ export class BrowserManager {
     return undefined;
   }
 
-  /** Firefox prefs backing the geolocation-permission knob. 'prompt' is Firefox's
-   *  own default so we set nothing; 'allow' grants silently (position served from
-   *  geoip when on); 'disabled' turns the navigator.geolocation API off. Returns
-   *  undefined for 'prompt' so Camoufox's defaults stand. */
-  private geoPrefs(cfg: AntiDetectConfig): Record<string, unknown> | undefined {
-    if (cfg.geolocation === 'allow') return { 'permissions.default.geo': 1 };
-    if (cfg.geolocation === 'disabled') return { 'geo.enabled': false };
-    return undefined;
+  /** Firefox prefs cho mỗi launch. Gồm:
+   *  1. Prefs giảm tải CPU/render (WIN_PERF_PREFS) — CHỈ áp trên Windows, rỗng
+   *     trên Mac/Linux (xem chú thích ở khai báo WIN_PERF_PREFS).
+   *  2. Knob geolocation: 'allow' cấp im lặng, 'disabled' tắt API, 'prompt' để
+   *     mặc định Firefox (không set gì thêm).
+   *  Trả object rỗng {} vẫn hợp lệ với Camoufox (trên Mac khi geolocation ở
+   *  'prompt' thì đúng là {}). */
+  private geoPrefs(cfg: AntiDetectConfig): Record<string, unknown> {
+    const prefs: Record<string, unknown> = { ...WIN_PERF_PREFS };
+    if (cfg.geolocation === 'allow') prefs['permissions.default.geo'] = 1;
+    else if (cfg.geolocation === 'disabled') prefs['geo.enabled'] = false;
+    return prefs;
   }
 
   /** Screen constraint backing the resolution knob. 'real' (or any unparseable
