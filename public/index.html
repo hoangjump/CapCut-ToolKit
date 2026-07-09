@@ -414,6 +414,12 @@
     <div class="tab" data-view="profiles"><span class="ico">&#128100;</span> Hồ sơ</div>
     <div class="tab" data-view="mail"><span class="ico">&#9993;</span> Mail</div>
     <div class="tab" data-view="project"><span class="ico">&#9881;</span> Project</div>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+      <button id="btnTile" title="Sắp xếp lại các cửa sổ trình duyệt thành lưới (chỉ Windows)">&#8862; Sắp xếp cửa sổ</button>
+      <button id="btnExport" title="Xuất cấu hình (proxy, hồ sơ, mail, project, cài đặt) ra file JSON">&#8681; Xuất dữ liệu</button>
+      <button id="btnImport" title="Nhập cấu hình từ file JSON — gộp, giữ dữ liệu đang có">&#8679; Nhập dữ liệu</button>
+      <input type="file" id="importFile" accept="application/json,.json" style="display:none" />
+    </div>
   </div>
 
   <!-- ============ PROXY VIEW ============ -->
@@ -840,6 +846,43 @@
         if (tab.dataset.view === 'project') renderProjects();
       };
     });
+
+    // ============ Sắp xếp cửa sổ ============
+    $('btnTile').onclick = async () => {
+      try {
+        await parse(await fetch('/api/windows/tile', { method: 'POST' }));
+        toast('Đã sắp xếp cửa sổ');
+      } catch (err) {
+        toast('Sắp xếp lỗi: ' + err.message, true);
+      }
+    };
+
+    // ============ Export / Import dữ liệu ============
+    $('btnExport').onclick = () => {
+      // Tải trực tiếp từ endpoint (trình duyệt tự lưu file theo Content-Disposition).
+      window.location.href = '/api/store/export';
+    };
+    $('btnImport').onclick = () => $('importFile').click();
+    $('importFile').onchange = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      if (!confirm('Nhập dữ liệu từ file này? Chỉ THÊM mục có id mới, giữ nguyên dữ liệu đang có.')) return;
+      try {
+        const bundle = JSON.parse(await file.text());
+        const r = await fetch('/api/store/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bundle),
+        });
+        const res = await parse(r);
+        const a = res.added || {};
+        toast(`Đã nhập: ${a.proxies||0} proxy, ${a.profiles||0} hồ sơ, ${a.mails||0} mail, ${a.projects||0} project, ${a.settings||0} cài đặt`);
+        render(); renderProfiles(); renderMail(); renderProjects();
+      } catch (err) {
+        toast('Nhập lỗi: ' + err.message, true);
+      }
+    };
 
     // ============ PROXY view logic ============
     let editingId = null;

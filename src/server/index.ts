@@ -1,5 +1,6 @@
 import express, { type Express, type Request, type Response } from 'express';
 import { existsSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,6 +24,7 @@ import { ProjectStore } from '../projectStore.js';
 import { runProject } from '../automation/runner.js';
 import type { SheetRow } from '../automation/types.js';
 import { flowMetas } from '../flows/index.js';
+import { tileNow } from '../windowTiler.js';
 import { profilePresets, projectPresets } from '../presets.js';
 import {
   defaultAntiDetect,
@@ -618,6 +620,110 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       res.json(settingsDto());
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // ---- Export / Import toàn bộ store (5 file JSON) -----------------------
+  // Gói: profiles + projects + proxies + mails + settings. KHÔNG gồm thư mục
+  // data/ (session từng hồ sơ) và shots/ — chỉ cấu hình, cho nhẹ & dễ chuyển máy.
+  // LƯU Ý BẢO MẬT: settings.json chứa API key thật (mktproxy/dongvanfb/telegram)
+  // ở dạng thô — file export mang theo secret, giữ kín như mật khẩu.
+  const STORE_FILES = ['profiles', 'projects', 'proxies', 'mails', 'settings'] as const;
+
+  app.get('/api/store/export', async (_req: Request, res: Response) => {
+    try {
+      const bundle: Record<string, unknown> = {
+        _format: 'teamhatde-store',
+        _version: 1,
+        _exportedAt: new Date().toISOString(),
+      };
+      for (const name of STORE_FILES) {
+        const file = join(storeRoot, `${name}.json`);
+        if (existsSync(file)) {
+          bundle[name] = JSON.parse(await readFile(file, 'utf8'));
+        } else {
+          bundle[name] = name === 'settings' ? {} : [];
+        }
+      }
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="teamhatde-backup-${stamp}.json"`);
+      res.send(JSON.stringify(bundle, null, 2));
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Gộp theo id, GIỮ bản đang có (imported chỉ thêm id mới). Với settings: giữ
+  // key đang có, chỉ thêm key còn thiếu. Ghi file xong nạp lại store để vào RAM.
+  app.post('/api/store/import', async (req: Request, res: Response) => {
+    try {
+      const bundle = req.body ?? {};
+      if (bundle._format && bundle._format !== 'teamhatde-store') {
+        res.status(400).json({ error: 'File không đúng định dạng backup của app.' });
+        return;
+      }
+      const added: Record<string, number> = {};
+
+      for (const name of ['profiles', 'projects', 'proxies', 'mails'] as const) {
+        const incoming = bundle[name];
+        if (!Array.isArray(incoming)) continue;
+        const file = join(storeRoot, `${name}.json`);
+        const current: Array<{ id?: string }> = existsSync(file)
+          ? JSON.parse(await readFile(file, 'utf8'))
+          : [];
+        const seen = new Set(current.map((it) => it.id).filter(Boolean));
+        let n = 0;
+        for (const item of incoming as Array<{ id?: string }>) {
+          if (item && item.id && !seen.has(item.id)) {
+            current.push(item);
+            seen.add(item.id);
+            n += 1;
+          }
+        }
+        added[name] = n;
+        await writeFile(file, JSON.stringify(current, null, 2), 'utf8');
+      }
+
+      // settings: chỉ thêm key còn thiếu, không đè key đang có.
+      if (bundle.settings && typeof bundle.settings === 'object') {
+        const file = join(storeRoot, 'settings.json');
+        const current: Record<string, unknown> = existsSync(file)
+          ? JSON.parse(await readFile(file, 'utf8'))
+          : {};
+        let n = 0;
+        for (const [k, v] of Object.entries(bundle.settings)) {
+          if (current[k] === undefined && v !== undefined) {
+            current[k] = v;
+            n += 1;
+          }
+        }
+        added.settings = n;
+        await writeFile(file, JSON.stringify(current, null, 2), 'utf8');
+      }
+
+      // Nạp lại tất cả store từ đĩa vào Map trong RAM.
+      await Promise.all([
+        store.init(),
+        profiles.init(),
+        projects.init(),
+        mails.init(),
+        settings.init(),
+      ]);
+
+      res.json({ ok: true, added });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  // Sắp xếp lại cửa sổ Camoufox thành lưới (thủ công). No-op ngoài Windows.
+  app.post('/api/windows/tile', async (_req: Request, res: Response) => {
+    try {
+      await tileNow();
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
     }
   });
 

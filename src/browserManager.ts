@@ -13,6 +13,7 @@ import { checkProxy } from './proxyChecker.js';
 import { resolveProxy, poolMatching, recordToConfig, emptyPoolMessage, type ResolveTrigger } from './proxyResolver.js';
 import { languageForCountry } from './antiDetect.js';
 import { createLogger, type Logger } from './logger.js';
+import { scheduleTile } from './windowTiler.js';
 
 /** True when `err` is camoufox's geoip public-IP lookup failing (all 6 IP
  *  endpoints unreachable through the proxy). Matched by the InvalidIP class name
@@ -295,11 +296,15 @@ export class BrowserManager {
 
     const session: Session = { profile: launchProfile, context, proxyRelayUrl, leasedProxyId };
     this.sessions.set(profileId, session);
+    // Cửa sổ Camoufox vừa xuất hiện → xếp lại lưới (no-op ngoài Windows).
+    scheduleTile();
 
     context.on('close', () => {
       this.sessions.delete(profileId);
       this.releaseLease(leasedProxyId);
       if (proxyRelayUrl) void closeAnonymizedProxy(proxyRelayUrl, true);
+      // Một cửa sổ đóng → dồn các cửa sổ còn lại cho đều.
+      scheduleTile();
     });
 
     // Open startup URLs (reuse the about:blank page the persistent context gives us).

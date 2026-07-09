@@ -4,6 +4,14 @@
 // is undefined", click rơi xuống synthetic (isTrusted:false) = tín hiệu bot. Chốt sau
 // 23 lần probe: static-import đầu process = 10/10 OK, dynamic-import muộn = 5/5 throw.
 import 'camoufox-js';
+// INSTALL_DIR: chỗ camoufox-js THẬT SỰ tải + chạy Camoufox. Là const cấp module,
+// tính NGAY lúc pkgman.js được nạp (đỉnh process, qua import 'camoufox-js' trên).
+// KHÔNG set CAMOUFOX_INSTALL_DIR nữa: env var đó chỉ ăn nếu gán TRƯỚC khi module
+// nạp, mà ta gán trong openMainWindow() (chạy sau) nên vô dụng — hậu quả cũ: app
+// check version.json ở userData/camoufox trong khi camoufox nằm ở cache mặc định
+// → Windows máy sạch tải lại mỗi lần mở. Giờ check ĐÚNG chỗ camoufox-js dùng, và
+// đường dẫn này không phụ thuộc tên app nên sống sót qua đổi tên (capcut→teamhatde).
+import { INSTALL_DIR } from 'camoufox-js/dist/pkgman.js';
 import { app, BrowserWindow, Menu, dialog, type MessageBoxOptions, type MenuItemConstructorOptions } from 'electron';
 import { existsSync } from 'node:fs';
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -249,11 +257,11 @@ async function openMainWindow(): Promise<void> {
 
   const userData = app.getPath('userData');
   const storeRoot = join(userData, 'profiles-store');
-  const camoufoxDir = join(userData, 'camoufox');
-  process.env.CAMOUFOX_INSTALL_DIR = camoufoxDir;
 
   await migrateLegacyStore(storeRoot);
-  await ensureCamoufox(camoufoxDir);
+  // ensureCamoufox check ĐÚNG chỗ camoufox-js tải/chạy (INSTALL_DIR), không phải
+  // userData/camoufox nữa — xem chú thích ở khai báo INSTALL_DIR đầu file.
+  await ensureCamoufox(INSTALL_DIR.toString());
 
   await loadBootstrap('Đang mở dashboard...');
   const { startServer } = await import('../server/index.js');
