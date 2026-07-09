@@ -143,8 +143,10 @@ export const profileApi = {
   get: (id: string) => fetch('/api/profiles/' + id).then((r) => parse<Profile>(r)),
   create: (body: any) => post('/api/profiles', body).then((r) => parse<Profile>(r)),
   update: (id: string, body: any) => put('/api/profiles/' + id, body).then((r) => parse<Profile>(r)),
-  remove: (id: string) => fetch('/api/profiles/' + id, { method: 'DELETE' }),
-  removeAll: () => fetch('/api/profiles', { method: 'DELETE', headers: jsonHeaders }).then((r) => parse<{ removed: number }>(r)),
+  // wipeData=true: xóa luôn userDataDir trên đĩa (cache/session Chromium — phần
+  // ngốn dung lượng), không chỉ metadata. Giải phóng ổ đĩa khi xóa hồ sơ.
+  remove: (id: string) => fetch('/api/profiles/' + id + '?wipeData=true', { method: 'DELETE' }),
+  removeAll: () => fetch('/api/profiles?wipeData=true', { method: 'DELETE', headers: jsonHeaders }).then((r) => parse<{ removed: number }>(r)),
   open: (id: string) => post(`/api/profiles/${id}/open`).then((r) => parse<any>(r)),
   close: (id: string) => post(`/api/profiles/${id}/close`).then((r) => parse<any>(r)),
   rotateProxy: (id: string) => post(`/api/profiles/${id}/rotate-proxy`).then((r) => parse<any>(r)),

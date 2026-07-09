@@ -81,7 +81,7 @@ export function ProfilesTab({ runSignal }: { runSignal: number }) {
 
   async function delAll() {
     if (!profiles.length) return;
-    if (!confirm(`Xóa TẤT CẢ ${profiles.length} hồ sơ? (giữ lại dữ liệu session) — không thể hoàn tác.`)) return;
+    if (!confirm(`Xóa TẤT CẢ ${profiles.length} hồ sơ + toàn bộ dữ liệu session trên đĩa? Không thể hoàn tác.`)) return;
     try {
       const r = await profileApi.removeAll();
       toast.success(`Đã xóa ${r.removed} hồ sơ`);
@@ -210,7 +210,7 @@ function ProfileConfig({ profile, running, onToggleRun, onChanged, onDeleted }: 
     catch (e) { setName(profile.name); toast.error((e as Error).message); }
   }
   async function del() {
-    if (!confirm(`Xóa hồ sơ "${profile.name}"? (giữ lại dữ liệu session)`)) return;
+    if (!confirm(`Xóa hồ sơ "${profile.name}" + toàn bộ dữ liệu session trên đĩa? Không thể hoàn tác.`)) return;
     try { await profileApi.remove(profile.id); toast.success('Đã xóa hồ sơ'); onDeleted(); }
     catch (e) { toast.error((e as Error).message); }
   }
