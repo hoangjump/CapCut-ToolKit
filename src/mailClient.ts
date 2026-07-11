@@ -8,7 +8,7 @@ import { createLogger } from './logger.js';
 const log = createLogger('mail');
 
 const API_HOST = 'https://api.dongvanfb.net';
-const TOOLS_HOST = 'https://tools.dongvanfb.net';
+const SMAIL_HOST = 'https://smail1s.com';
 const TIMEOUT_MS = 15_000;
 
 /** A single parsed row from /user/buy's list_data. */
@@ -39,8 +39,8 @@ export interface CodeResult {
   code: string;
   content: string;
   date: string;
-  /** Which endpoint answered — oauth2 is tried first, graph is the fallback. */
-  source: 'oauth2' | 'graph';
+  /** Which endpoint answered — oauth is tried first, graph is the fallback. */
+  source: 'oauth' | 'graph';
 }
 
 export interface MailMessage {
@@ -142,61 +142,68 @@ export async function buyMail(apikey: string, input: BuyMailInput): Promise<BuyR
   };
 }
 
-function credBody(c: MailCredentials, extra: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    email: c.email,
-    refresh_token: c.refreshToken,
-    client_id: c.clientId,
-    ...extra,
-  });
-}
-
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
-/** Fetch an OTP/confirmation code. Tries get_code_oauth2 first; on failure or a
- *  falsey status, falls back to graph_code. Neither needs the API key. */
-export async function getCode(input: GetCodeInput): Promise<CodeResult> {
-  const payload = credBody(input, { type: input.type });
-  try {
-    const body = await requestJson(
-      `${TOOLS_HOST}/api/get_code_oauth2`,
-      { method: 'POST', headers: JSON_HEADERS, body: payload },
-      'Lấy code (OAuth2)',
-    );
-    if (body?.status && body?.code) {
-      return {
-        status: true,
-        code: String(body.code),
-        content: String(body.content ?? ''),
-        date: String(body.date ?? ''),
-        source: 'oauth2',
-      };
-    }
-    log.info(`oauth2 code rỗng cho ${input.email}, thử graph`);
-  } catch (err) {
-    log.info(`oauth2 lỗi (${(err as Error).message}), thử graph`);
-  }
-
+/** Gọi POST /get_messages trên smail1s.com với mode cho trước.
+ *  Trả mảng messages của account đầu tiên trong response, hoặc ném Error.
+ *  data format: "email|refresh_token|client_id" (client_secret tuỳ chọn nếu có). */
+async function fetchSmail1s(
+  cred: MailCredentials,
+  mode: 'oauth' | 'graph',
+): Promise<MailMessage[]> {
+  const parts = [cred.email, cred.refreshToken, cred.clientId];
+  if ((cred as any).clientSecret) parts.push((cred as any).clientSecret);
   const body = await requestJson(
-    `${TOOLS_HOST}/api/graph_code`,
-    { method: 'POST', headers: JSON_HEADERS, body: payload },
-    'Lấy code (Graph)',
+    `${SMAIL_HOST}/get_messages`,
+    {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ mode, data: parts.join('|') }),
+    },
+    `Đọc mail smail1s (${mode})`,
   );
-  return {
-    status: Boolean(body?.status),
-    code: String(body?.code ?? ''),
-    content: String(body?.content ?? ''),
-    date: String(body?.date ?? ''),
-    source: 'graph',
-  };
+  // Response: { data: [{ email, messages: [], error? }] }
+  const entry = Array.isArray(body?.data) ? body.data[0] : null;
+  if (!entry) throw new Error(`smail1s (${mode}): không có dữ liệu trả về`);
+  if (entry?.error) throw new Error(`smail1s (${mode}): ${entry.error}`);
+  return Array.isArray(entry?.messages) ? entry.messages : [];
 }
 
-/** POST /api/get_messages_oauth2 — the mailbox inbox (list of messages). */
+/** Đọc inbox qua smail1s. Thử oauth trước, nếu lỗi fallback sang graph. */
 export async function getMessages(cred: MailCredentials): Promise<MailMessage[]> {
-  const body = await requestJson(
-    `${TOOLS_HOST}/api/get_messages_oauth2`,
-    { method: 'POST', headers: JSON_HEADERS, body: credBody(cred, { list_mail: 'all' }) },
-    'Xem hộp thư',
-  );
-  return Array.isArray(body?.messages) ? body.messages : [];
+  try {
+    return await fetchSmail1s(cred, 'oauth');
+  } catch (err) {
+    log.info(`smail1s oauth lỗi (${(err as Error).message}), thử graph`);
+  }
+  return fetchSmail1s(cred, 'graph');
+}
+
+/** Lấy OTP/code xác nhận qua smail1s. Thử oauth trước, fallback graph.
+ *  smail1s đã extract sẵn field `code` trong mỗi message — lấy message
+ *  mới nhất có code. `type` giữ để tương thích interface nhưng không filter
+ *  phía server (smail1s trả tất cả mail, dùng pollOtpByRegex để filter cụ thể). */
+export async function getCode(input: GetCodeInput): Promise<CodeResult> {
+  let messages: MailMessage[] = [];
+  let source: 'oauth' | 'graph' = 'oauth';
+  try {
+    messages = await fetchSmail1s(input, 'oauth');
+    source = 'oauth';
+  } catch (err) {
+    log.info(`smail1s oauth lỗi (${(err as Error).message}), thử graph`);
+    messages = await fetchSmail1s(input, 'graph');
+    source = 'graph';
+  }
+  // Lấy message đầu tiên (mới nhất) đã có code extract sẵn
+  const hit = messages.find((m) => m.code && m.code.trim());
+  if (hit) {
+    return {
+      status: true,
+      code: String(hit.code),
+      content: String(hit.message ?? hit.subject ?? ''),
+      date: String(hit.date ?? ''),
+      source,
+    };
+  }
+  return { status: false, code: '', content: '', date: '', source };
 }
