@@ -1141,6 +1141,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     try {
       const result = await getCode({
         email: mail.email,
+        password: mail.password,
         refreshToken: mail.refreshToken,
         clientId: mail.clientId,
         type,
@@ -1160,6 +1161,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     try {
       const messages = await getMessages({
         email: mail.email,
+        password: mail.password,
         refreshToken: mail.refreshToken,
         clientId: mail.clientId,
       });

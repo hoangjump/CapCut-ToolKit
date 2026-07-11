@@ -151,8 +151,9 @@ async function fetchSmail1s(
   cred: MailCredentials,
   mode: 'oauth' | 'graph',
 ): Promise<MailMessage[]> {
-  const parts = [cred.email, cred.refreshToken, cred.clientId];
-  if ((cred as any).clientSecret) parts.push((cred as any).clientSecret);
+  // smail1s chấp nhận format dongvan: email|password|refresh_token|client_id
+  // password để trống chuỗi nếu không có (vẫn giữ đúng số trường)
+  const parts = [cred.email, cred.password ?? '', cred.refreshToken, cred.clientId];
   const body = await requestJson(
     `${SMAIL_HOST}/get_messages`,
     {

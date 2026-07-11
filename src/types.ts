@@ -174,6 +174,7 @@ export interface LaunchOptions {
  *  API key needed to read mail / fetch OTP, just this per-mailbox set. */
 export interface MailCredentials {
   email: string;
+  password?: string;
   refreshToken: string;
   clientId: string;
 }
