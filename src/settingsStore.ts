@@ -60,6 +60,24 @@ export class SettingsStore {
     await this.persist();
   }
 
+  getSelltaikhoanKey(): string | undefined {
+    return this.settings.selltaikhoanApiKey;
+  }
+
+  async setSelltaikhoanKey(key: string | undefined): Promise<void> {
+    this.settings.selltaikhoanApiKey = key?.trim() || undefined;
+    await this.persist();
+  }
+
+  getSmsbowerKey(): string | undefined {
+    return this.settings.smsbowerApiKey;
+  }
+
+  async setSmsbowerKey(key: string | undefined): Promise<void> {
+    this.settings.smsbowerApiKey = key?.trim() || undefined;
+    await this.persist();
+  }
+
   getTelegramBotToken(): string | undefined {
     return this.settings.telegramBotToken;
   }

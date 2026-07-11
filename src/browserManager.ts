@@ -228,10 +228,11 @@ export class BrowserManager {
         os: cfg.osProfile && cfg.osProfile !== 'auto' ? cfg.osProfile : undefined,
         proxy: proxyRelayUrl ? { server: proxyRelayUrl } : undefined,
         geoip: useGeoip ? true : undefined,
-        // Locale driving the Intl API. When geoip is on it sets a fully IP-coherent
-        // locale itself, so we leave this undefined and defer to it; otherwise fall
-        // back to the coarse country→locale map when the profile opted into it.
-        locale: useGeoip ? undefined : this.localeFor(cfg, launchProfile),
+        // Locale driving the Intl API. An explicit cfg.locale (vd 'en-US' cho flow
+        // ChatGPT) LUÔN thắng — bất kể geoip/IP. Ngược lại: khi geoip on nó tự set
+        // locale IP-coherent (để undefined, nhường geoip); còn lại rơi về map
+        // country→locale khi profile chọn 'base-on-ip'.
+        locale: cfg.locale ?? (useGeoip ? undefined : this.localeFor(cfg, launchProfile)),
         // WebRTC: 'disabled' turns the stack off so no candidates leak. 'base-on-ip'
         // and 'real' both leave it on — the relay already forces egress through the
         // proxy IP, so discovered candidates match.

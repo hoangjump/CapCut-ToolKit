@@ -78,6 +78,12 @@ export interface AntiDetectConfig {
    *  OS; a "WIDTHxHEIGHT" string (e.g. "1920x1080") pins a fixed window size via
    *  Camoufox's `window` option so screen/window dims report that resolution. */
   screen: string;
+  /** Ép locale BCP-47 cụ thể (vd 'en-US') ở tầng engine — thắng cả map theo
+   *  country. Dùng khi cần UI một ngôn ngữ cố định bất kể IP proxy (vd flow
+   *  ChatGPT chạy proxy VN nhưng cần giao diện tiếng Anh để bắt nút theo text).
+   *  Absent = theo geoip/language như cũ. Nên tắt geoip khi đặt cái này để IP
+   *  không kéo locale về ngôn ngữ khác. */
+  locale?: string;
 }
 
 export function defaultAntiDetect(): AntiDetectConfig {
@@ -215,6 +221,15 @@ export interface AppSettings {
   /** mktproxy.com API key (billed real money). Stored locally, only ever
    *  returned to the UI masked. Used to buy proxies + query balance/orders. */
   mktproxyApiKey?: string;
+  /** selltaikhoan.com API key (bills real money) — nhà cung cấp mail thứ 2
+   *  (Outlook OAuth2 rẻ hơn, cùng định dạng email|password|refresh|client nên
+   *  đọc OTP tái dùng chung). Lưu local, chỉ trả UI dạng masked. */
+  selltaikhoanApiKey?: string;
+  /** smsbower.online API key (bills real money) — dịch vụ THUÊ địa chỉ gmail để
+   *  nhận code xác minh theo service (vd đăng ký ChatGPT). Không phải hộp thư có
+   *  sẵn nên đi đường riêng (ctx.rentMail), không qua buyMail/getOtp. Lưu local,
+   *  chỉ trả UI dạng masked. */
+  smsbowerApiKey?: string;
   /** Telegram bot token (from @BotFather). When set together with a chat id,
    *  each successfully registered account is posted to that chat. */
   telegramBotToken?: string;
@@ -239,11 +254,20 @@ export interface ProjectRecord {
   ephemeralCount?: number;
   /** Optional mailbox (MailRecord id) bound in for getOtp() steps. */
   mailId?: string;
+  /** Nhà cung cấp mail cho ctx.buyMail() khi flow tự mua. 'dongvanfb' (mặc định)
+   *  dùng buyAccountType+buyQuality; 'selltaikhoan' dùng buyProductId. */
+  mailProvider?: 'dongvanfb' | 'selltaikhoan';
   /** Defaults for flows that call ctx.buyMail() (buy a fresh mailbox per profile
    *  from dongvanfb). Needed by registration flows where each profile wants its
    *  own email. Requires the API key configured in the Mail tab. */
   buyAccountType?: string;
   buyQuality?: string;
+  /** ID sản phẩm selltaikhoan khi mailProvider='selltaikhoan' (vd 6762 = Outlook
+   *  OAuth2 80đ). ctx.buyMail() mua 1 con từ sản phẩm này cho mỗi profile. */
+  buyProductId?: string;
+  /** Mã service SmsBower cho flow thuê gmail nhận OTP (vd flow chatgpt-signup).
+   *  Lấy từ smsbower.com/api. Absent = flow dùng mặc định của nó. */
+  smsbowerService?: string;
   /** Khi tạo profile tạm (ephemeral), rút proxy từ pool theo bộ lọc này thay vì
    *  chạy IP thật. Mỗi profile tạm là profile mới nên tự động rút một proxy Live
    *  riêng từ kho. Absent = profile tạm chạy không proxy (IP thật). */

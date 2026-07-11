@@ -91,8 +91,11 @@ export interface ProjectRecord {
   profileIds: string[];
   ephemeralCount?: number;
   mailId?: string;
+  mailProvider?: 'dongvanfb' | 'selltaikhoan';
   buyAccountType?: string;
   buyQuality?: string;
+  buyProductId?: string;
+  smsbowerService?: string;
   ephemeralProxyPool?: { tags?: string[]; liveOnly?: boolean } | null;
   concurrency?: number;
   blockImages?: boolean;
@@ -106,6 +109,10 @@ export interface Settings {
   sheetWebhookUrl: string;
   hasMktproxyKey: boolean;
   mktproxyMasked: string | null;
+  hasSelltaikhoanKey: boolean;
+  selltaikhoanMasked: string | null;
+  hasSmsbowerKey: boolean;
+  smsbowerMasked: string | null;
   hasTelegram: boolean;
   telegramMasked: string | null;
   telegramChatId: string;
@@ -126,6 +133,8 @@ export interface MktProduct {
   customFields: Array<Record<string, any>>;
 }
 export interface LogEntry { ts: string; level: 'debug' | 'info' | 'warn' | 'error'; scope: string; msg: string }
+export interface SellProduct { id: string; name: string; price: number; amount: number | null; category: string }
+export interface SmsbowerRest { service: string; domain: string; price: number; count: number }
 
 // ---- Proxy ----
 export const proxyApi = {
@@ -156,7 +165,7 @@ export const profileApi = {
 // ---- Settings / Mail ----
 export const settingsApi = {
   get: () => fetch('/api/settings').then((r) => parse<Settings>(r)),
-  save: (body: Partial<{ dongvanfbApiKey: string; sheetWebhookUrl: string; mktproxyApiKey: string; telegramBotToken: string; telegramChatId: string }>) =>
+  save: (body: Partial<{ dongvanfbApiKey: string; sheetWebhookUrl: string; mktproxyApiKey: string; selltaikhoanApiKey: string; smsbowerApiKey: string; telegramBotToken: string; telegramChatId: string }>) =>
     put('/api/settings', body).then((r) => parse<Settings>(r)),
 };
 export const mailApi = {
@@ -178,6 +187,19 @@ export const mktApi = {
   balance: () => fetch('/api/mktproxy/balance').then((r) => parse<{ balance: number }>(r)),
   products: () => fetch('/api/mktproxy/products').then((r) => parse<{ products: MktProduct[] }>(r)),
   buy: (body: any) => post('/api/mktproxy/buy', body).then((r) => parse<any>(r)),
+};
+
+// ---- selltaikhoan (nhà cung cấp mail thứ 2) ----
+export const sellApi = {
+  balance: () => fetch('/api/selltaikhoan/balance').then((r) => parse<{ balance: number }>(r)),
+  products: () => fetch('/api/selltaikhoan/products').then((r) => parse<{ products: SellProduct[] }>(r)),
+  buy: (body: { productId: string; amount?: number }) => post('/api/selltaikhoan/buy', body).then((r) => parse<any>(r)),
+};
+
+// ---- smsbower (thuê gmail nhận OTP theo service, cho flow chatgpt) ----
+export const smsbowerApi = {
+  rests: (domain = 'gmail.com') =>
+    fetch('/api/smsbower/rests?domain=' + encodeURIComponent(domain)).then((r) => parse<{ rests: SmsbowerRest[] }>(r)),
 };
 
 // ---- Projects / flows ----

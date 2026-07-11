@@ -4,7 +4,7 @@ import type { MailCredentials, MailCodeType, RunResult } from '../types.js';
 import { getCode, getMessages } from '../mailClient.js';
 import { getFlow } from '../flows/index.js';
 import { PageHelper, setShotsDir } from './helper.js';
-import type { FlowContext, SheetRow, BoughtMail } from './types.js';
+import type { FlowContext, SheetRow, BoughtMail, RentedMailbox } from './types.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('runner');
@@ -22,7 +22,19 @@ export interface RunProjectDeps {
   /** Buy a fresh mailbox for one profile: hits dongvanfb with the stored API key,
    *  saves it to the mail store, returns credentials. Absent when the project has
    *  no way to buy (no API key) — flows calling ctx.buyMail() then throw. */
-  buyMail?: (input: { accountType: string; quality: string; profileName: string }) => Promise<BoughtMailbox>;
+  buyMail?: (input: {
+    provider: 'dongvanfb' | 'selltaikhoan';
+    /** dongvanfb: bắt buộc accountType+quality. */
+    accountType?: string;
+    quality?: string;
+    /** selltaikhoan: bắt buộc productId. */
+    productId?: string;
+    profileName: string;
+  }) => Promise<BoughtMailbox>;
+  /** Thuê một gmail dùng-một-lần từ SmsBower cho `service` (đăng ký ChatGPT…).
+   *  Trả mailbox có waitCode/success/cancel. Absent khi chưa cấu hình key
+   *  SmsBower → ctx.rentMail() ném lỗi rõ. */
+  rentMail?: (input: { service: string; profileName: string }) => Promise<RentedMailbox>;
   /** Append one row to the configured Google Sheet (Apps Script web app). Absent
    *  when no webhook URL is set — ctx.appendSheet() then no-ops with a warning. */
   appendSheet?: (row: SheetRow) => Promise<void>;
@@ -37,9 +49,15 @@ export interface RunProjectInput {
   /** Mailbox bound in for getOtp() steps, if the project chose one. A flow that
    *  calls ctx.buyMail() overrides this per profile. */
   mail?: MailCredentials;
+  /** Nhà cung cấp mail cho ctx.buyMail() (mặc định 'dongvanfb'). */
+  mailProvider?: 'dongvanfb' | 'selltaikhoan';
   /** Defaults for ctx.buyMail() when the flow doesn't pass its own. */
   buyAccountType?: string;
   buyQuality?: string;
+  /** ID sản phẩm selltaikhoan khi mailProvider='selltaikhoan'. */
+  buyProductId?: string;
+  /** Mã service SmsBower mặc định cho ctx.rentMail() (flow thuê gmail nhận OTP). */
+  smsbowerService?: string;
 }
 
 export interface RunProjectOptions {
@@ -146,14 +164,24 @@ export async function runProject(
         mail: currentMail,
         buyMail: async (buyInput) => {
           if (!deps.buyMail) {
-            throw new Error('Không thể mua mail — chưa cấu hình API key dongvanfb (vào tab Mail)');
+            throw new Error('Không thể mua mail — chưa cấu hình nhà cung cấp mail (vào tab Mail)');
           }
-          const accountType = buyInput?.accountType ?? input.buyAccountType;
-          const quality = buyInput?.quality ?? input.buyQuality;
-          if (!accountType || !quality) {
-            throw new Error('buyMail: thiếu accountType/quality (đặt trong project hoặc truyền vào)');
+          const provider = input.mailProvider ?? 'dongvanfb';
+          const profileName = session.profile.name;
+          let bought: BoughtMailbox;
+          if (provider === 'selltaikhoan') {
+            if (!input.buyProductId) {
+              throw new Error('buyMail (selltaikhoan): thiếu ID sản phẩm (đặt trong project)');
+            }
+            bought = await deps.buyMail({ provider, productId: input.buyProductId, profileName });
+          } else {
+            const accountType = buyInput?.accountType ?? input.buyAccountType;
+            const quality = buyInput?.quality ?? input.buyQuality;
+            if (!accountType || !quality) {
+              throw new Error('buyMail: thiếu accountType/quality (đặt trong project hoặc truyền vào)');
+            }
+            bought = await deps.buyMail({ provider, accountType, quality, profileName });
           }
-          const bought = await deps.buyMail({ accountType, quality, profileName: session.profile.name });
           currentMail = bought.cred;
           ctx.mail = bought.cred;
           const full: BoughtMail = {
@@ -168,6 +196,18 @@ export async function runProject(
         },
         report: (partial) => {
           reported = { ...reported, ...partial };
+        },
+        rentMail: async (serviceOverride) => {
+          if (!deps.rentMail) {
+            throw new Error('Không thể thuê mail — chưa cấu hình API key SmsBower (vào tab Mail)');
+          }
+          const service = serviceOverride ?? input.smsbowerService;
+          if (!service) {
+            throw new Error('rentMail: thiếu mã service SmsBower (đặt trong project hoặc truyền vào)');
+          }
+          const rented = await deps.rentMail({ service, profileName: session.profile.name });
+          flowLog.info(`thuê mail SmsBower: ${rented.email} (service=${service})`);
+          return rented;
         },
         getOtp: (type: MailCodeType) => {
           if (!currentMail) throw new Error('Chưa có mail — gán mail cho project hoặc gọi buyMail() trước');

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Play, Trash2, Plus } from 'lucide-react';
 import {
-  projectApi, profileApi, mailApi,
-  type ProjectRecord, type FlowMeta, type Profile, type MailRecord, type RunResult, type AccountType,
+  projectApi, profileApi, mailApi, sellApi,
+  type ProjectRecord, type FlowMeta, type Profile, type MailRecord, type RunResult, type AccountType, type SellProduct,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -69,6 +69,12 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   const [concurrency, setConcurrency] = useState(String(project.concurrency || 2));
   const [buyType, setBuyType] = useState(project.buyAccountType || '');
   const [buyQuality, setBuyQuality] = useState(project.buyQuality || '');
+  const [mailProvider, setMailProvider] = useState<'dongvanfb' | 'selltaikhoan'>(project.mailProvider || 'dongvanfb');
+  const [buyProductId, setBuyProductId] = useState(project.buyProductId || '');
+  const [smsService, setSmsService] = useState(project.smsbowerService || (project.flowName === 'chatgpt-signup' ? 'dr' : ''));
+  const [sellProducts, setSellProducts] = useState<SellProduct[]>([]);
+  const [sellProductState, setSellProductState] = useState('');
+  const [sellSearch, setSellSearch] = useState('outlook');
   const [usePool, setUsePool] = useState(!!project.ephemeralProxyPool);
   const [poolTags, setPoolTags] = useState((project.ephemeralProxyPool?.tags || []).join(', '));
   const [poolLive, setPoolLive] = useState(project.ephemeralProxyPool?.liveOnly !== false);
@@ -99,7 +105,10 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
         await projectApi.update(project.id, {
           name: name.trim() || project.name, flowName, profileIds, mailId: mailId || undefined,
           concurrency: Number(concurrency) || 2, ephemeralCount: Number(ephemeral) || 0,
+          mailProvider,
           buyAccountType: buyType || undefined, buyQuality: buyQuality || undefined,
+          buyProductId: buyProductId || undefined,
+          smsbowerService: smsService || undefined,
           ephemeralProxyPool: usePool ? { tags: poolTags.split(',').map((s) => s.trim()).filter(Boolean), liveOnly: poolLive } : null,
           blockImages,
           note,
@@ -107,17 +116,22 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
         setSaved(true); setTimeout(() => setSaved(false), 1200); onChanged();
       } catch (e) { toast.error((e as Error).message); }
     }, 300);
-  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, buyType, buyQuality, usePool, poolTags, poolLive, blockImages, note, project.id, project.name, onChanged]);
+  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, note, project.id, project.name, onChanged]);
 
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return; }
     doSave();
-  }, [flowName, profileIds, mailId, concurrency, ephemeral, buyType, buyQuality, usePool, poolTags, poolLive, note, doSave]);
+  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, note, doSave]);
 
   async function loadTypes() {
     setTypeState('(đang tải...)');
     try { const r = await mailApi.accountTypes(); setAccountTypes(r.accountTypes); setTypeState(`(${r.accountTypes.length} loại)`); }
     catch (e) { setTypeState(''); toast.error((e as Error).message); }
+  }
+  async function loadSellProducts() {
+    setSellProductState('(đang tải...)');
+    try { const r = await sellApi.products(); setSellProducts(r.products); setSellProductState(`(${r.products.length} sản phẩm)`); }
+    catch (e) { setSellProductState(''); toast.error((e as Error).message); }
   }
   function toggleProfile(id: string) {
     setProfileIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
@@ -139,6 +153,10 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
 
   const flowDesc = flows.find((f) => f.name === flowName)?.description || '';
   const nameById = (pid: string) => allProfiles.find((p) => p.id === pid)?.name || (pid.length > 10 ? pid.slice(0, 8) + '…' : pid);
+  const sellNeedle = sellSearch.trim().toLowerCase();
+  const sellFiltered = sellNeedle
+    ? sellProducts.filter((p) => `${p.name} ${p.category}`.toLowerCase().includes(sellNeedle))
+    : sellProducts;
 
   return (
     <Card>
@@ -161,6 +179,14 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
           {flowDesc && <p className="text-xs text-muted-foreground">{flowDesc}</p>}
         </div>
 
+        {flowName === 'chatgpt-signup' && (
+          <div className="space-y-1.5">
+            <Label>Mã service SmsBower <span className="text-muted-foreground font-normal">(flow ChatGPT thuê gmail nhận OTP)</span></Label>
+            <Input value={smsService} onChange={(e) => setSmsService(e.target.value)} placeholder="vd: dr" />
+            <p className="text-xs text-muted-foreground">Lấy mã còn kho ở tab Mail → "Xem tồn kho gmail". Cần API key SmsBower đã lưu.</p>
+          </div>
+        )}
+
         <div className="space-y-1.5">
           <Label>Chọn profile chạy <span className="text-muted-foreground font-normal">(bỏ trống nếu dùng profile tạm)</span></Label>
           <div className="flex flex-wrap gap-3 rounded-lg border p-3 max-h-40 overflow-auto">
@@ -182,6 +208,8 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
           </p>
         )}
 
+        {flowName !== 'chatgpt-signup' && (
+        <>
         <div className="space-y-1.5">
           <Label>Mail (tùy chọn, cho bước OTP)</Label>
           <Select value={mailId || 'none'} onValueChange={(v) => setMailId(v === 'none' ? '' : v)}>
@@ -191,15 +219,37 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
         </div>
 
         <div className="space-y-1.5">
-          <Label>Mua mail — loại <span className="text-muted-foreground font-normal">(khi flow tự mua) {typeState}</span></Label>
-          <div className="flex gap-2">
-            <Select value={buyType || 'none'} onValueChange={(v) => { if (v === 'none') { setBuyType(''); setBuyQuality(''); return; } setBuyType(v); const at = accountTypes.find((t) => String(t.id) === v); setBuyQuality(at ? String(at.quality) : ''); }}>
-              <SelectTrigger><SelectValue placeholder={buyType ? `Đã lưu: id ${buyType} (q${buyQuality || '0'})` : '— Không mua tự động —'} /></SelectTrigger>
-              <SelectContent><SelectItem value="none">— Không mua tự động —</SelectItem>{accountTypes.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name} — {t.price}đ (q{t.quality})</SelectItem>)}</SelectContent>
-            </Select>
-            <Button variant="outline" onClick={loadTypes}>Tải danh sách</Button>
-          </div>
+          <Label>Mua mail — nhà cung cấp <span className="text-muted-foreground font-normal">(khi flow tự mua)</span></Label>
+          <Select value={mailProvider} onValueChange={(v) => setMailProvider(v as 'dongvanfb' | 'selltaikhoan')}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="dongvanfb">dongvanfb</SelectItem>
+              <SelectItem value="selltaikhoan">selltaikhoan (rẻ hơn)</SelectItem>
+            </SelectContent>
+          </Select>
+          {mailProvider === 'dongvanfb' ? (
+            <div className="flex gap-2">
+              <Select value={buyType || 'none'} onValueChange={(v) => { if (v === 'none') { setBuyType(''); setBuyQuality(''); return; } setBuyType(v); const at = accountTypes.find((t) => String(t.id) === v); setBuyQuality(at ? String(at.quality) : ''); }}>
+                <SelectTrigger><SelectValue placeholder={buyType ? `Đã lưu: id ${buyType} (q${buyQuality || '0'})` : '— Không mua tự động —'} /></SelectTrigger>
+                <SelectContent><SelectItem value="none">— Không mua tự động —</SelectItem>{accountTypes.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name} — {t.price}đ (q{t.quality})</SelectItem>)}</SelectContent>
+              </Select>
+              <Button variant="outline" onClick={loadTypes}>Tải danh sách {typeState}</Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <Input placeholder="Lọc (vd outlook)" value={sellSearch} onChange={(e) => setSellSearch(e.target.value)} />
+                <Button variant="outline" onClick={loadSellProducts}>Tải danh sách {sellProductState}</Button>
+              </div>
+              <Select value={buyProductId || 'none'} onValueChange={(v) => setBuyProductId(v === 'none' ? '' : v)}>
+                <SelectTrigger><SelectValue placeholder={buyProductId ? `Đã lưu: id ${buyProductId}` : '— Không mua tự động —'} /></SelectTrigger>
+                <SelectContent><SelectItem value="none">— Không mua tự động —</SelectItem>{sellFiltered.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {p.price}đ{p.amount != null ? ` (kho ${p.amount})` : ''}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
+        </>
+        )}
 
         <div className="border-t pt-4 space-y-3">
           <h3 className="font-semibold text-sm">Nguồn IP (proxy)</h3>

@@ -24,6 +24,12 @@ export interface FlowContext {
    *  Returns the full mail credentials (email|password|refresh_token|client_id)
    *  so a flow can log them to a sheet. */
   buyMail: (input?: { accountType?: string; quality?: string }) => Promise<BoughtMail>;
+  /** Thuê một địa chỉ gmail dùng-một-lần từ SmsBower để nhận code xác minh của
+   *  `service` (mặc định lấy từ project.smsbowerService). Dùng cho flow đăng ký
+   *  bằng email tạm (vd ChatGPT): KHÁC buyMail (không lưu hộp thư, chỉ nhận OTP
+   *  qua getCode). Trả mailbox có waitCode()/success()/cancel(). Ném nếu chưa
+   *  cấu hình API key SmsBower. */
+  rentMail: (service?: string) => Promise<RentedMailbox>;
   /** Poll the current mailbox (bound project mail, or the one buyMail() bought)
    *  for a confirmation code. Throws if no mailbox is available. */
   getOtp: (type: MailCodeType) => Promise<string>;
@@ -41,6 +47,24 @@ export interface FlowContext {
   report: (partial: { checkoutUrl?: string; status?: string }) => void;
   /** Scoped to `flow:<profileName>` so batch logs stay readable. */
   log: Logger;
+}
+
+/** Một mailbox THUÊ từ SmsBower (ctx.rentMail): địa chỉ gmail dùng-một-lần +
+ *  hàm chờ code + chốt/huỷ. Không có password/refresh/client (khác BoughtMail)
+ *  vì SmsBower chỉ chuyển tiếp OTP, không giao quyền truy cập hộp thư. */
+export interface RentedMailbox {
+  email: string;
+  /** Id kích hoạt để poll code / set status. */
+  mailId: string;
+  /** Poll SmsBower tới khi có code (mặc định ~200s). Ném nếu hết giờ. */
+  waitCode: (opts?: { tries?: number; intervalMs?: number }) => Promise<string>;
+  /** Chờ MÃ KẾ (khác mã trước) — dùng khi OpenAI báo "Incorrect code" ở mã đầu:
+   *  đặt setStatus(5) rồi poll tới khi có code mới. */
+  nextCode: (opts?: { tries?: number; intervalMs?: number }) => Promise<string>;
+  /** Chốt thành công (trừ tiền). Best-effort, không ném. */
+  success: () => Promise<void>;
+  /** Huỷ (hoàn tiền nếu chưa có code). Best-effort, không ném. */
+  cancel: () => Promise<void>;
 }
 
 /** Full mailbox credentials returned by ctx.buyMail() — everything needed to

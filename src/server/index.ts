@@ -19,6 +19,8 @@ import { MailStore, parseMailLine, providerFromEmail } from '../mailStore.js';
 import { UsedIpStore } from '../usedIpStore.js';
 import { SettingsStore, maskKey } from '../settingsStore.js';
 import { getBalance, getAccountTypes, buyMail, getCode, getMessages } from '../mailClient.js';
+import * as selltaikhoan from '../selltaikhoanClient.js';
+import * as smsbower from '../smsbowerClient.js';
 import * as mktproxy from '../mktproxyClient.js';
 import { ProjectStore } from '../projectStore.js';
 import { runProject } from '../automation/runner.js';
@@ -603,6 +605,10 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       sheetWebhookUrl: settings.getSheetWebhookUrl() ?? '',
       hasMktproxyKey: Boolean(settings.getMktproxyKey()),
       mktproxyMasked: maskKey(settings.getMktproxyKey()),
+      hasSelltaikhoanKey: Boolean(settings.getSelltaikhoanKey()),
+      selltaikhoanMasked: maskKey(settings.getSelltaikhoanKey()),
+      hasSmsbowerKey: Boolean(settings.getSmsbowerKey()),
+      smsbowerMasked: maskKey(settings.getSmsbowerKey()),
       hasTelegram: Boolean(settings.getTelegramBotToken() && settings.getTelegramChatId()),
       telegramMasked: maskKey(settings.getTelegramBotToken()),
       telegramChatId: settings.getTelegramChatId() ?? '',
@@ -624,6 +630,12 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       }
       if (body.mktproxyApiKey !== undefined) {
         await settings.setMktproxyKey(String(body.mktproxyApiKey));
+      }
+      if (body.selltaikhoanApiKey !== undefined) {
+        await settings.setSelltaikhoanKey(String(body.selltaikhoanApiKey));
+      }
+      if (body.smsbowerApiKey !== undefined) {
+        await settings.setSmsbowerKey(String(body.smsbowerApiKey));
       }
       if (body.telegramBotToken !== undefined) {
         await settings.setTelegramBotToken(String(body.telegramBotToken));
@@ -993,6 +1005,83 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     }
   });
 
+  // ---- selltaikhoan.com (nhà cung cấp mail thứ 2, Outlook OAuth2 rẻ hơn) ---
+  // Mail trả về cùng định dạng email|password|refresh_token|client_id nên nạp
+  // thẳng vào MailStore; đọc OTP dùng chung tools như dongvanfb.
+  function requireSelltaikhoanKey(res: Response): string | null {
+    const key = settings.getSelltaikhoanKey();
+    if (!key) {
+      res.status(400).json({ error: 'Chưa cấu hình API key selltaikhoan (vào tab Mail).' });
+      return null;
+    }
+    return key;
+  }
+
+  app.get('/api/selltaikhoan/balance', async (_req: Request, res: Response) => {
+    const key = requireSelltaikhoanKey(res);
+    if (!key) return;
+    try {
+      res.json({ balance: await selltaikhoan.getBalance(key) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/api/selltaikhoan/products', async (_req: Request, res: Response) => {
+    const key = requireSelltaikhoanKey(res);
+    if (!key) return;
+    try {
+      res.json({ products: await selltaikhoan.listProducts(key) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/selltaikhoan/buy', async (req: Request, res: Response) => {
+    const key = requireSelltaikhoanKey(res);
+    if (!key) return;
+    const body = req.body ?? {};
+    if (!body.productId) {
+      res.status(400).json({ error: 'productId là bắt buộc' });
+      return;
+    }
+    try {
+      const amount = Math.max(1, Number(body.amount) || 1);
+      const result = await selltaikhoan.buyProduct(key, String(body.productId), amount);
+      const created = await mails.createMany(
+        result.mails.map((m) => ({
+          email: m.email,
+          password: m.password,
+          refreshToken: m.refreshToken,
+          clientId: m.clientId,
+          provider: providerFromEmail(m.email),
+          orderCode: result.transId,
+        })),
+      );
+      res.json({ transId: result.transId, bought: result.mails.length, added: created.length, mails: created });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // ---- SmsBower (thuê gmail nhận OTP theo service, vd đăng ký ChatGPT) -------
+  // Chỉ expose "rests" (tồn kho + giá + mã service) để chọn đúng service. Việc
+  // thuê/đọc code/chốt do rentMailDep lo trong lúc chạy flow (tránh tốn tiền khi
+  // bấm lung tung ở UI).
+  app.get('/api/smsbower/rests', async (req: Request, res: Response) => {
+    const key = settings.getSmsbowerKey();
+    if (!key) {
+      res.status(400).json({ error: 'Chưa cấu hình API key SmsBower (vào tab Mail).' });
+      return;
+    }
+    try {
+      const domain = req.query.domain ? String(req.query.domain) : 'gmail.com';
+      res.json({ rests: await smsbower.getPriceRests(key, domain) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
   app.get('/api/mails', (_req: Request, res: Response) => {
     res.json(mails.list());
   });
@@ -1144,8 +1233,11 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         mailId: body.mailId ? String(body.mailId) : undefined,
         concurrency: body.concurrency !== undefined ? Number(body.concurrency) : undefined,
         ephemeralCount: body.ephemeralCount !== undefined ? Number(body.ephemeralCount) : undefined,
+        mailProvider: body.mailProvider === 'selltaikhoan' ? 'selltaikhoan' : undefined,
         buyAccountType: body.buyAccountType ? String(body.buyAccountType) : undefined,
         buyQuality: body.buyQuality ? String(body.buyQuality) : undefined,
+        buyProductId: body.buyProductId ? String(body.buyProductId) : undefined,
+        smsbowerService: body.smsbowerService ? String(body.smsbowerService) : undefined,
         ephemeralProxyPool: parseEphemeralPool(body.ephemeralProxyPool),
         blockImages: body.blockImages === true ? true : undefined,
         note: body.note ? String(body.note) : undefined,
@@ -1171,8 +1263,11 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       if (body.mailId !== undefined) patch.mailId = body.mailId ? String(body.mailId) : undefined;
       if (body.concurrency !== undefined) patch.concurrency = Number(body.concurrency);
       if (body.ephemeralCount !== undefined) patch.ephemeralCount = Number(body.ephemeralCount);
+      if (body.mailProvider !== undefined) patch.mailProvider = body.mailProvider === 'selltaikhoan' ? 'selltaikhoan' : undefined;
       if (body.buyAccountType !== undefined) patch.buyAccountType = body.buyAccountType ? String(body.buyAccountType) : undefined;
       if (body.buyQuality !== undefined) patch.buyQuality = body.buyQuality ? String(body.buyQuality) : undefined;
+      if (body.buyProductId !== undefined) patch.buyProductId = body.buyProductId ? String(body.buyProductId) : undefined;
+      if (body.smsbowerService !== undefined) patch.smsbowerService = body.smsbowerService ? String(body.smsbowerService) : undefined;
       if (body.ephemeralProxyPool !== undefined) patch.ephemeralProxyPool = parseEphemeralPool(body.ephemeralProxyPool);
       if (body.blockImages !== undefined) patch.blockImages = body.blockImages === true ? true : undefined;
       if (body.note !== undefined) patch.note = String(body.note);
@@ -1220,32 +1315,104 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     }
     // Build the buyMail dependency only when an API key is configured. A flow that
     // calls ctx.buyMail() without a key gets a clear error (runner handles absent dep).
-    const apiKey = settings.getApiKey();
-    const buyMailDep = apiKey
-      ? async ({ accountType, quality, profileName }: { accountType: string; quality: string; profileName: string }) => {
-          const result = await buyMail(apiKey, { accountType, quality });
-          const first = result.mails[0];
-          if (!first) throw new Error('Mua mail thành công nhưng không nhận được dữ liệu mail');
-          // Persist to the store so the mailbox is visible/reusable in the Mail tab.
-          const [saved] = await mails.createMany([
-            {
-              email: first.email,
-              password: first.password,
-              refreshToken: first.refreshToken,
-              clientId: first.clientId,
-              provider: providerFromEmail(first.email),
-              orderCode: result.orderCode,
-              note: `auto-mua cho ${profileName}`,
-            },
-          ]);
-          const rec = saved ?? mails.list().find((m) => m.email.toLowerCase() === first.email.toLowerCase());
-          return {
-            cred: { email: first.email, refreshToken: first.refreshToken, clientId: first.clientId },
-            email: first.email,
-            password: first.password ?? rec?.password,
-          };
+    // buyMail dep: chọn nhà cung cấp theo `provider` runner truyền vào (dongvanfb
+    // hoặc selltaikhoan). Luôn dựng dep; kiểm tra đúng key của nhà cung cấp bên
+    // trong. Cả hai trả cùng định dạng nên lưu MailStore + đọc OTP dùng chung.
+    const buyMailDep = async (input: {
+      provider: 'dongvanfb' | 'selltaikhoan';
+      accountType?: string;
+      quality?: string;
+      productId?: string;
+      profileName: string;
+    }) => {
+      let first: { email: string; password?: string; refreshToken: string; clientId: string } | undefined;
+      let orderCode: string | undefined;
+      if (input.provider === 'selltaikhoan') {
+        const key = settings.getSelltaikhoanKey();
+        if (!key) throw new Error('Chưa cấu hình API key selltaikhoan (vào tab Mail)');
+        if (!input.productId) throw new Error('Thiếu ID sản phẩm selltaikhoan');
+        const result = await selltaikhoan.buyProduct(key, input.productId, 1);
+        first = result.mails[0];
+        orderCode = result.transId;
+      } else {
+        const key = settings.getApiKey();
+        if (!key) throw new Error('Chưa cấu hình API key dongvanfb (vào tab Mail)');
+        if (!input.accountType || !input.quality) throw new Error('Thiếu accountType/quality');
+        const result = await buyMail(key, { accountType: input.accountType, quality: input.quality });
+        first = result.mails[0];
+        orderCode = result.orderCode;
+      }
+      if (!first) throw new Error('Mua mail thành công nhưng không nhận được dữ liệu mail');
+      // Persist to the store so the mailbox is visible/reusable in the Mail tab.
+      const [saved] = await mails.createMany([
+        {
+          email: first.email,
+          password: first.password,
+          refreshToken: first.refreshToken,
+          clientId: first.clientId,
+          provider: providerFromEmail(first.email),
+          orderCode,
+          note: `auto-mua cho ${input.profileName}`,
+        },
+      ]);
+      const chosen = first;
+      const rec = saved ?? mails.list().find((m) => m.email.toLowerCase() === chosen.email.toLowerCase());
+      return {
+        cred: { email: chosen.email, refreshToken: chosen.refreshToken, clientId: chosen.clientId },
+        email: chosen.email,
+        password: chosen.password ?? rec?.password,
+      };
+    };
+    // rentMail dep: thuê gmail dùng-một-lần từ SmsBower (flow đăng ký ChatGPT…).
+    // getActivation lấy mail+mailId; trả mailbox có waitCode (poll getCode) +
+    // success/cancel (setStatus 3/2) bám theo mailId + key. Luôn dựng; ném lỗi rõ
+    // nếu chưa có key khi flow gọi ctx.rentMail().
+    const rentMailDep = async (input: { service: string; profileName: string }) => {
+      const key = settings.getSmsbowerKey();
+      if (!key) throw new Error('Chưa cấu hình API key SmsBower (vào tab Mail)');
+      // Dùng BATCH (count=1) thay vì thuê lẻ: mỗi mail có link getCodeBySignature
+      // đọc all_codes NHIỀU LẦN (OpenAI gửi 2-3 mã) → chọn mã mới nhất chưa thử,
+      // KHỎI request lại. (getActivation chỉ 1 mã/lần rồi khoá — không hợp.)
+      const batch = await smsbower.getBatch(key, { service: input.service, domain: 'gmail.com', count: 1, time: 12 });
+      const m = batch.mails[0];
+      if (!m) throw new Error('SmsBower getBatch không trả mail nào');
+      const tried = new Set<string>();
+      // Poll link đọc mã tới khi có mã CHƯA THỬ; ưu tiên mã MỚI NHẤT (cuối mảng
+      // all_codes). Dùng chung cho waitCode (mã đầu) lẫn nextCode (mã kế khi sai).
+      const fetchNew = async (opts?: { tries?: number; intervalMs?: number }): Promise<string> => {
+        const tries = opts?.tries ?? 40;
+        const interval = opts?.intervalMs ?? 3_000;
+        for (let i = 0; i < tries; i += 1) {
+          const { allCodes, raw } = await smsbower.getCodeBySignature(m.url);
+          // In MẪU phản hồi thô 1 lần (poll đầu) để lộ đúng cấu trúc JSON — nếu mã
+          // về ở trường lạ thì thấy ngay, khỏi đoán.
+          if (i === 0) log.info(`[${input.profileName}] SmsBower mẫu phản hồi đọc mã: ${JSON.stringify(raw).slice(0, 300)}`);
+          for (let j = allCodes.length - 1; j >= 0; j -= 1) {
+            if (!tried.has(allCodes[j])) {
+              tried.add(allCodes[j]);
+              log.info(`[${input.profileName}] SmsBower: đọc được mã ${allCodes[j]} cho ${m.mail} (poll ${i + 1}/${tries})`);
+              return allCodes[j];
+            }
+          }
+          // Log tiến trình (poll đầu + mỗi 5 lần) để KHÔNG im lặng suốt ~3 phút —
+          // trước đây không log gì nên user tưởng tool "đứng" ở bước đọc mail.
+          if (i === 0 || (i + 1) % 5 === 0) {
+            log.info(`[${input.profileName}] SmsBower: chờ mã cho ${m.mail}... (poll ${i + 1}/${tries}, đã thấy ${allCodes.length} mã)`);
+          }
+          await new Promise((r) => setTimeout(r, interval));
         }
-      : undefined;
+        throw new Error(`SmsBower: không nhận được mã mới cho ${m.mail} sau ${tries} lần đọc (all_codes hết mã chưa thử)`);
+      };
+      return {
+        email: m.mail,
+        mailId: `batch:${batch.batchId}`,
+        waitCode: (opts?: { tries?: number; intervalMs?: number }) => fetchNew(opts),
+        // nextCode: trả mã KHÁC (chưa thử) từ all_codes — không cần re-request.
+        nextCode: (opts?: { tries?: number; intervalMs?: number }) => fetchNew(opts),
+        success: async () => {}, // batch đã trả tiền, không cần chốt
+        cancel: async () => {}, // batch không huỷ/hoàn lẻ được
+      };
+    };
     // Build the appendSheet dependency only when a Sheet webhook URL is configured.
     // POSTs one JSON row to the Apps Script web app; the runner wraps this so a
     // network hiccup logs + continues rather than failing the registration.
@@ -1303,9 +1470,22 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         proxyRotation: ephemeralPool
           ? { mode: 'pool', pool: ephemeralPool, rotateOnOpen: true, rotateOnFailure: true }
           : undefined,
-        antiDetect: project.blockImages
-          ? { ...defaultAntiDetect(), blockImages: true }
-          : undefined,
+        // ChatGPT: TẮT geoip + language 'real' (⇒ KHÔNG set locale gì cả). GỐC RỄ đã
+        // probe xác nhận: Camoufox spoof Intl.DisplayNames theo "locale:region", và
+        // hễ config CÓ locale:region (do geoip HAY ép locale sinh ra) thì spoof LỖI —
+        // .of(bất kỳ mã nước nào) đều trả về CHÍNH nước của region đó. Dropdown quốc
+        // gia ChatGPT build bằng Intl.DisplayNames.of(code) nên hiện "cả list 1 nước"
+        // (US / NL / Việt Nam) → chọn sai. CHỈ khi config KHÔNG có locale:region
+        // (geoip off + language 'real', không ép locale) thì DisplayNames mới đúng →
+        // dropdown render đúng tên nước, selectCountry chọn được Netherlands.
+        // Đánh đổi: timezone/geolocation không còn khớp IP proxy (chấp nhận cho flow
+        // này; UI về mặc định Camoufox = en-US). Các flow khác GIỮ geoip như cũ.
+        antiDetect:
+          project.flowName === 'chatgpt-signup'
+            ? { ...defaultAntiDetect(), geoip: false, language: 'real', blockImages: project.blockImages === true }
+            : project.blockImages
+              ? { ...defaultAntiDetect(), blockImages: true }
+              : undefined,
       });
       ephemeralIds.push(created.id);
     }
@@ -1317,11 +1497,14 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
           profileIds: runIds,
           flowName: project.flowName,
           mail,
+          mailProvider: project.mailProvider,
           buyAccountType: project.buyAccountType,
           buyQuality: project.buyQuality,
+          buyProductId: project.buyProductId,
+          smsbowerService: project.smsbowerService,
         },
         { concurrency: project.concurrency, headless, storeRoot },
-        { buyMail: buyMailDep, appendSheet: appendSheetDep, notify: notifyDep },
+        { buyMail: buyMailDep, rentMail: rentMailDep, appendSheet: appendSheetDep, notify: notifyDep },
       );
       res.json({ results });
     } catch (err) {

@@ -9,8 +9,11 @@ export interface CreateProjectInput {
   flowName: string;
   profileIds?: string[];
   mailId?: string;
+  mailProvider?: 'dongvanfb' | 'selltaikhoan';
   buyAccountType?: string;
   buyQuality?: string;
+  buyProductId?: string;
+  smsbowerService?: string;
   concurrency?: number;
   ephemeralCount?: number;
   ephemeralProxyPool?: ProxyPoolFilter;
@@ -52,8 +55,11 @@ export class ProjectStore {
       flowName: input.flowName,
       profileIds: input.profileIds ?? [],
       mailId: input.mailId,
+      mailProvider: input.mailProvider,
       buyAccountType: input.buyAccountType,
       buyQuality: input.buyQuality,
+      buyProductId: input.buyProductId,
+      smsbowerService: input.smsbowerService,
       concurrency: input.concurrency,
       ephemeralCount: input.ephemeralCount,
       ephemeralProxyPool: input.ephemeralProxyPool,

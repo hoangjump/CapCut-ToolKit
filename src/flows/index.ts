@@ -1,6 +1,7 @@
 import type { RegisteredFlow, FlowMeta } from '../automation/types.js';
 import { demoFlow } from './demo.js';
 import { capcutSigninFlow } from './capcut-signin.js';
+import { chatgptSignupFlow } from './chatgpt-signup.js';
 
 /**
  * Flow registry. Adding a new automation = write a file in this folder exporting
@@ -10,6 +11,7 @@ import { capcutSigninFlow } from './capcut-signin.js';
 export const FLOWS: Record<string, RegisteredFlow> = {
   [demoFlow.meta.name]: demoFlow,
   [capcutSigninFlow.meta.name]: capcutSigninFlow,
+  [chatgptSignupFlow.meta.name]: chatgptSignupFlow,
 };
 
 /** Metadata list for the Project tab's flow dropdown. */
