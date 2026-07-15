@@ -627,6 +627,10 @@ export class BrowserManager {
         const profileId = queue.shift();
         if (!profileId) return;
         try {
+          // Nhịp 1-3s NGẪU NHIÊN trước mỗi lần mở camoufox. Từ khi mua VIP chạy qua
+          // API, mỗi profile xong rất nhanh nên các lần mở dồn sát nhau — giãn ra
+          // cho tự nhiên hơn và tránh mở đồng loạt.
+          await new Promise((r) => setTimeout(r, 1_000 + Math.floor(Math.random() * 2_000)));
           const session = await this.open(profileId, opts.launch);
           const value = await task(session);
           results.push({ profileId, value });

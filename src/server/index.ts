@@ -1443,17 +1443,31 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
             row.mailLine ? `🔑 \`${row.mailLine}\`` : '',
             row.checkoutUrl ? `💳 [Link thanh toán](${row.checkoutUrl})` : '',
           ].filter(Boolean);
-          const res = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: tgChatId,
-              text: lines.join('\n'),
-              parse_mode: 'Markdown',
-              disable_web_page_preview: true,
-            }),
-          });
-          if (!res.ok) throw new Error(`Telegram HTTP ${res.status}`);
+          // Telegram đi qua MẠNG MÁY (không qua proxy profile). Mạng máy đôi khi
+          // chập → "fetch failed"; thử lại tối đa 3 lượt cách nhau 1.5s để hiccup
+          // vặt không làm mất thông báo.
+          let lastErr: Error | undefined;
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+              const res = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: tgChatId,
+                  text: lines.join('\n'),
+                  parse_mode: 'Markdown',
+                  disable_web_page_preview: true,
+                }),
+                signal: AbortSignal.timeout(15_000),
+              });
+              if (!res.ok) throw new Error(`Telegram HTTP ${res.status}`);
+              return;
+            } catch (e) {
+              lastErr = e as Error;
+              if (attempt < 3) await new Promise((r) => setTimeout(r, 1_500));
+            }
+          }
+          throw lastErr ?? new Error('Telegram gửi thất bại');
         }
       : undefined;
     // Ephemeral profiles: create N throwaway profiles now, run against them, and

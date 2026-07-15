@@ -45,19 +45,9 @@ const MONTH_NAMES = [
 const CODE_TIP = ".lv_sign_in_panel_wide-code-tip";
 const OTP_FIRST_BOX = ".verification_code_input-number.verification_code_input-number-focus";
 
-// Sau khi vào app: bỏ qua xác minh, mở màn nâng cấp VIP.
-// Nút "Skip" (popup "Which role…") KHÔNG bắt theo class được: class thật dạng
-// `skip-mrkR37` có đuôi hash CSS-module tự sinh, đổi mỗi lần CapCut deploy. Và
-// popup này nhiều khi nằm trong IFRAME → locator ở main frame không thấy. Nên
-// bắt theo CHỮ "Skip" (trang đã ép locale=en) và quét MỌI frame — xem
-// findVisibleByText/clickSkip bên dưới.
-const BTN_UPGRADE_HEADER = ".LvHeaderUpgradeVipNew";
-// Điều kiện: chỉ nâng cấp khi thấy gói dùng thử 7 ngày. Khớp LỎNG — text thật
-// có thể là "Free for 7 days", "7-day free trial", "7 days"… nên bắt theo cụm
-// "7" + "day" ở bất kỳ phần tử nào, không đòi khớp tuyệt đối một span.
-const TRIAL_7DAYS = "//*[contains(translate(., 'D', 'd'), '7 day') or contains(translate(., 'D', 'd'), '7-day')]";
-const BTN_PRO_TRIAL_UPGRADE =
-  "xpath=(//*[normalize-space()='Pro'])[1]/ancestor::*[.//*[contains(translate(., 'D', 'd'), '7 day') or contains(translate(., 'D', 'd'), '7-day')] and .//button[normalize-space()='Upgrade' or .//*[normalize-space()='Upgrade']]][1]//button[normalize-space()='Upgrade' or .//*[normalize-space()='Upgrade']]";
+// (Nút "Open CapCut" cuối wizard onboarding bắt theo CHỮ trong reachDashboard qua
+//  findVisibleByText. Không còn cần selector Skip/Upgrade header: việc mua VIP chạy
+//  qua API nên không đụng DOM dashboard.)
 
 /** Số nguyên ngẫu nhiên trong [min, max]. */
 function randInt(min: number, max: number): number {
@@ -78,16 +68,6 @@ async function findVisibleByText(page: Page, label: string): Promise<Locator | n
     const loc = frame.getByText(label, { exact: true }).filter({ visible: true }).first();
     if (await loc.isVisible().catch(() => false)) return loc;
   }
-  return null;
-}
-
-async function findTrialUpgradeButton(page: Page): Promise<Locator | null> {
-  const proTrialUpgrade = page.locator(BTN_PRO_TRIAL_UPGRADE).filter({ visible: true }).first();
-  if (await proTrialUpgrade.isVisible().catch(() => false)) return proTrialUpgrade;
-
-  const firstVisibleUpgrade = page.getByRole('button', { name: /^Upgrade$/ }).filter({ visible: true }).first();
-  if (await firstVisibleUpgrade.isVisible().catch(() => false)) return firstVisibleUpgrade;
-
   return null;
 }
 
@@ -129,119 +109,37 @@ async function clickLocator(locator: Locator, log: FlowLog, label: string, timeo
 }
 
 /**
- * XOÁ THẲNG các lớp popup xếp chồng (What's new, CapCut Ultra is live, promo…)
- * thay vì bấm X từng cái. Lý do: dashboard mới bật 7-8 popup CHỒNG nhau, nút X
- * hay bị lớp trên chắn hoặc bấm không tắt → click trượt. Xoá node ở tầng DOM
- * chắc và nhanh hơn. Quét MỌI frame (popup hay nằm trong iframe). Lặp tới khi
- * hết lớp hoặc chạm trần vòng lặp (React có thể dựng lại → cần quét lại).
+ * Đưa flow từ màn sau-OTP vào tới trang app CapCut để LẤY SESSION cho việc gọi
+ * API thương mại. Vì việc mua VIP giờ chạy hoàn toàn qua API (fetch của chính
+ * trang, chỉ cần cookie login đã có sẵn ở context), ta KHÔNG cần dẹp popup vai
+ * trò "Which role…"/Skip nữa — bỏ hẳn vòng bấm Skip (trước tốn ~20s vô ích).
  *
- * Hai pass mỗi vòng:
- *   A) Popup CÓ nút Close: neo span[aria-label='Close'] → leo .lv-modal → xoá cả
- *      .lv-modal-wrapper (dạng "CapCut Ultra", "What's new"). CHỈ xoá cụm có nút
- *      Close → không đụng nội dung trang thật.
- *   B) "Xác" chắn click còn trơ lại KHÔNG có Close nên pass A bỏ sót:
- *      - .lv-modal-mask: nền mờ tách rời (aria-hidden, display:block), hay còn lại
- *        chắn click sau khi modal đã đóng. Xoá hết.
- *      - .lv-modal-wrapper RỖNG (không còn .lv-modal bên trong, vd z-index:1101):
- *        lớp bọc trơ chắn click. Xoá.
- *
- * KHÔNG dùng cho popup vai trò "Which role…": nó phải bấm Skip mới cho wizard đi
- * tiếp (xoá cứng có thể làm wizard không chuyển màn). reachDashboard lo cái đó
- * bằng Skip TRƯỚC khi gọi hàm này; đây chỉ dọn các popup promo còn lại. Popup vai
- * trò dùng class `wrapper-*` (KHÔNG phải `.lv-modal-wrapper`) nên pass B không
- * đụng tới; thêm guard theo text cho chắc.
- */
-async function sweepPopups(page: Page, log: FlowLog, profileName: string, rounds = 8): Promise<void> {
-  for (let i = 0; i < rounds; i++) {
-    let removed = 0;
-    for (const frame of page.frames()) {
-      const n = await frame
-        .evaluate(() => {
-          const doc = (globalThis as any).document;
-          if (!doc) return 0;
-          let count = 0;
-          // Chừa popup vai trò ("Which of the following… best describes you") cho
-          // Skip lo — xoá cứng có thể làm wizard không chuyển màn.
-          const isRolePopup = (el: any): boolean => {
-            const t = String(el.textContent ?? '').toLowerCase();
-            return (
-              t.includes('which role') ||
-              t.includes('which of the following') ||
-              t.includes('best describes')
-            );
-          };
-          // --- Pass A: popup CÓ nút Close ---
-          const closes = doc.querySelectorAll("span[aria-label='Close']");
-          for (const close of Array.from(closes) as any[]) {
-            // Popup CapCut là Arco Design (class prefix `lv-`): khung modal thật là
-            // .lv-modal, nền mờ .lv-modal-mask, bọc ngoài .lv-modal-wrapper. LEO tới
-            // .lv-modal — KHÔNG dùng [class*='modal'] vì chính nút close có class
-            // 'lv-modal-close-icon' (chứa 'modal') → closest khớp nhầm CHÍNH NÓ, chỉ
-            // xoá mỗi cái X còn popup vẫn nguyên (bug bản trước).
-            const modal = close.closest('.lv-modal') ?? close.closest("[role='dialog']");
-            if (!modal || isRolePopup(modal)) continue;
-            const wrapper = modal.closest('.lv-modal-wrapper') ?? modal;
-            wrapper.remove();
-            count++;
-          }
-          // --- Pass B: dọn "xác" chắn click (mask nền + wrapper rỗng) ---
-          for (const mask of Array.from(doc.querySelectorAll('.lv-modal-mask')) as any[]) {
-            mask.remove();
-            count++;
-          }
-          for (const w of Array.from(doc.querySelectorAll('.lv-modal-wrapper')) as any[]) {
-            // Rỗng = không còn .lv-modal bên trong → chỉ là lớp chắn trơ. Wrapper còn
-            // chứa modal thật (chưa bị pass A xoá) thì giữ.
-            if (isRolePopup(w) || w.querySelector('.lv-modal')) continue;
-            w.remove();
-            count++;
-          }
-          return count;
-        })
-        .catch(() => 0);
-      removed += n;
-    }
-    if (removed === 0) break;
-    log.info(`[${profileName}] xoá ${removed} lớp popup (vòng ${i + 1})`);
-    await page.waitForTimeout(400);
-  }
-}
-
-/**
- * Đưa flow từ màn sau-OTP vào tới DASHBOARD. Onboarding của CapCut KHÔNG cố định
- * thứ tự và có thể hiện TRỄ: lúc là wizard "Get started with space" với nút
- * "Open CapCut", lúc là popup vai trò "Which role…" với nút "Skip", lúc vào
- * thẳng app. Nút "Open CapCut" còn hay MỞ APP SANG TAB MỚI. Thay vì các bước
- * cứng theo thứ tự (đã kẹt khi "Open CapCut" hiện sau cửa sổ chờ 8s), poll trong
- * MỘT vòng cho tới khi vào được dashboard:
- *   - Thấy nút Upgrade header (.LvHeaderUpgradeVipNew) → đã vào app, dừng.
- *   - Thấy "Open CapCut" → bấm (bám cả tab mới nếu nó mở tab).
- *   - Thấy "Skip" → bấm (click chuẩn 4s rồi rơi xuống dispatchEvent).
- *   - Chưa thấy gì → chờ chút rồi thử lại.
- * Trả về page đang chứa dashboard (có thể là tab mới do Open CapCut mở).
+ * Chỉ cần một việc: nếu còn màn wizard với nút "Open CapCut" thì bấm để rời
+ * /login vào app (nút này hay MỞ TAB MỚI → bám tab đó). Vào được trang capcut.com
+ * KHÔNG phải /login là đủ — trả về ngay để gọi API. Nếu OTP xong vào thẳng app
+ * (không có Open CapCut) cũng trả ngay.
  */
 async function reachDashboard(
   page: Page,
   log: FlowLog,
   profileName: string,
-  budgetMs = 90_000,
+  budgetMs = 60_000,
 ): Promise<Page> {
   const context = page.context();
   let appPage = page;
   const deadline = Date.now() + budgetMs;
+
+  const onApp = (p: Page): boolean => {
+    const u = p.url();
+    return u.includes('capcut.com') && !u.includes('/login') && u !== 'about:blank';
+  };
 
   while (Date.now() < deadline) {
     // App có thể đã nhảy sang tab mới — luôn bám tab còn sống mới nhất, không blank.
     const alive = context.pages().filter((p) => !p.isClosed() && p.url() !== 'about:blank');
     if (alive.length) appPage = alive[alive.length - 1];
 
-    // ƯU TIÊN DẸP ONBOARDING TRƯỚC. Nút Upgrade header hiện ngay cả khi popup vai
-    // trò còn ĐÈ lên trên (header nằm phía sau), nên KHÔNG dùng header làm điều
-    // kiện dừng khi vẫn còn nút onboarding — trước đây dừng sớm, để popup vai trò
-    // còn nguyên rồi kẹt ở bước sau. Thứ tự: Open CapCut → Skip → (mới) header.
-
-    // 1) "Open CapCut" (cuối wizard onboarding). Bấm chuẩn 8s để mở app; nếu bị
-    //    chặn thì dispatchEvent. Bắt cả trường hợp nó mở TAB MỚI.
+    // Còn wizard "Open CapCut" → bấm để vào app (bám cả tab mới nếu nó mở tab).
     const openBtn = await findVisibleByText(appPage, 'Open CapCut');
     if (openBtn) {
       log.info(`[${profileName}] thấy "Open CapCut" — bấm`);
@@ -254,71 +152,177 @@ async function reachDashboard(
         appPage = newPage;
         log.info(`[${profileName}] Open CapCut mở tab mới: ${appPage.url()}`);
       }
-      await appPage.waitForTimeout(2_000);
+      await appPage.waitForTimeout(1_500);
       continue;
     }
 
-    // 2) "Skip" (popup vai trò "Which role…"). Đây mới là cách dẹp modal đó — nút
-    //    X (Close) bấm KHÔNG tắt. Click chuẩn 4s rồi rơi xuống dispatchEvent (nếu
-    //    addLocatorHandler chen vào). Bấm xong chờ modal đóng hẳn trước khi tiếp.
-    const skip = await findVisibleByText(appPage, 'Skip');
-    if (skip) {
-      log.info(`[${profileName}] thấy "Skip" — bấm`);
-      try {
-        await skip.click({ timeout: 4_000 });
-      } catch (err) {
-        log.warn(`[${profileName}] click Skip lỗi: ${(err as Error).message} — thử dispatchEvent`);
-        await skip.dispatchEvent('click').catch(() => {});
-      }
-      await appPage.waitForTimeout(2_000);
-      continue;
-    }
-
-    // 3) Hết Open CapCut & Skip rồi — giờ mới coi header là dấu hiệu đã vào app.
-    if (await appPage.locator(BTN_UPGRADE_HEADER).first().isVisible().catch(() => false)) {
-      log.info(`[${profileName}] đã vào dashboard (hết popup onboarding)`);
+    // Đã ở trang app (không phải /login) → session sẵn sàng, trả ngay. KHÔNG bấm
+    // Skip: popup vai trò không cản việc gọi API.
+    if (onApp(appPage)) {
+      log.info(`[${profileName}] đã vào app (${appPage.url()}) — gọi API luôn`);
       return appPage;
     }
 
-    // Chưa thấy gì để bấm & chưa thấy header — onboarding đang render/chuyển màn.
-    await appPage.waitForTimeout(1_500);
+    // Chưa thấy Open CapCut & chưa rời /login — đang chuyển màn, chờ chút rồi thử lại.
+    await appPage.waitForTimeout(1_000);
   }
 
-  // Hết budget mà chưa chắc vào dashboard — trả page hiện tại để bước sau chờ
-  // header (fail có ảnh) thay vì treo vô hạn.
-  log.warn(`[${profileName}] hết ${budgetMs / 1000}s onboarding mà chưa chắc vào dashboard`);
+  log.warn(`[${profileName}] hết ${budgetMs / 1000}s mà chưa chắc vào app — vẫn thử gọi API`);
   return appPage;
 }
 
+export interface VipPurchaseResult {
+  region: string;
+  alreadyVip: boolean;
+  vipEndTime: number;
+  cashierUrl: string;
+  ret: string;
+  errmsg: string;
+  step: string;
+}
+
 /**
- * Chờ selector hiện, nhưng nếu trang TREO (spinner xoay mãi, cashier/bảng giá nạp
- * không xong) thì tự STOP + RELOAD để nạp lại đầy đủ, rồi chờ tiếp. Lặp tối đa
- * `reloads` lần. Trả locator handle nếu thấy, null nếu hết lượt vẫn không thấy.
+ * MUA VIP KHÔNG QUA UI. Sau khi đã đăng nhập, gọi thẳng 3 API thương mại của
+ * CapCut bằng `fetch` CỦA CHÍNH TRANG — nhờ vậy `webmssdk.js` tự chèn chữ ký
+ * chống bot (X-Bogus / X-Gnarly / sign / msToken) mà không cách nào sinh lại
+ * được ngoài trình duyệt. Thay cả chuỗi bấm Upgrade → chờ bảng giá render → dò
+ * tab pipopay: nhanh hơn nhiều và không dính popup che chắn (What's new, CapCut
+ * Ultra…), vì hoàn toàn không đụng DOM dashboard.
  *
- * Lý do: đôi khi trang kẹt ở trạng thái loading dở (request treo, JS chưa chạy
- * hết) — chờ thêm bao lâu cũng vô ích, chỉ reload mới cứu. window.stop() cắt các
- * request đang treo trước khi reload để bản nạp lại sạch.
+ * Ba bước, dừng sớm nếu đã có VIP:
+ *   1) subscription_infos: đã là VIP còn hạn → trả alreadyVip, KHÔNG mua nữa.
+ *   2) cc_price_list: lấy sku_id + pms_trade ĐỘNG cho gói dùng thử 7 ngày. Bắt
+ *      buộc lấy động — hardcode sku sẽ lệch theo tài khoản/khu vực → "sku invalid".
+ *   3) init_trade: trả cashier_url (link thanh toán pipopay) để báo về.
+ *
+ * region lấy từ cookie store-country-code (fallback VN) để hợp với proxy vùng khác.
  */
-async function waitWithReload(
-  page: Page,
-  selector: string,
-  log: FlowLog,
-  profileName: string,
-  opts: { perTryMs?: number; reloads?: number } = {},
-): Promise<import('playwright-core').ElementHandle | null> {
-  const perTryMs = opts.perTryMs ?? 15_000;
-  const reloads = opts.reloads ?? 2;
-  for (let attempt = 0; attempt <= reloads; attempt++) {
-    const found = await page
-      .waitForSelector(selector, { state: 'visible', timeout: perTryMs })
-      .catch(() => null);
-    if (found) return found;
-    if (attempt === reloads) break;
-    log.warn(`[${profileName}] trang treo (chưa thấy ${selector} sau ${perTryMs / 1000}s) — stop + reload (${attempt + 1}/${reloads})`);
-    await page.evaluate(() => (globalThis as any).stop?.()).catch(() => {});
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
-  }
-  return null;
+async function purchaseVipViaApi(page: Page): Promise<VipPurchaseResult> {
+  return await page.evaluate(async () => {
+    const g = globalThis as any;
+    const doc = g.document;
+    const fetchFn = g.fetch;
+    const H = {
+      'Content-Type': 'application/json',
+      appId: '348188',
+      appvr: '12.4.0',
+      lan: 'en',
+      loc: 'VN',
+      pf: '7',
+    };
+    const cookie = (name: string): string => {
+      const m = String(doc?.cookie ?? '').match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+      return m ? decodeURIComponent(m[1]) : '';
+    };
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    // Sau Open CapCut, cookie login (sessionid/sid_guard) có thể chưa set ngay —
+    // gọi API sớm sẽ dính "not login". Chờ cookie xuất hiện tối đa ~15s trước khi
+    // gọi; hết giờ mà vẫn chưa có thì cứ thử (fetch dùng credentials:include nên
+    // vẫn gửi cookie hiện có).
+    for (let i = 0; i < 30; i++) {
+      if (cookie('sessionid') || cookie('sid_guard')) break;
+      await sleep(500);
+    }
+
+    const region = (cookie('store-country-code') || 'VN').toUpperCase();
+    const result = {
+      region,
+      alreadyVip: false,
+      vipEndTime: 0,
+      cashierUrl: '',
+      ret: '',
+      errmsg: '',
+      step: '',
+    };
+
+    // --- B1: đã có VIP chưa? ---
+    try {
+      const sub = await fetchFn(
+        'https://commerce-api-sg.capcut.com/commerce/v3/trade/subscription_infos',
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: H,
+          body: JSON.stringify({ scene: ['vip', 'workspace'], app_id: 348188, vip_levels: ['vip', 'ultra'] }),
+        },
+      ).then((r: any) => r.json());
+      const vip = sub?.data?.subscription_user_infos?.vip;
+      const info = (vip?.vip_infos ?? []).find((v: any) => v?.is_vip);
+      if (info) {
+        result.alreadyVip = true;
+        result.vipEndTime = Number(info.vip_end_time) || 0;
+        result.step = 'already-vip';
+        return result;
+      }
+    } catch (e: any) {
+      // Lỗi check sub không chặn việc mua — cứ đi tiếp.
+    }
+
+    // --- B2: lấy bảng giá, chọn gói dùng thử 7 ngày, lấy sku ĐỘNG ---
+    let pick: any = null;
+    try {
+      const pr = await fetchFn(
+        'https://commerce-api-sg.capcut.com/commerce/v1/subscription/cc_price_list',
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: H,
+          body: JSON.stringify({ aid: 348188, region, scene: 'vip' }),
+        },
+      ).then((r: any) => r.json());
+      const list = pr?.data?.all_price_list ?? [];
+      // CHỈ mua gói dùng thử 7 ngày (can_trial + trial_cycle=7). KHÔNG fallback
+      // sang gói mặc định — tránh lỡ init_trade một gói trả tiền ngay.
+      pick = list.find((p: any) => p?.can_trial && p?.trial_cycle === 7);
+      if (!pick) {
+        result.step = 'no-trial';
+        result.errmsg = 'không có gói dùng thử 7 ngày';
+        return result;
+      }
+    } catch (e: any) {
+      result.step = 'price-list-err';
+      result.errmsg = String((e && e.message) || e);
+      return result;
+    }
+
+    // --- B3: init_trade → cashier_url ---
+    try {
+      const body = {
+        app_id: 348188,
+        aid: 348188,
+        region,
+        scene: 'vip',
+        type: 'vip',
+        benefit_target: {},
+        trade_type: 'subscription',
+        sku_id: pick.sku_id,
+        product_id: pick.product_id,
+        pms_trade: pick.pms_trade,
+        pay_channel: 'aggregate',
+        pipo_aggregate_info: {
+          color_theme: 'light',
+          gp_unavailable: true,
+          language: 'en',
+          request_id: String(Date.now()),
+          return_url: 'https://www.capcut.com/commerce/payment-result?closeImmediately=1',
+          user_create_time: Math.floor(Date.now() / 1000),
+        },
+      };
+      const res = await fetchFn(
+        'https://commerce-api-sg.capcut.com/commerce/v3/trade/init_trade',
+        { method: 'POST', credentials: 'include', headers: H, body: JSON.stringify(body) },
+      ).then((r: any) => r.json());
+      result.ret = String(res?.ret ?? '');
+      result.errmsg = String(res?.errmsg ?? '');
+      result.cashierUrl = res?.data?.pipo_aggregate_pay_info?.cashier_url ?? '';
+      result.step = result.cashierUrl ? 'checkout' : 'init-trade-no-url';
+    } catch (e: any) {
+      result.step = 'init-trade-err';
+      result.errmsg = String((e && e.message) || e);
+    }
+    return result;
+  });
 }
 
 export const capcutSigninFlow: RegisteredFlow = {
@@ -329,44 +333,9 @@ export const capcutSigninFlow: RegisteredFlow = {
       'Mua mail dongvanfb → đăng ký CapCut → tự lấy OTP từ hòm thư → bỏ qua xác minh → mở màn nâng cấp, bắt popup thanh toán.',
   },
   run: async ({ helper, page, buyMail, getOtpByRegex, report, profile, log }) => {
-    // --- Popup "What's new"/promo nhảy ra KHÔNG đoán trước được (sau Skip, sau
-    // khi vào app…). Mọi cách "canh thời điểm rồi bấm X" đều trượt vì thời điểm
-    // xuất hiện không cố định. addLocatorHandler (Playwright ≥1.42) đăng ký một
-    // lần: Playwright tự chạy handler đóng popup NGAY TRƯỚC mỗi thao tác bị nó
-    // chắn, bất kể popup hiện lúc nào. Hai selector đúng của nút X:
-    //   span[aria-label='Close']
-    // Chỉ bắt wrapper role=button, không bắt SVG con để tránh strict-mode match
-    // 2 element cùng lúc.
-    //
-    // noWaitAfter=TRUE — QUAN TRỌNG: mặc định Playwright CHỜ overlay biến mất sau
-    // khi chạy handler rồi mới tiếp tục thao tác gốc. Nhưng nút X của popup vai
-    // trò ("Which role…") bấm KHÔNG tắt (modal đó phải dẹp bằng Skip), nên kiểu
-    // chờ mặc định làm Playwright treo 30s MỌI thao tác (đã dính đúng lỗi này:
-    // "waiting for span[aria-label='Close'] to be hidden — 44×"). Đặt noWaitAfter
-    // để chạy handler xong là đi tiếp ngay; dẹp popup vai trò để reachDashboard
-    // lo riêng bằng Skip. ---
-    // Dashboard mới ("Seedance/Ultra") bật NHIỀU popup XẾP CHỒNG cùng lúc
-    // ("What's new", "CapCut Ultra is live"…), mỗi popup một nút X cùng selector
-    // span[aria-label='Close']. Nếu đăng ký handler bằng locator khớp NHIỀU element,
-    // chính việc Playwright dò visible để chạy handler đã ném strict-mode violation
-    // ("resolved to 2 elements") và làm hỏng luôn thao tác đang chờ. Nên:
-    //   - trigger = .first() (một element → không vi phạm strict), và
-    //   - trong handler bấm LẶP nút Close đầu tiên cho tới khi hết (đóng mọi popup
-    //     chồng nhau), thay vì chỉ đóng 1.
-    const popupClose = page.locator("span[aria-label='Close']").first();
-    await page.addLocatorHandler(
-      popupClose,
-      async () => {
-        for (let i = 0; i < 5; i++) {
-          const close = page.locator("span[aria-label='Close']").first();
-          if (!(await close.isVisible().catch(() => false))) break;
-          log.info(`[${profile.name}] popup chắn thao tác — đóng (${i + 1})`);
-          await close.click({ timeout: 5_000 }).catch(() => {});
-          await page.waitForTimeout(400);
-        }
-      },
-      { noWaitAfter: true },
-    );
+    // (KHÔNG còn addLocatorHandler/sweepPopups: từ khi vào dashboard, việc nâng
+    // cấp VIP gọi thẳng API thương mại qua purchaseVipViaApi — không đụng DOM nên
+    // popup "What's new"/"CapCut Ultra" che chắn không còn ảnh hưởng gì.)
 
     // --- Bước 1: mở trang đăng nhập. `locale=en` ÉP tiếng Anh để các nút bắt
     // theo text (Continue/Sign up/Open CapCut) khớp dù profile chạy proxy nước
@@ -450,96 +419,37 @@ export const capcutSigninFlow: RegisteredFlow = {
     const appPage = await reachDashboard(page, log, profile.name);
     if (appPage !== page) log.info(`[${profile.name}] dashboard ở tab: ${appPage.url()}`);
 
-    // Xác nhận nút Upgrade header đã hiện trước khi bấm. reachDashboard thường đã
-    // dừng đúng lúc thấy header (chờ này trả về ngay); nếu hết budget mà chưa vào
-    // được thì chờ tối đa 30s ở đây để fail CÓ ẢNH thay vì bấm nhầm.
-    // (Không còn nhảy sang /profile: popup dashboard mới — "What's new", "CapCut
-    // Ultra is live" và các "xác" mask/wrapper trơ — được sweepPopups dẹp thẳng
-    // tại tab hiện tại ở Bước 12, rồi bấm Upgrade luôn.)
-    await appPage.waitForSelector(BTN_UPGRADE_HEADER, { state: 'visible', timeout: 30_000 });
-
-    // --- Bước 12: mở màn nâng cấp VIP. Nút này có thể mở bảng giá NGAY TRÊN
-    // tab hiện tại HOẶC bật ra TAB MỚI — nên vừa bấm vừa rình sự kiện 'page'.
-    // Nếu có tab mới thì bảng giá nằm ở đó, ngược lại vẫn là tab gốc.
-    // (nút Upgrade header đã được chờ hiện sau khi navigate lại ở Bước 11b.) ---
-    // Pace TRƯỚC khi vào Promise.all: click ở đây phải chạy ngay để 'page' event
-    // (timeout 8s) không hết giờ vì 5-10s pause của click. Nhịp người vẫn giữ.
+    // --- Bước 12: NÂNG CẤP VIP QUA API (không qua UI). Gọi thẳng 3 API thương mại
+    // bằng fetch của chính trang (webmssdk tự ký chống bot). Bỏ hẳn chuỗi bấm
+    // Upgrade → chờ bảng giá → dò tab pipopay: nhanh hơn và miễn nhiễm popup che.
     //
-    // GỠ handler đóng popup TRƯỚC khi mở bảng giá. Modal "Choose your plan" có nút
-    // X trùng đúng selector span[aria-label='Close'] mà handler đang canh — nếu
-    // không gỡ, handler tự đóng luôn bảng giá ngay khi nó hiện → mất gói 7 ngày.
-    await page.removeLocatorHandler(popupClose).catch(() => {});
-
-    // Dọn các lớp popup promo xếp chồng ("What's new", "CapCut Ultra"…) chắn nút
-    // Upgrade. Xoá thẳng element (nhanh + chắc hơn click X từng cái); popup vai trò
-    // "Which role…" được chừa lại cho Skip (reachDashboard đã lo). Chạy sau khi gỡ
-    // handler để không đụng modal bảng giá sắp mở.
-    await sweepPopups(appPage, log, profile.name);
-
-    await helper.pace();
-    const [maybeNewTab] = await Promise.all([
-      appPage.context().waitForEvent('page', { timeout: 20_000 }).catch(() => null),
-      clickLocator(appPage.locator(BTN_UPGRADE_HEADER).first(), log, `[${profile.name}] bấm Upgrade header`),
-    ]);
-    const pricing = maybeNewTab ?? appPage;
-    if (maybeNewTab) {
-      await maybeNewTab.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
-      log.info(`[${profile.name}] bảng giá mở ở tab mới: ${pricing.url()}`);
+    // RETRY: cookie login (sessionid/sid_guard) đôi khi chưa set kịp ngay sau khi
+    // vào app, hoặc request đầu trúng lúc proxy chập chờn → lỗi TẠM. Các step lỗi
+    // tạm (no-cookie/price-list-err/init-trade-err/init-trade-no-url) thì reload
+    // trang rồi thử lại, tối đa 3 lượt. Kết quả CHỐT (already-vip/checkout/no-trial)
+    // dừng ngay, không reload thừa. ---
+    const TERMINAL = new Set(['already-vip', 'checkout', 'no-trial']);
+    let vip = await purchaseVipViaApi(appPage);
+    log.info(`[${profile.name}] purchaseVipViaApi: step=${vip.step} region=${vip.region} ret=${vip.ret} ${vip.errmsg}`);
+    for (let attempt = 1; attempt <= 2 && !TERMINAL.has(vip.step); attempt++) {
+      log.warn(`[${profile.name}] kết quả tạm (${vip.step}) — reload + thử lại (${attempt}/2)`);
+      await appPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
+      await appPage.waitForTimeout(2_000);
+      vip = await purchaseVipViaApi(appPage);
+      log.info(`[${profile.name}] purchaseVipViaApi (thử ${attempt + 1}): step=${vip.step} ret=${vip.ret} ${vip.errmsg}`);
     }
+    await snapshotPage(appPage, `capcut-dashboard-${profile.name}`).catch(() => {});
 
-    // --- Bước 13: chờ gói dùng thử 7 ngày render (tối đa 15s) rồi quyết định.
-    // Dùng waitForSelector có chờ thay vì exists() tức thời — bảng giá cần thời
-    // gian dựng. Luôn chụp lại bảng giá để đối chiếu DOM mà không phải mua thêm. ---
-    const trial = await waitWithReload(pricing, TRIAL_7DAYS, log, profile.name, { perTryMs: 15_000, reloads: 2 });
-    await snapshotPage(pricing, `capcut-pricing-${profile.name}`);
-
-    if (trial) {
-      log.info(`[${profile.name}] có gói dùng thử 7 ngày → bấm Upgrade, bắt popup thanh toán`);
-      // Nhịp người trước khi bấm Upgrade (pricing có thể là tab mới không do helper
-      // bọc, nên pause trực tiếp trên page đó thay vì helper.pace()).
-      await pricing.waitForTimeout(randInt(5_000, 10_000));
-      const upgradeButton = await findTrialUpgradeButton(pricing);
-      if (!upgradeButton) {
-        await snapshotPage(pricing, `capcut-upgrade-not-found-${profile.name}`);
-        throw new Error('Không tìm được nút Upgrade của gói Pro 7 ngày trên bảng giá');
-      }
-      const [checkout] = await Promise.all([
-        pricing.context().waitForEvent('page', { timeout: 30_000 }).catch(() => null),
-        clickLocator(upgradeButton, log, `[${profile.name}] bấm Upgrade gói Pro`),
-      ]);
-      if (checkout) {
-        // Cổng thanh toán mở tab bằng window.open('') → tab khởi tạo là about:blank
-        // rồi JS mới điều hướng sang URL thật (cashier pipopay). URL pipopay là cái
-        // cần bắt để báo Telegram + ghi sheet. Poll nhanh (200ms/lần): hễ thấy
-        // 'pipopay' thì chờ THÊM 200ms cho JS gắn nốt query/session rồi chốt URL —
-        // đủ để link mở ra chuẩn mà không phải chờ cả chuỗi load nặng của cashier.
-        // Fallback: URL đầu tiên rời about:blank.
-        const deadline = Date.now() + 30_000;
-        let checkoutUrl = '';
-        while (Date.now() < deadline) {
-          if (checkout.isClosed()) break;
-          const u = checkout.url();
-          if (!checkoutUrl && u !== 'about:blank' && u !== '') checkoutUrl = u;
-          if (u.includes('pipopay')) {
-            await checkout.waitForTimeout(200);
-            checkoutUrl = checkout.url();
-            break;
-          }
-          await checkout.waitForTimeout(200);
-        }
-        if (!checkoutUrl) checkoutUrl = checkout.url();
-        report({ checkoutUrl, status: 'checkout' });
-        log.info(`[${profile.name}] popup thanh toán: ${checkoutUrl}`);
-        // Chụp lại (không chờ load) để có bằng chứng — bỏ qua nếu tab đã đóng.
-        await snapshotPage(checkout, `capcut-checkout-${profile.name}`).catch(() => {});
-      } else {
-        report({ status: 'signup-ok' });
-        log.info(`[${profile.name}] bấm Upgrade nhưng không thấy popup thanh toán mở`);
-        await snapshotPage(pricing, `capcut-after-upgrade-${profile.name}`);
-      }
+    if (vip.alreadyVip) {
+      const days = vip.vipEndTime ? Math.round((vip.vipEndTime * 1000 - Date.now()) / 86_400_000) : 0;
+      log.info(`[${profile.name}] đã là VIP (còn ~${days} ngày) — bỏ qua mua`);
+      report({ status: 'already-vip' });
+    } else if (vip.cashierUrl) {
+      report({ checkoutUrl: vip.cashierUrl, status: 'checkout' });
+      log.info(`[${profile.name}] link thanh toán: ${vip.cashierUrl}`);
     } else {
       report({ status: 'signup-ok' });
-      log.info(`[${profile.name}] không thấy gói 7 ngày sau 15s — bỏ qua (xem ảnh capcut-pricing-*)`);
+      log.warn(`[${profile.name}] không lấy được cashier_url (step=${vip.step}, ret=${vip.ret}, ${vip.errmsg})`);
     }
   },
 };
