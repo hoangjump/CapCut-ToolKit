@@ -5,6 +5,8 @@ import type { TelegramBotApi } from './telegramClient.js';
 import { TelegramWorkStore } from './store.js';
 import type {
   EmployeeTotals,
+  DistributionItem,
+  DistributionRunDto,
   PayrollRow,
   SalaryVisibility,
   TelegramReaction,
@@ -86,6 +88,25 @@ export function employeeTotals(
 }
 
 function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false): string {
+  if (task.capcutCredentials) {
+    const credentials = task.capcutCredentials;
+    const lines = [
+      cancelled ? '❌ LINK CAPCUT ĐÃ HỦY' : '📌 LINK CAPCUT MỚI',
+      '',
+      `Nhân viên: ${employee.fullName}`,
+      `Email: ${credentials.email}`,
+      `Mật khẩu: ${credentials.password ?? '(không có)'}`,
+      `Mail full: ${credentials.mailLine}`,
+      `Link CapCut: ${credentials.checkoutUrl}`,
+      'Số lượng: 1 con',
+    ];
+    if (employee.salaryVisibility === 'topic') {
+      lines.push(`Đơn giá: ${money(task.unitRate)}/con`, `Tiền công khi thả ❤️: ${money(task.amount)}`);
+    }
+    if (!cancelled) lines.push('', '👉 Thả tim (❤️) vào tin nhắn này để xác nhận đã xử lý.');
+    lines.push(`Mã: ${task.id.slice(0, 8)}`);
+    return lines.join('\n');
+  }
   const lines = [
     cancelled ? '❌ CÔNG VIỆC ĐÃ HỦY' : '📌 CÔNG VIỆC MỚI',
     '',
@@ -114,6 +135,7 @@ export class TelegramWorkService {
   private pollGeneration = 0;
   private pollingActive = false;
   private pollAbort?: AbortController;
+  private readonly flushingRuns = new Set<string>();
 
   constructor(
     private readonly store: TelegramWorkStore,
@@ -123,7 +145,24 @@ export class TelegramWorkService {
 
   async init(): Promise<void> {
     await this.store.init();
+    await this.store.mutate((state) => {
+      const restartedAt = new Date().toISOString();
+      for (const item of state.distributionItems) {
+        if (item.status === 'sending') item.status = 'queued';
+      }
+      for (const run of state.distributionRuns) {
+        // A persisted unfinished run has no producer after an app restart. Mark
+        // its input closed so queued delivery can finish and a later run can start.
+        if (run.status !== 'finished' && !run.flowFinishedAt) {
+          run.flowFinishedAt = restartedAt;
+          run.updatedAt = restartedAt;
+        }
+      }
+    });
     await this.refreshPolling();
+    for (const run of this.store.snapshot().distributionRuns) {
+      if (run.status === 'running') void this.flushDistribution(run.id);
+    }
   }
 
   async close(): Promise<void> {
@@ -210,6 +249,245 @@ export class TelegramWorkService {
         totals: employeeTotals(state, employee.id),
       }))
       .sort((a, b) => a.fullName.localeCompare(b.fullName, 'vi'));
+  }
+
+  listDistributions(projectId?: string): DistributionRunDto[] {
+    const state = this.store.snapshot();
+    return state.distributionRuns
+      .filter((run) => !projectId || run.projectId === projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((run) => this.distributionDto(state, run));
+  }
+
+  async startDistribution(input: {
+    projectId: string;
+    projectName: string;
+    allocations: Array<{ employeeId: string; quantity: number }>;
+  }): Promise<DistributionRunDto> {
+    this.requireToken();
+    this.requireChatId();
+    if (this.settings.getWorkTelegramMode() === 'off') {
+      throw new Error('Hãy bật polling hoặc webhook trước khi chạy phân phối Telegram');
+    }
+    const normalized = input.allocations
+      .map((item) => ({ employeeId: String(item.employeeId), quantity: Number(item.quantity) }))
+      .filter((item) => item.quantity > 0);
+    const total = normalized.reduce((sum, item) => sum + item.quantity, 0);
+    if (!total) throw new Error('Phân phối Telegram cần ít nhất một quota lớn hơn 0');
+    const created = await this.store.mutate((state) => {
+      const active = state.distributionRuns.find((run) => run.projectId === input.projectId && run.status !== 'finished');
+      if (active) throw new Error('Project đang có một đợt phân phối chưa kết thúc');
+      const seen = new Set<string>();
+      const allocations = normalized.map((item) => {
+        if (seen.has(item.employeeId)) throw new Error('Một nhân viên chỉ được xuất hiện một lần trong quota');
+        seen.add(item.employeeId);
+        const employee = state.employees.find((row) => row.id === item.employeeId);
+        if (!employee || employee.status !== 'active' || !employee.telegramUserId || !employee.telegramChatId || !employee.telegramTopicId) {
+          throw new Error(`Nhân viên ${item.employeeId} chưa active hoặc chưa bind đủ Telegram`);
+        }
+        if (!Number.isSafeInteger(item.quantity) || item.quantity < 1) throw new Error('Quota phải là số nguyên dương');
+        return { ...item, assigned: 0 };
+      });
+      const now = new Date().toISOString();
+      const run = {
+        id: randomUUID(),
+        projectId: input.projectId,
+        projectName: input.projectName,
+        status: 'running' as const,
+        allocations,
+        nextAllocationIndex: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.distributionRuns.push(run);
+      return run;
+    });
+    return this.distributionDto(this.store.snapshot(), created);
+  }
+
+  async enqueueCapcutResult(runId: string, row: {
+    profileName: string;
+    email: string;
+    password?: string;
+    mailLine: string;
+    checkoutUrl: string;
+  }): Promise<DistributionItem | undefined> {
+    const item = await this.store.mutate((state) => {
+      const run = state.distributionRuns.find((entry) => entry.id === runId);
+      if (!run || run.status === 'finished') return undefined;
+      let selected = -1;
+      for (let offset = 0; offset < run.allocations.length; offset += 1) {
+        const index = (run.nextAllocationIndex + offset) % run.allocations.length;
+        if (run.allocations[index].assigned < run.allocations[index].quantity) {
+          selected = index;
+          break;
+        }
+      }
+      if (selected < 0) return undefined;
+      const allocation = run.allocations[selected];
+      allocation.assigned += 1;
+      run.nextAllocationIndex = (selected + 1) % run.allocations.length;
+      const now = new Date().toISOString();
+      const created = {
+        id: randomUUID(),
+        sequence: state.distributionItems.filter((item) => item.runId === runId).length + 1,
+        runId,
+        employeeId: allocation.employeeId,
+        profileName: row.profileName,
+        email: row.email,
+        password: row.password,
+        mailLine: row.mailLine,
+        checkoutUrl: row.checkoutUrl,
+        status: 'queued' as const,
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.distributionItems.push(created);
+      run.updatedAt = now;
+      return created;
+    });
+    if (item) void this.flushDistribution(runId);
+    return item;
+  }
+
+  async finishDistribution(runId: string): Promise<DistributionRunDto | undefined> {
+    await this.store.mutate((state) => {
+      const run = state.distributionRuns.find((entry) => entry.id === runId);
+      if (!run) return;
+      run.flowFinishedAt = new Date().toISOString();
+      run.updatedAt = new Date().toISOString();
+    });
+    void this.flushDistribution(runId);
+    return this.listDistributions().find((run) => run.id === runId);
+  }
+
+  async pauseDistribution(runId: string): Promise<DistributionRunDto> {
+    const run = await this.store.mutate((state) => {
+      const found = state.distributionRuns.find((entry) => entry.id === runId);
+      if (!found) throw new Error('Không tìm thấy đợt phân phối');
+      if (found.status === 'finished') throw new Error('Đợt phân phối đã kết thúc');
+      found.status = 'paused';
+      found.updatedAt = new Date().toISOString();
+      return structuredClone(found);
+    });
+    return this.distributionDto(this.store.snapshot(), run);
+  }
+
+  async resumeDistribution(runId: string): Promise<DistributionRunDto> {
+    const run = await this.store.mutate((state) => {
+      const found = state.distributionRuns.find((entry) => entry.id === runId);
+      if (!found) throw new Error('Không tìm thấy đợt phân phối');
+      if (found.status === 'finished' && !state.distributionItems.some((item) => item.runId === runId && item.status === 'failed')) {
+        throw new Error('Đợt phân phối đã kết thúc');
+      }
+      found.status = 'running';
+      found.updatedAt = new Date().toISOString();
+      return structuredClone(found);
+    });
+    void this.flushDistribution(runId);
+    return this.distributionDto(this.store.snapshot(), run);
+  }
+
+  async retryDistributionItem(itemId: string): Promise<DistributionRunDto> {
+    const runId = await this.store.mutate((state) => {
+      const item = state.distributionItems.find((entry) => entry.id === itemId);
+      if (!item) throw new Error('Không tìm thấy link phân phối');
+      if (item.status !== 'failed') throw new Error('Chỉ retry được link đang lỗi');
+      item.status = 'queued';
+      item.error = undefined;
+      item.updatedAt = new Date().toISOString();
+      const run = state.distributionRuns.find((entry) => entry.id === item.runId);
+      if (!run) throw new Error('Không tìm thấy đợt phân phối');
+      run.status = 'running';
+      run.updatedAt = new Date().toISOString();
+      return run.id;
+    });
+    void this.flushDistribution(runId);
+    return this.listDistributions().find((run) => run.id === runId)!;
+  }
+
+  private distributionDto(state: TelegramWorkState, run: TelegramWorkState['distributionRuns'][number]): DistributionRunDto {
+    const items = state.distributionItems.filter((item) => item.runId === run.id);
+    const tasks = state.tasks.filter((task) => task.distributionRunId === run.id);
+    const employeeName = new Map(state.employees.map((employee) => [employee.id, employee.fullName]));
+    const count = (status: DistributionItem['status']) => items.filter((item) => item.status === status).length;
+    return {
+      ...structuredClone(run),
+      generated: items.length,
+      queued: count('queued') + count('sending'),
+      sent: count('sent'),
+      failed: count('failed'),
+      completed: tasks.filter((task) => task.status === 'completed').length,
+      target: run.allocations.reduce((sum, allocation) => sum + allocation.quantity, 0),
+      allocationStats: run.allocations.map((allocation) => ({
+        ...allocation,
+        fullName: employeeName.get(allocation.employeeId) ?? allocation.employeeId,
+        sent: items.filter((item) => item.employeeId === allocation.employeeId && item.status === 'sent').length,
+        completed: tasks.filter((task) => task.employeeId === allocation.employeeId && task.status === 'completed').length,
+      })),
+      items: structuredClone(items.sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
+    };
+  }
+
+  private async flushDistribution(runId: string): Promise<void> {
+    if (this.flushingRuns.has(runId)) return;
+    this.flushingRuns.add(runId);
+    try {
+      for (;;) {
+        const item = await this.store.mutate((state) => {
+          const run = state.distributionRuns.find((entry) => entry.id === runId);
+          if (!run || run.status !== 'running') return undefined;
+          const queued = state.distributionItems.find((entry) => entry.runId === runId && entry.status === 'queued');
+          if (!queued) {
+            const hasSending = state.distributionItems.some((entry) => entry.runId === runId && entry.status === 'sending');
+            if (run.flowFinishedAt && !hasSending) run.status = 'finished';
+            return undefined;
+          }
+          queued.status = 'sending';
+          queued.updatedAt = new Date().toISOString();
+          return structuredClone(queued);
+        });
+        if (!item) return;
+        try {
+          const delivered = this.store.snapshot().tasks.find(
+            (task) => task.distributionItemId === item.id && task.deliveryStatus === 'sent',
+          );
+          const task = delivered ?? await this.createTask({
+            employeeId: item.employeeId,
+            description: `Xử lý link CapCut của ${item.email}`,
+            quantity: 1,
+            source: 'capcut-distribution',
+            distributionRunId: item.runId,
+            distributionItemId: item.id,
+            capcutCredentials: {
+              email: item.email,
+              password: item.password,
+              mailLine: item.mailLine,
+              checkoutUrl: item.checkoutUrl,
+            },
+          });
+          await this.store.mutate((state) => {
+            const saved = state.distributionItems.find((entry) => entry.id === item.id);
+            if (saved) {
+              saved.status = 'sent';
+              saved.taskId = task.id;
+              saved.updatedAt = new Date().toISOString();
+            }
+          });
+        } catch (err) {
+          await this.store.mutate((state) => {
+            const saved = state.distributionItems.find((entry) => entry.id === item.id);
+            if (saved) {
+              saved.status = 'failed';
+              saved.error = (err as Error).message;
+              saved.updatedAt = new Date().toISOString();
+            }
+          });
+        }
+      }
+    } finally {
+      this.flushingRuns.delete(runId);
+    }
   }
 
   async createEmployee(input: {
@@ -333,6 +611,10 @@ export class TelegramWorkService {
     deadline?: string;
     quantity?: number;
     unitRate?: number;
+    source?: WorkTask['source'];
+    distributionRunId?: string;
+    distributionItemId?: string;
+    capcutCredentials?: WorkTask['capcutCredentials'];
   }): Promise<WorkTask> {
     const token = this.requireToken();
     const state = this.store.snapshot();
@@ -357,6 +639,10 @@ export class TelegramWorkService {
         amount: quantity * rate,
         status: 'queued',
         deliveryStatus: 'queued',
+        source: input.source ?? 'manual',
+        distributionRunId: input.distributionRunId,
+        distributionItemId: input.distributionItemId,
+        capcutCredentials: input.capcutCredentials,
         createdAt: now,
         updatedAt: now,
       };
@@ -402,6 +688,9 @@ export class TelegramWorkService {
     const state = this.store.snapshot();
     const current = state.tasks.find((item) => item.id === id);
     if (!current) throw new Error('Không tìm thấy công việc');
+    if (current.source === 'capcut-distribution') {
+      throw new Error('Task CapCut được khóa số lượng và đơn giá; chỉ reaction ❤️ mới cập nhật bảng công');
+    }
     if (current.status !== 'pending') throw new Error('Chỉ sửa được công việc đang chờ');
     const employee = state.employees.find((item) => item.id === current.employeeId)!;
     const next: WorkTask = {
@@ -434,6 +723,9 @@ export class TelegramWorkService {
     const state = this.store.snapshot();
     const task = state.tasks.find((item) => item.id === id);
     if (!task) throw new Error('Không tìm thấy công việc');
+    if (task.source === 'capcut-distribution') {
+      throw new Error('Hãy gửi lại link CapCut từ phần trạng thái phân phối');
+    }
     if (task.status !== 'failed') throw new Error('Chỉ gửi lại được công việc đang lỗi');
     const employee = state.employees.find((item) => item.id === task.employeeId);
     if (!employee || employee.status !== 'active' || !employee.telegramChatId || !employee.telegramTopicId) {
@@ -482,6 +774,9 @@ export class TelegramWorkService {
     const action = await this.store.mutate((state): ReactionAction => {
       const task = state.tasks.find((item) => item.id === id);
       if (!task) throw new Error('Không tìm thấy công việc');
+      if (task.source === 'capcut-distribution') {
+        throw new Error('Task CapCut chỉ được tính hoặc trừ khi nhân viên thả/gỡ reaction ❤️ trên Telegram');
+      }
       const employee = state.employees.find((item) => item.id === task.employeeId)!;
       if (completed) {
         if (task.status !== 'pending') throw new Error('Chỉ hoàn thành được công việc đang chờ');

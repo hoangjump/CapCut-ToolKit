@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Play, Trash2, Plus } from 'lucide-react';
+import { Pause, Play, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import {
-  projectApi, profileApi, mailApi, sellApi,
-  type ProjectRecord, type FlowMeta, type Profile, type MailRecord, type RunResult, type AccountType, type SellProduct,
+  projectApi, profileApi, mailApi, sellApi, workApi,
+  type ProjectRecord, type FlowMeta, type Profile, type MailRecord, type RunResult, type AccountType, type SellProduct, type WorkEmployee, type DistributionRun,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -32,7 +32,7 @@ export function ProjectTab() {
   const selected = projects.find((p) => p.id === selectedId) || null;
 
   return (
-    <div className="grid grid-cols-[320px_1fr] gap-5">
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[320px_1fr]">
       <Card className="h-fit">
         <CardHeader><Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Tạo project</Button></CardHeader>
         <CardContent className="space-y-1.5">
@@ -80,10 +80,17 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   const [poolLive, setPoolLive] = useState(project.ephemeralProxyPool?.liveOnly !== false);
   const [note, setNote] = useState(project.note || '');
   const [blockImages, setBlockImages] = useState(!!project.blockImages);
+  const [distributionEnabled, setDistributionEnabled] = useState(project.telegramDistribution?.enabled ?? false);
+  const [quotaByEmployee, setQuotaByEmployee] = useState<Record<string, string>>(
+    Object.fromEntries((project.telegramDistribution?.allocations ?? []).map((item) => [item.employeeId, String(item.quantity)])),
+  );
   const [saved, setSaved] = useState(false);
 
   const [allProfiles, setAllProfiles] = useState<Profile[]>([]);
   const [allMails, setAllMails] = useState<MailRecord[]>([]);
+  const [workEmployees, setWorkEmployees] = useState<WorkEmployee[]>([]);
+  const [workEmployeesLoaded, setWorkEmployeesLoaded] = useState(false);
+  const [distributionRuns, setDistributionRuns] = useState<DistributionRun[]>([]);
   const [accountTypes, setAccountTypes] = useState<AccountType[]>([]);
   const [typeState, setTypeState] = useState('');
   const [running, setRunning] = useState(false);
@@ -96,7 +103,23 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   useEffect(() => {
     profileApi.list().then(setAllProfiles).catch(() => {});
     mailApi.list().then(setAllMails).catch(() => {});
+    workApi.employees().then((rows) => { setWorkEmployees(rows); setWorkEmployeesLoaded(true); }).catch(() => {});
+    workApi.distributions(project.id).then(setDistributionRuns).catch(() => {});
   }, []);
+
+  const refreshDistribution = useCallback(() => {
+    workApi.distributions(project.id).then(setDistributionRuns).catch(() => {});
+  }, [project.id]);
+  useEffect(() => {
+    const timer = window.setInterval(refreshDistribution, 3_000);
+    return () => window.clearInterval(timer);
+  }, [refreshDistribution]);
+
+  const distributionAllocations = workEmployees
+    .filter((employee) => employee.status !== 'archived')
+    .map((employee) => ({ employeeId: employee.id, quantity: Number(quotaByEmployee[employee.id] || 0) }))
+    .filter((item) => Number.isSafeInteger(item.quantity) && item.quantity >= 0);
+  const distributionTotal = distributionAllocations.reduce((sum, item) => sum + item.quantity, 0);
 
   const doSave = useCallback(() => {
     clearTimeout(saveTimer.current);
@@ -111,17 +134,26 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
           smsbowerService: smsService || undefined,
           ephemeralProxyPool: usePool ? { tags: poolTags.split(',').map((s) => s.trim()).filter(Boolean), liveOnly: poolLive } : null,
           blockImages,
+          telegramDistribution: workEmployeesLoaded
+            ? { enabled: distributionEnabled, allocations: distributionAllocations }
+            : undefined,
           note,
         });
         setSaved(true); setTimeout(() => setSaved(false), 1200); onChanged();
       } catch (e) { toast.error((e as Error).message); }
     }, 300);
-  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, note, project.id, project.name, onChanged]);
+  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
 
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return; }
     doSave();
-  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, note, doSave]);
+  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, distributionEnabled, quotaByEmployee, note, doSave]);
+
+  useEffect(() => {
+    if (workEmployeesLoaded && distributionEnabled && flowName === 'capcut-signin' && String(distributionTotal) !== ephemeral) {
+      setEphemeral(String(distributionTotal));
+    }
+  }, [workEmployeesLoaded, distributionEnabled, distributionTotal, flowName, ephemeral]);
 
   async function loadTypes() {
     setTypeState('(đang tải...)');
@@ -145,6 +177,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
     try {
       const r = await projectApi.run(project.id);
       setResults(r.results);
+      if (r.distributionRunId) refreshDistribution();
       const ok = r.results.filter((x) => x.ok).length;
       toast[ok < r.results.length ? 'error' : 'success'](`Chạy xong: ${ok}/${r.results.length} thành công`);
     } catch (e) { setRunError((e as Error).message); toast.error((e as Error).message); }
@@ -172,7 +205,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
 
         <div className="space-y-1.5">
           <Label>Flow</Label>
-          <Select value={flowName} onValueChange={setFlowName}>
+          <Select value={flowName} onValueChange={(value) => { setFlowName(value); if (value !== 'capcut-signin') setDistributionEnabled(false); }}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{flows.map((f) => <SelectItem key={f.name} value={f.name}>{f.label}</SelectItem>)}</SelectContent>
           </Select>
@@ -187,7 +220,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
           </div>
         )}
 
-        <div className="space-y-1.5">
+        {!distributionEnabled && <div className="space-y-1.5">
           <Label>Chọn profile chạy <span className="text-muted-foreground font-normal">(bỏ trống nếu dùng profile tạm)</span></Label>
           <div className="flex flex-wrap gap-3 rounded-lg border p-3 max-h-40 overflow-auto">
             {allProfiles.length ? allProfiles.map((pr) => (
@@ -196,10 +229,32 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
               </label>
             )) : <span className="text-sm text-muted-foreground">Chưa có hồ sơ nào.</span>}
           </div>
-        </div>
+        </div>}
+
+        {flowName === 'capcut-signin' && (
+          <div className="border-t pt-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div><h3 className="font-semibold text-sm">Tự phân phối link CapCut</h3><p className="text-xs text-muted-foreground">Mỗi link thành một task, gửi đủ email + password + mail full + link; chỉ thả ❤️ mới tính 1 con.</p></div>
+              <Switch checked={distributionEnabled} onCheckedChange={(value) => { setDistributionEnabled(value); if (value) setProfileIds([]); }} />
+            </div>
+            {distributionEnabled && <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {workEmployees.filter((employee) => employee.status !== 'archived').map((employee) => (
+                  <div key={employee.id} className="flex items-center gap-3 border p-3">
+                    <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{employee.fullName}</div><div className="text-xs text-muted-foreground">{employee.status === 'active' ? `${employee.defaultUnitRate.toLocaleString('vi-VN')}đ/con` : 'Chưa active/bind'}</div></div>
+                    <Input className="w-24" type="number" min="0" value={quotaByEmployee[employee.id] ?? '0'} onChange={(e) => setQuotaByEmployee((current) => ({ ...current, [employee.id]: e.target.value }))} />
+                    <span className="text-xs text-muted-foreground">con</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between border-t pt-3 text-sm"><span>Tổng profile sẽ tạo</span><strong>{distributionTotal} con</strong></div>
+              <p className="text-xs text-muted-foreground">Quota chạy round-robin theo thứ tự nhân viên. Nhân viên chưa bind sẽ làm run bị từ chối trước khi mở browser.</p>
+            </>}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5"><Label>Số lượng cần tạo <span className="text-muted-foreground font-normal">(account — tạo profile tạm rồi tự xóa)</span></Label><Input type="number" min={0} value={ephemeral} onChange={(e) => setEphemeral(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Số lượng cần tạo <span className="text-muted-foreground font-normal">(account — tạo profile tạm rồi tự xóa)</span></Label><Input disabled={distributionEnabled} type="number" min={0} value={ephemeral} onChange={(e) => setEphemeral(e.target.value)} />{distributionEnabled && <p className="text-xs text-muted-foreground">Tự lấy từ tổng quota nhân viên.</p>}</div>
           <div className="space-y-1.5"><Label>Số proxy chạy song song <span className="text-muted-foreground font-normal">(= số luồng)</span></Label><Input type="number" min={1} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} /></div>
         </div>
         {Number(ephemeral) > 0 && Number(concurrency) > 0 && (
@@ -289,8 +344,51 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
             )}
           </div>
         )}
+
+        {distributionRuns[0] && <DistributionStatus run={distributionRuns[0]} onChanged={refreshDistribution} />}
       </CardContent>
     </Card>
+  );
+}
+
+function DistributionStatus({ run, onChanged }: { run: DistributionRun; onChanged: () => void }) {
+  async function action(request: () => Promise<unknown>, message: string) {
+    try { await request(); toast.success(message); onChanged(); } catch (error) { toast.error((error as Error).message); }
+  }
+  const statusLabel = run.status === 'running' ? 'Đang gửi' : run.status === 'paused' ? 'Tạm dừng' : 'Đã kết thúc';
+  const failedItems = run.items.filter((item) => item.status === 'failed');
+  return (
+    <div className="border-t pt-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-sm font-semibold">Phân phối gần nhất</h3>
+        <Badge variant={run.status === 'paused' ? 'muted' : run.status === 'finished' ? 'outline' : 'success'}>{statusLabel}</Badge>
+        <Button className="ml-auto" size="sm" variant="outline" onClick={onChanged}><RefreshCw /> Làm mới</Button>
+        {run.status === 'running' && <Button size="sm" variant="outline" onClick={() => action(() => workApi.pauseDistribution(run.id), 'Đã tạm dừng gửi Telegram')}><Pause /> Tạm dừng gửi</Button>}
+        {run.status === 'paused' && <Button size="sm" onClick={() => action(() => workApi.resumeDistribution(run.id), 'Đã tiếp tục gửi Telegram')}><Play /> Tiếp tục gửi</Button>}
+      </div>
+      <div className="grid grid-cols-2 gap-px overflow-hidden border bg-border text-sm sm:grid-cols-5">
+        {[
+          ['Đã tạo', `${run.generated}/${run.target}`], ['Đang chờ', run.queued], ['Đã gửi', run.sent], ['Đã tim', run.completed], ['Gửi lỗi', run.failed],
+        ].map(([label, value]) => <div key={label} className="bg-background p-3"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 font-semibold">{value}</div></div>)}
+      </div>
+      <div className="divide-y border">
+        {run.allocationStats.map((allocation) => (
+          <div key={allocation.employeeId} className="grid grid-cols-2 gap-2 px-3 py-2 text-sm md:grid-cols-[1fr_auto_auto_auto] md:gap-5">
+            <span className="font-medium">{allocation.fullName}</span>
+            <span>Gán {allocation.assigned}/{allocation.quantity}</span>
+            <span>Đã gửi {allocation.sent}</span>
+            <span>Đã tim {allocation.completed}</span>
+          </div>
+        ))}
+      </div>
+      {failedItems.length > 0 && <div className="space-y-2">
+        <div className="text-sm font-medium text-destructive">Link gửi lỗi</div>
+        {failedItems.map((item) => <div key={item.id} className="flex items-center gap-3 border px-3 py-2 text-sm">
+          <div className="min-w-0 flex-1"><div className="truncate font-medium">{item.email}</div><div className="truncate text-xs text-destructive">{item.error}</div></div>
+          <Button size="sm" variant="outline" onClick={() => action(() => workApi.retryDistributionItem(item.id), 'Đã đưa link về hàng chờ')}><RotateCcw /> Gửi lại</Button>
+        </div>)}
+      </div>}
+    </div>
   );
 }
 

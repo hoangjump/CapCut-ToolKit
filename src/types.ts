@@ -284,6 +284,12 @@ export interface ProjectRecord {
    *  nhanh hơn, tiết kiệm băng thông proxy. Chỉ áp cho profile tạm — profile lưu
    *  sẵn dùng cấu hình antiDetect riêng của nó. Absent/false = tải ảnh bình thường. */
   blockImages?: boolean;
+  /** Tự phân phối kết quả flow CapCut vào Telegram topic theo quota. Tổng quota
+   *  là số profile tạm sẽ chạy; mỗi checkout link thành một task 1 con. */
+  telegramDistribution?: {
+    enabled: boolean;
+    allocations: Array<{ employeeId: string; quantity: number }>;
+  };
   /** Max profiles driven at once. Kept low (default 2) since runs are headful. */
   concurrency?: number;
   note?: string;

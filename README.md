@@ -257,6 +257,14 @@ Thiết lập nhanh:
 5. Giao task với số lượng/đơn giá. Khi nhân viên thả ❤️, bot xác nhận và trả tổng
    số lượng + tiền ngày/tháng; bỏ tim sẽ trừ lại khoản đang ghi nhận.
 
+Trong flow `capcut-signin`, bật **Tự phân phối link CapCut** để đặt quota theo
+nhân viên (ví dụ Duy 10, Tài 5, Phong 8). Tổng quota tự trở thành số profile tạm
+cần chạy. Mỗi kết quả thành công được gửi round-robin vào topic nhân viên với đủ
+email, password, mail full và checkout link. Link nằm trong hàng chờ khi bấm
+**Tạm dừng gửi**; flow Camoufox vẫn tiếp tục, và chỉ reaction ❤️ mới tính 1 con
+vào bảng công. Hàng chờ được lưu trong `telegram-work.json`, có thể resume/retry
+sau khi app khởi động lại.
+
 Pipeline `.gitlab-ci.yml` tự typecheck, test và build Electron target Windows
 bằng Wine. File `.exe` được lưu trong GitLab Job Artifacts trên mỗi push `main`,
 Merge Request, tag hoặc khi chạy pipeline thủ công.

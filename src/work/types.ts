@@ -34,6 +34,15 @@ export interface WorkTask {
   telegramMessageId?: number;
   completedAt?: string;
   completedByUserId?: string;
+  source?: 'manual' | 'capcut-distribution';
+  distributionRunId?: string;
+  distributionItemId?: string;
+  capcutCredentials?: {
+    email: string;
+    password?: string;
+    mailLine: string;
+    checkoutUrl: string;
+  };
   createdAt: string;
   updatedAt: string;
 }
@@ -63,6 +72,58 @@ export interface TelegramWorkState {
   tasks: WorkTask[];
   earnings: EarningEntry[];
   processedUpdates: ProcessedTelegramUpdate[];
+  distributionRuns: DistributionRun[];
+  distributionItems: DistributionItem[];
+}
+
+export interface DistributionAllocation {
+  employeeId: string;
+  quantity: number;
+  assigned: number;
+}
+
+export interface DistributionRun {
+  id: string;
+  projectId: string;
+  projectName: string;
+  status: 'running' | 'paused' | 'finished';
+  allocations: DistributionAllocation[];
+  nextAllocationIndex: number;
+  flowFinishedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DistributionItem {
+  id: string;
+  sequence: number;
+  runId: string;
+  employeeId: string;
+  profileName: string;
+  email: string;
+  password?: string;
+  mailLine: string;
+  checkoutUrl: string;
+  status: 'queued' | 'sending' | 'sent' | 'failed';
+  taskId?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DistributionRunDto extends DistributionRun {
+  generated: number;
+  queued: number;
+  sent: number;
+  failed: number;
+  completed: number;
+  target: number;
+  allocationStats: Array<DistributionAllocation & {
+    fullName: string;
+    sent: number;
+    completed: number;
+  }>;
+  items: DistributionItem[];
 }
 
 export interface EmployeeTotals {

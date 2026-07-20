@@ -100,6 +100,18 @@ function parseEphemeralPool(raw: unknown): ProxyPoolFilter | undefined {
   return { tags, liveOnly };
 }
 
+function parseTelegramDistribution(raw: unknown): ProjectRecord['telegramDistribution'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const value = raw as { enabled?: unknown; allocations?: unknown };
+  const allocations = Array.isArray(value.allocations)
+    ? value.allocations
+        .map((item) => item as { employeeId?: unknown; quantity?: unknown })
+        .map((item) => ({ employeeId: String(item.employeeId ?? '').trim(), quantity: Number(item.quantity ?? 0) }))
+        .filter((item) => item.employeeId && Number.isSafeInteger(item.quantity) && item.quantity >= 0)
+    : [];
+  return { enabled: value.enabled === true, allocations };
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // In dev (tsx) __dirname = src/server; in prod (tsc) = dist/server. Project root
 // is two levels up in both cases.
@@ -1257,6 +1269,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         smsbowerService: body.smsbowerService ? String(body.smsbowerService) : undefined,
         ephemeralProxyPool: parseEphemeralPool(body.ephemeralProxyPool),
         blockImages: body.blockImages === true ? true : undefined,
+        telegramDistribution: parseTelegramDistribution(body.telegramDistribution),
         note: body.note ? String(body.note) : undefined,
       });
       res.status(201).json(created);
@@ -1287,6 +1300,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       if (body.smsbowerService !== undefined) patch.smsbowerService = body.smsbowerService ? String(body.smsbowerService) : undefined;
       if (body.ephemeralProxyPool !== undefined) patch.ephemeralProxyPool = parseEphemeralPool(body.ephemeralProxyPool);
       if (body.blockImages !== undefined) patch.blockImages = body.blockImages === true ? true : undefined;
+      if (body.telegramDistribution !== undefined) patch.telegramDistribution = parseTelegramDistribution(body.telegramDistribution);
       if (body.note !== undefined) patch.note = String(body.note);
       const updated = await projects.update(id, patch);
       res.json(updated);
@@ -1312,10 +1326,24 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       res.status(404).json({ error: 'Project not found' });
       return;
     }
-    // Two ways to pick profiles: fixed profileIds saved on the project, or
-    // ephemeralCount > 0 meaning "spin up N throwaway profiles for this run and
-    // delete them after". Fixed ids win when present.
-    const ephemeralCount = project.profileIds.length ? 0 : (project.ephemeralCount ?? 0);
+    // Smart Telegram distribution uses one fresh profile per allocated "con".
+    // It intentionally requires ephemeral profiles so every link comes from a
+    // clean account and total generated links matches the employee quota exactly.
+    const distribution = project.telegramDistribution?.enabled ? project.telegramDistribution : undefined;
+    if (distribution && project.flowName !== 'capcut-signin') {
+      res.status(400).json({ error: 'Tự phân phối Telegram hiện chỉ áp dụng cho flow CapCut' });
+      return;
+    }
+    if (distribution && project.profileIds.length) {
+      res.status(400).json({ error: 'Tự phân phối cần dùng profile tạm; hãy bỏ chọn profile cố định' });
+      return;
+    }
+    const distributionTotal = distribution
+      ? distribution.allocations.reduce((sum, item) => sum + Math.max(0, Number(item.quantity) || 0), 0)
+      : 0;
+    const ephemeralCount = distribution
+      ? distributionTotal
+      : project.profileIds.length ? 0 : (project.ephemeralCount ?? 0);
     if (!project.profileIds.length && ephemeralCount < 1) {
       res.status(400).json({ error: 'Project chưa chọn profile, cũng chưa đặt số profile tạm để tạo' });
       return;
@@ -1494,34 +1522,43 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     // of all leaking the real one.
     const ephemeralPool = project.ephemeralProxyPool;
     const ephemeralIds: string[] = [];
-    for (let i = 0; i < ephemeralCount; i += 1) {
-      const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
-      const created = await profiles.create({
-        name: `tmp-${project.name}-${stamp}-${i + 1}`,
-        proxyRotation: ephemeralPool
-          ? { mode: 'pool', pool: ephemeralPool, rotateOnOpen: true, rotateOnFailure: true }
-          : undefined,
-        // ChatGPT: TẮT geoip + language 'real' (⇒ KHÔNG set locale gì cả). GỐC RỄ đã
-        // probe xác nhận: Camoufox spoof Intl.DisplayNames theo "locale:region", và
-        // hễ config CÓ locale:region (do geoip HAY ép locale sinh ra) thì spoof LỖI —
-        // .of(bất kỳ mã nước nào) đều trả về CHÍNH nước của region đó. Dropdown quốc
-        // gia ChatGPT build bằng Intl.DisplayNames.of(code) nên hiện "cả list 1 nước"
-        // (US / NL / Việt Nam) → chọn sai. CHỈ khi config KHÔNG có locale:region
-        // (geoip off + language 'real', không ép locale) thì DisplayNames mới đúng →
-        // dropdown render đúng tên nước, selectCountry chọn được Netherlands.
-        // Đánh đổi: timezone/geolocation không còn khớp IP proxy (chấp nhận cho flow
-        // này; UI về mặc định Camoufox = en-US). Các flow khác GIỮ geoip như cũ.
-        antiDetect:
-          project.flowName === 'chatgpt-signup'
-            ? { ...defaultAntiDetect(), geoip: false, language: 'real', blockImages: project.blockImages === true }
-            : project.blockImages
-              ? { ...defaultAntiDetect(), blockImages: true }
-              : undefined,
-      });
-      ephemeralIds.push(created.id);
-    }
-    const runIds = project.profileIds.length ? project.profileIds : ephemeralIds;
+    let distributionRunId: string | undefined;
     try {
+      if (distribution) {
+        const run = await telegramWork.startDistribution({
+          projectId: project.id,
+          projectName: project.name,
+          allocations: distribution.allocations,
+        });
+        distributionRunId = run.id;
+      }
+      for (let i = 0; i < ephemeralCount; i += 1) {
+        const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+        const created = await profiles.create({
+          name: `tmp-${project.name}-${stamp}-${i + 1}`,
+          proxyRotation: ephemeralPool
+            ? { mode: 'pool', pool: ephemeralPool, rotateOnOpen: true, rotateOnFailure: true }
+            : undefined,
+          // ChatGPT: TẮT geoip + language 'real' (⇒ KHÔNG set locale gì cả). GỐC RỄ đã
+          // probe xác nhận: Camoufox spoof Intl.DisplayNames theo "locale:region", và
+          // hễ config CÓ locale:region (do geoip HAY ép locale sinh ra) thì spoof LỖI —
+          // .of(bất kỳ mã nước nào) đều trả về CHÍNH nước của region đó. Dropdown quốc
+          // gia ChatGPT build bằng Intl.DisplayNames.of(code) nên hiện "cả list 1 nước"
+          // (US / NL / Việt Nam) → chọn sai. CHỈ khi config KHÔNG có locale:region
+          // (geoip off + language 'real', không ép locale) thì DisplayNames mới đúng →
+          // dropdown render đúng tên nước, selectCountry chọn được Netherlands.
+          // Đánh đổi: timezone/geolocation không còn khớp IP proxy (chấp nhận cho flow
+          // này; UI về mặc định Camoufox = en-US). Các flow khác GIỮ geoip như cũ.
+          antiDetect:
+            project.flowName === 'chatgpt-signup'
+              ? { ...defaultAntiDetect(), geoip: false, language: 'real', blockImages: project.blockImages === true }
+              : project.blockImages
+                ? { ...defaultAntiDetect(), blockImages: true }
+                : undefined,
+        });
+        ephemeralIds.push(created.id);
+      }
+      const runIds = project.profileIds.length ? project.profileIds : ephemeralIds;
       const results = await runProject(
         browsers,
         {
@@ -1535,12 +1572,29 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
           smsbowerService: project.smsbowerService,
         },
         { concurrency: project.concurrency, headless, storeRoot },
-        { buyMail: buyMailDep, rentMail: rentMailDep, appendSheet: appendSheetDep, notify: notifyDep },
+        {
+          buyMail: buyMailDep,
+          rentMail: rentMailDep,
+          appendSheet: appendSheetDep,
+          notify: notifyDep,
+          onResult: distributionRunId
+            ? async (row) => {
+                await telegramWork.enqueueCapcutResult(distributionRunId!, {
+                  profileName: row.profileName,
+                  email: row.email,
+                  password: row.password,
+                  mailLine: row.mailLine,
+                  checkoutUrl: row.checkoutUrl!,
+                });
+              }
+            : undefined,
+        },
       );
-      res.json({ results });
+      res.json({ results, distributionRunId });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
     } finally {
+      if (distributionRunId) await telegramWork.finishDistribution(distributionRunId).catch(() => {});
       // Tear down throwaway profiles + their userDataDir. Best-effort: a failed
       // delete shouldn't mask the run result.
       for (const id of ephemeralIds) {

@@ -41,6 +41,9 @@ export interface RunProjectDeps {
   /** Push a Telegram message when a profile registers successfully. Absent when
    *  no bot token / chat id is configured. Failures are swallowed by the runner. */
   notify?: (row: SheetRow) => Promise<void>;
+  /** Queue a successful flow result for downstream employee distribution. The
+   *  runner never lets a queue failure change the profile's flow result. */
+  onResult?: (row: SheetRow) => Promise<void>;
 }
 
 export interface RunProjectInput {
@@ -267,6 +270,14 @@ export async function runProject(
             flowLog.info(`đã báo Telegram: ${row.email || session.profile.name}`);
           } catch (e) {
             flowLog.warn(`báo Telegram lỗi: ${(e as Error).message}`);
+          }
+        }
+        if (deps.onResult && !flowError && row.checkoutUrl && row.email) {
+          try {
+            await deps.onResult(row);
+            flowLog.info(`đã xếp hàng phân phối: ${row.email}`);
+          } catch (e) {
+            flowLog.warn(`xếp hàng phân phối lỗi: ${(e as Error).message}`);
           }
         }
       }

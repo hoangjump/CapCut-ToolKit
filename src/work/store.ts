@@ -11,6 +11,8 @@ function emptyState(): TelegramWorkState {
     tasks: [],
     earnings: [],
     processedUpdates: [],
+    distributionRuns: [],
+    distributionItems: [],
   };
 }
 
@@ -40,6 +42,8 @@ export class TelegramWorkStore {
       tasks: parsed.tasks ?? [],
       earnings: parsed.earnings ?? [],
       processedUpdates: parsed.processedUpdates ?? [],
+      distributionRuns: parsed.distributionRuns ?? [],
+      distributionItems: parsed.distributionItems ?? [],
     };
   }
 

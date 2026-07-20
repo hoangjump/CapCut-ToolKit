@@ -102,6 +102,10 @@ export interface ProjectRecord {
   ephemeralProxyPool?: { tags?: string[]; liveOnly?: boolean } | null;
   concurrency?: number;
   blockImages?: boolean;
+  telegramDistribution?: {
+    enabled: boolean;
+    allocations: Array<{ employeeId: string; quantity: number }>;
+  };
   note?: string;
   createdAt: string;
 }
@@ -179,6 +183,10 @@ export interface WorkTask {
   telegramMessageId?: number;
   completedAt?: string;
   completedByUserId?: string;
+  source?: 'manual' | 'capcut-distribution';
+  distributionRunId?: string;
+  distributionItemId?: string;
+  capcutCredentials?: { email: string; password?: string; mailLine: string; checkoutUrl: string };
   createdAt: string;
   updatedAt: string;
 }
@@ -195,6 +203,45 @@ export interface WorkTelegramConfig {
   mode: 'off' | 'polling' | 'webhook';
   webhookUrl: string;
   pollingActive: boolean;
+}
+export interface DistributionItem {
+  id: string;
+  sequence: number;
+  runId: string;
+  employeeId: string;
+  profileName: string;
+  email: string;
+  password?: string;
+  mailLine: string;
+  checkoutUrl: string;
+  status: 'queued' | 'sending' | 'sent' | 'failed';
+  taskId?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface DistributionRun {
+  id: string;
+  projectId: string;
+  projectName: string;
+  status: 'running' | 'paused' | 'finished';
+  generated: number;
+  queued: number;
+  sent: number;
+  failed: number;
+  completed: number;
+  target: number;
+  createdAt: string;
+  updatedAt: string;
+  allocationStats: Array<{
+    employeeId: string;
+    quantity: number;
+    assigned: number;
+    fullName: string;
+    sent: number;
+    completed: number;
+  }>;
+  items: DistributionItem[];
 }
 
 // ---- Proxy ----
@@ -270,7 +317,7 @@ export const projectApi = {
   create: (body: any) => post('/api/projects', body).then((r) => parse<ProjectRecord>(r)),
   update: (id: string, body: any) => put('/api/projects/' + id, body).then((r) => parse<ProjectRecord>(r)),
   remove: (id: string) => fetch('/api/projects/' + id, { method: 'DELETE' }),
-  run: (id: string) => post(`/api/projects/${id}/run`).then((r) => parse<{ results: RunResult[] }>(r)),
+  run: (id: string) => post(`/api/projects/${id}/run`).then((r) => parse<{ results: RunResult[]; distributionRunId?: string }>(r)),
 };
 
 // ---- Telegram employee tasks / payroll ----
@@ -300,6 +347,10 @@ export const workApi = {
   completeTask: (id: string) => post(`/api/work/tasks/${id}/complete`).then((r) => parse<WorkTask>(r)),
   reopenTask: (id: string) => post(`/api/work/tasks/${id}/reopen`).then((r) => parse<WorkTask>(r)),
   payroll: () => fetch('/api/work/payroll').then((r) => parse<PayrollRow[]>(r)),
+  distributions: (projectId?: string) => fetch('/api/work/distributions' + (projectId ? `?projectId=${encodeURIComponent(projectId)}` : '')).then((r) => parse<DistributionRun[]>(r)),
+  pauseDistribution: (id: string) => post(`/api/work/distributions/${id}/pause`).then((r) => parse<DistributionRun>(r)),
+  resumeDistribution: (id: string) => post(`/api/work/distributions/${id}/resume`).then((r) => parse<DistributionRun>(r)),
+  retryDistributionItem: (id: string) => post(`/api/work/distribution-items/${id}/retry`).then((r) => parse<DistributionRun>(r)),
 };
 
 export const CODE_TYPES = ['all', 'facebook', 'google', 'instagram', 'tiktok', 'twitter', 'apple', 'amazon', 'lazada', 'shopee', 'telegram', 'wechat'];

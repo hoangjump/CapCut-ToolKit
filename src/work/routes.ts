@@ -76,4 +76,16 @@ export function registerTelegramWorkRoutes(app: Express, service: TelegramWorkSe
   });
 
   app.get('/api/work/payroll', (_req, res) => res.json(service.payroll()));
+  app.get('/api/work/distributions', (req, res) => {
+    res.json(service.listDistributions(req.query.projectId ? String(req.query.projectId) : undefined));
+  });
+  app.post('/api/work/distributions/:id/pause', async (req, res) => {
+    try { res.json(await service.pauseDistribution(String(req.params.id))); } catch (err) { error(res, err); }
+  });
+  app.post('/api/work/distributions/:id/resume', async (req, res) => {
+    try { res.json(await service.resumeDistribution(String(req.params.id))); } catch (err) { error(res, err); }
+  });
+  app.post('/api/work/distribution-items/:id/retry', async (req, res) => {
+    try { res.json(await service.retryDistributionItem(String(req.params.id))); } catch (err) { error(res, err); }
+  });
 }
