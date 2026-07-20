@@ -257,9 +257,9 @@ Thiết lập nhanh:
 5. Giao task với số lượng/đơn giá. Khi nhân viên thả ❤️, bot xác nhận và trả tổng
    số lượng + tiền ngày/tháng; bỏ tim sẽ trừ lại khoản đang ghi nhận.
 
-Workflow `.github/workflows/windows-ci.yml` tự typecheck, test, build Electron
-Windows và tải file `.exe` lên GitHub Actions Artifacts trên mỗi push `main`, PR
-hoặc khi chạy thủ công. Workflow release theo tag `v*.*.*` vẫn giữ nguyên.
+Pipeline `.gitlab-ci.yml` tự typecheck, test và build Electron target Windows
+bằng Wine. File `.exe` được lưu trong GitLab Job Artifacts trên mỗi push `main`,
+Merge Request, tag hoặc khi chạy pipeline thủ công.
 
 Tab Hồ sơ (master-detail):
 - Danh sách bên trái: mỗi hồ sơ có chấm trạng thái (xanh = đang chạy) và nút **Mở/Đóng**.
