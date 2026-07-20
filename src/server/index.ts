@@ -42,6 +42,10 @@ import {
   type ProxyConfig,
 } from '../types.js';
 import { createLogger, subscribeLogs, recentLogs } from '../logger.js';
+import { TelegramClient } from '../work/telegramClient.js';
+import { TelegramWorkService } from '../work/service.js';
+import { TelegramWorkStore } from '../work/store.js';
+import { registerTelegramWorkRoutes } from '../work/routes.js';
 
 const log = createLogger('server');
 
@@ -153,12 +157,23 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   const settings = new SettingsStore(storeRoot);
   await settings.init();
 
+  const telegramWork = new TelegramWorkService(
+    new TelegramWorkStore(storeRoot),
+    settings,
+    new TelegramClient(),
+  );
+  await telegramWork.init();
+
   const projects = new ProjectStore(storeRoot);
   await projects.init();
 
   const app = express();
   app.use(express.json());
   app.use(express.static(publicDir));
+
+  // Employee/topic task management. This module has its own bot credentials so
+  // it does not interfere with the existing registration notifications.
+  registerTelegramWorkRoutes(app, telegramWork);
 
   // Live log stream (SSE). Sends the ring buffer first so a client connecting
   // mid-run sees recent history, then streams each new line. The log bus in
@@ -1545,6 +1560,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     headless,
     publicDir,
     close: async () => {
+      await telegramWork.close();
       await browsers.closeAll();
     },
   };

@@ -237,6 +237,13 @@ export interface AppSettings {
   /** Telegram chat id the bot posts success notifications to (a user, group, or
    *  channel id — group/channel ids are negative). */
   telegramChatId?: string;
+  /** Bot riêng cho module giao việc; tách khỏi bot báo kết quả automation. */
+  workTelegramBotToken?: string;
+  /** Supergroup forum nhận công việc, dạng -100... */
+  workTelegramChatId?: string;
+  workTelegramMode?: 'off' | 'polling' | 'webhook';
+  workTelegramWebhookUrl?: string;
+  workTelegramWebhookSecret?: string;
 }
 
 /** A saved automation job: run a named flow across a set of profiles, optionally

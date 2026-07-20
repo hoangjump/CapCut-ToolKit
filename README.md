@@ -73,6 +73,7 @@ thì chạy local với `npm run server:dev`.
 <root>/mails.json            — kho mail (email + refresh_token + client_id)
 <root>/settings.json         — cài đặt app (API key dongvanfb)
 <root>/projects.json         — automation job (tên flow + profile để chạy)
+<root>/telegram-work.json    — nhân viên, task Telegram, reaction và sổ tiền công
 <root>/shots/                — screenshot do flow chụp (<name>-<ts>.png)
 ```
 
@@ -237,7 +238,28 @@ dùng key đã lưu.
 
 ## Web UI
 
-Bốn tab: **Quản lý proxy**, **Hồ sơ**, **Mail**, và **Project**.
+Bản desktop có năm tab: **Quản lý proxy**, **Hồ sơ**, **Mail**, **Project** và
+**Công việc**. Tab Công việc quản lý nhân viên theo Telegram Forum Topic, giao
+task, tính sản lượng và tiền công khi đúng nhân viên thả ❤️.
+
+Mỗi nhân viên có đơn giá mặc định; task chụp lại đơn giá lúc gửi nên việc đổi giá
+sau này không làm thay đổi task cũ. Reaction được xử lý tuần tự và lưu
+`update_id`, vì vậy Telegram retry webhook không cộng tiền lần hai.
+
+Thiết lập nhanh:
+
+1. Thêm bot làm Administrator của Supergroup và cấp quyền quản lý topic.
+2. Trong **Công việc → Telegram**, nhập bot token riêng + chat id `-100...`.
+3. Bản Windows chạy local chọn **Polling**; server có HTTPS công khai có thể đăng
+   ký webhook ngay trong UI.
+4. Tạo nhân viên rồi cho nhân viên gửi `/bind MÃ` trong đúng topic. App cũng có
+   thể tự tạo topic bằng nút **Tạo topic**.
+5. Giao task với số lượng/đơn giá. Khi nhân viên thả ❤️, bot xác nhận và trả tổng
+   số lượng + tiền ngày/tháng; bỏ tim sẽ trừ lại khoản đang ghi nhận.
+
+Workflow `.github/workflows/windows-ci.yml` tự typecheck, test, build Electron
+Windows và tải file `.exe` lên GitHub Actions Artifacts trên mỗi push `main`, PR
+hoặc khi chạy thủ công. Workflow release theo tag `v*.*.*` vẫn giữ nguyên.
 
 Tab Hồ sơ (master-detail):
 - Danh sách bên trái: mỗi hồ sơ có chấm trạng thái (xanh = đang chạy) và nút **Mở/Đóng**.

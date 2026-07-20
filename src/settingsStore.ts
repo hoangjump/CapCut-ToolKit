@@ -96,6 +96,51 @@ export class SettingsStore {
     await this.persist();
   }
 
+  getWorkTelegramBotToken(): string | undefined {
+    return this.settings.workTelegramBotToken;
+  }
+
+  async setWorkTelegramBotToken(token: string | undefined): Promise<void> {
+    this.settings.workTelegramBotToken = token?.trim() || undefined;
+    await this.persist();
+  }
+
+  getWorkTelegramChatId(): string | undefined {
+    return this.settings.workTelegramChatId;
+  }
+
+  async setWorkTelegramChatId(id: string | undefined): Promise<void> {
+    this.settings.workTelegramChatId = id?.trim() || undefined;
+    await this.persist();
+  }
+
+  getWorkTelegramMode(): 'off' | 'polling' | 'webhook' {
+    return this.settings.workTelegramMode ?? 'off';
+  }
+
+  async setWorkTelegramMode(mode: 'off' | 'polling' | 'webhook'): Promise<void> {
+    this.settings.workTelegramMode = mode;
+    await this.persist();
+  }
+
+  getWorkTelegramWebhookUrl(): string | undefined {
+    return this.settings.workTelegramWebhookUrl;
+  }
+
+  async setWorkTelegramWebhookUrl(url: string | undefined): Promise<void> {
+    this.settings.workTelegramWebhookUrl = url?.trim() || undefined;
+    await this.persist();
+  }
+
+  getWorkTelegramWebhookSecret(): string | undefined {
+    return this.settings.workTelegramWebhookSecret;
+  }
+
+  async setWorkTelegramWebhookSecret(secret: string | undefined): Promise<void> {
+    this.settings.workTelegramWebhookSecret = secret?.trim() || undefined;
+    await this.persist();
+  }
+
   private async persist(): Promise<void> {
     await writeFile(this.file, JSON.stringify(this.settings, null, 2), 'utf8');
   }

@@ -10,6 +10,9 @@ const post = (url: string, body?: unknown) =>
   fetch(url, { method: 'POST', headers: jsonHeaders, body: body === undefined ? undefined : JSON.stringify(body) });
 const put = (url: string, body: unknown) =>
   fetch(url, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(body) });
+const noContent = async (response: Response): Promise<void> => {
+  if (!response.ok) await parse(response);
+};
 
 // ---- Types ----
 export type ProxyType = 'http' | 'https' | 'socks5';
@@ -135,6 +138,64 @@ export interface MktProduct {
 export interface LogEntry { ts: string; level: 'debug' | 'info' | 'warn' | 'error'; scope: string; msg: string }
 export interface SellProduct { id: string; name: string; price: number; amount: number | null; category: string }
 export interface SmsbowerRest { service: string; domain: string; price: number; count: number }
+export type WorkEmployeeStatus = 'unbound' | 'active' | 'inactive' | 'archived';
+export type SalaryVisibility = 'topic' | 'private' | 'admin-only';
+export interface EmployeeTotals {
+  pendingTasks: number;
+  todayQuantity: number;
+  todayAmount: number;
+  monthQuantity: number;
+  monthAmount: number;
+  allQuantity: number;
+  allAmount: number;
+}
+export interface WorkEmployee {
+  id: string;
+  fullName: string;
+  defaultUnitRate: number;
+  salaryVisibility: SalaryVisibility;
+  status: WorkEmployeeStatus;
+  bindCode: string;
+  telegramUserId?: string;
+  telegramChatId?: string;
+  telegramTopicId?: number;
+  createdAt: string;
+  updatedAt: string;
+  totals: EmployeeTotals;
+}
+export interface WorkTask {
+  id: string;
+  employeeId: string;
+  description: string;
+  deadline?: string;
+  quantity: number;
+  unitRate: number;
+  amount: number;
+  status: 'queued' | 'pending' | 'completed' | 'cancelled' | 'failed';
+  deliveryStatus: 'queued' | 'sent' | 'failed';
+  deliveryError?: string;
+  telegramChatId?: string;
+  telegramTopicId?: number;
+  telegramMessageId?: number;
+  completedAt?: string;
+  completedByUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface PayrollRow {
+  employeeId: string;
+  fullName: string;
+  defaultUnitRate: number;
+  totals: EmployeeTotals;
+}
+export interface WorkTelegramConfig {
+  hasToken: boolean;
+  tokenMasked: string | null;
+  chatId: string;
+  mode: 'off' | 'polling' | 'webhook';
+  webhookUrl: string;
+  pollingActive: boolean;
+}
 
 // ---- Proxy ----
 export const proxyApi = {
@@ -210,6 +271,35 @@ export const projectApi = {
   update: (id: string, body: any) => put('/api/projects/' + id, body).then((r) => parse<ProjectRecord>(r)),
   remove: (id: string) => fetch('/api/projects/' + id, { method: 'DELETE' }),
   run: (id: string) => post(`/api/projects/${id}/run`).then((r) => parse<{ results: RunResult[] }>(r)),
+};
+
+// ---- Telegram employee tasks / payroll ----
+export const workApi = {
+  config: () => fetch('/api/work/config').then((r) => parse<WorkTelegramConfig>(r)),
+  saveConfig: (body: { botToken?: string; chatId?: string }) =>
+    put('/api/work/config', body).then((r) => parse<WorkTelegramConfig>(r)),
+  enablePolling: () => post('/api/work/config/polling').then((r) => parse<WorkTelegramConfig>(r)),
+  configureWebhook: (url: string) => post('/api/work/config/webhook', { url }).then((r) => parse<WorkTelegramConfig>(r)),
+  disable: () => post('/api/work/config/off').then((r) => parse<WorkTelegramConfig>(r)),
+  employees: () => fetch('/api/work/employees').then((r) => parse<WorkEmployee[]>(r)),
+  createEmployee: (body: { fullName: string; defaultUnitRate: number; salaryVisibility: SalaryVisibility }) =>
+    post('/api/work/employees', body).then((r) => parse<WorkEmployee>(r)),
+  updateEmployee: (id: string, body: Partial<Pick<WorkEmployee, 'fullName' | 'defaultUnitRate' | 'salaryVisibility' | 'status'>>) =>
+    put(`/api/work/employees/${id}`, body).then((r) => parse<WorkEmployee>(r)),
+  archiveEmployee: (id: string) => fetch(`/api/work/employees/${id}`, { method: 'DELETE' }).then(noContent),
+  regenerateBind: (id: string) => post(`/api/work/employees/${id}/regenerate-bind`).then((r) => parse<WorkEmployee>(r)),
+  createTopic: (id: string) => post(`/api/work/employees/${id}/create-topic`).then((r) => parse<WorkEmployee>(r)),
+  testTopic: (id: string) => post(`/api/work/employees/${id}/test`).then((r) => parse<{ ok: boolean }>(r)),
+  tasks: () => fetch('/api/work/tasks').then((r) => parse<WorkTask[]>(r)),
+  createTask: (body: { employeeId: string; description: string; deadline?: string; quantity: number; unitRate?: number }) =>
+    post('/api/work/tasks', body).then((r) => parse<WorkTask>(r)),
+  updateTask: (id: string, body: Partial<Pick<WorkTask, 'description' | 'deadline' | 'quantity' | 'unitRate'>>) =>
+    put(`/api/work/tasks/${id}`, body).then((r) => parse<WorkTask>(r)),
+  cancelTask: (id: string) => post(`/api/work/tasks/${id}/cancel`).then((r) => parse<WorkTask>(r)),
+  retryTask: (id: string) => post(`/api/work/tasks/${id}/retry`).then((r) => parse<WorkTask>(r)),
+  completeTask: (id: string) => post(`/api/work/tasks/${id}/complete`).then((r) => parse<WorkTask>(r)),
+  reopenTask: (id: string) => post(`/api/work/tasks/${id}/reopen`).then((r) => parse<WorkTask>(r)),
+  payroll: () => fetch('/api/work/payroll').then((r) => parse<PayrollRow[]>(r)),
 };
 
 export const CODE_TYPES = ['all', 'facebook', 'google', 'instagram', 'tiktok', 'twitter', 'apple', 'amazon', 'lazada', 'shopee', 'telegram', 'wechat'];
