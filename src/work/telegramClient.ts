@@ -25,8 +25,16 @@ export interface TelegramBotApi {
     threadId?: number;
     text: string;
     replyToMessageId?: number;
+    parseMode?: 'HTML';
+    disableLinkPreview?: boolean;
   }): Promise<{ message_id: number }>;
-  editMessageText(token: string, input: { chatId: string; messageId: number; text: string }): Promise<void>;
+  editMessageText(token: string, input: {
+    chatId: string;
+    messageId: number;
+    text: string;
+    parseMode?: 'HTML';
+    disableLinkPreview?: boolean;
+  }): Promise<void>;
   setMessageReaction(token: string, input: { chatId: string; messageId: number; emoji?: string }): Promise<void>;
   createForumTopic(token: string, chatId: string, name: string): Promise<{ message_thread_id: number; name: string }>;
   editForumTopic(token: string, chatId: string, threadId: number, name: string): Promise<void>;
@@ -79,20 +87,32 @@ export class TelegramClient implements TelegramBotApi {
     threadId?: number;
     text: string;
     replyToMessageId?: number;
+    parseMode?: 'HTML';
+    disableLinkPreview?: boolean;
   }): Promise<{ message_id: number }> {
     return this.call(token, 'sendMessage', {
       chat_id: input.chatId,
       message_thread_id: input.threadId,
       text: input.text,
+      parse_mode: input.parseMode,
+      link_preview_options: input.disableLinkPreview ? { is_disabled: true } : undefined,
       reply_parameters: input.replyToMessageId ? { message_id: input.replyToMessageId } : undefined,
     });
   }
 
-  async editMessageText(token: string, input: { chatId: string; messageId: number; text: string }): Promise<void> {
+  async editMessageText(token: string, input: {
+    chatId: string;
+    messageId: number;
+    text: string;
+    parseMode?: 'HTML';
+    disableLinkPreview?: boolean;
+  }): Promise<void> {
     await this.call(token, 'editMessageText', {
       chat_id: input.chatId,
       message_id: input.messageId,
       text: input.text,
+      parse_mode: input.parseMode,
+      link_preview_options: input.disableLinkPreview ? { is_disabled: true } : undefined,
     });
   }
 

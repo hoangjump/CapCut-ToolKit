@@ -20,12 +20,20 @@ import type {
 const log = createLogger('telegram-work');
 const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 const MAX_PROCESSED_UPDATES = 5_000;
+const CAPCUT_LINK_LIFETIME_MS = 15 * 60_000;
 
 const dayFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: TIME_ZONE,
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
+});
+
+const timeFormatter = new Intl.DateTimeFormat('vi-VN', {
+  timeZone: TIME_ZONE,
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
 });
 
 function dateKey(iso: string): string {
@@ -36,6 +44,15 @@ function dateKey(iso: string): string {
 
 function money(value: number): string {
   return `${new Intl.NumberFormat('vi-VN').format(value)}đ`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function positiveInteger(value: unknown, field: string, min = 1): number {
@@ -62,7 +79,9 @@ function recordProcessed(state: TelegramWorkState, updateId: number, outcome: st
 }
 
 export function hasHeart(reactions: TelegramReaction[] | undefined): boolean {
-  return Boolean(reactions?.some((reaction) => reaction.type === 'emoji' && reaction.emoji === '❤️'));
+  return Boolean(reactions?.some((reaction) => (
+    reaction.type === 'emoji' && reaction.emoji?.replaceAll('\uFE0F', '') === '❤'
+  )));
 }
 
 export function employeeTotals(
@@ -90,21 +109,19 @@ export function employeeTotals(
 function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false): string {
   if (task.capcutCredentials) {
     const credentials = task.capcutCredentials;
+    const expiresAt = new Date(new Date(task.createdAt).getTime() + CAPCUT_LINK_LIFETIME_MS);
     const lines = [
       cancelled ? '❌ LINK CAPCUT ĐÃ HỦY' : '📌 LINK CAPCUT MỚI',
       '',
-      `Nhân viên: ${employee.fullName}`,
-      `Email: ${credentials.email}`,
-      `Mật khẩu: ${credentials.password ?? '(không có)'}`,
-      `Mail full: ${credentials.mailLine}`,
-      `Link CapCut: ${credentials.checkoutUrl}`,
-      'Số lượng: 1 con',
+      `<code>${escapeHtml(`${credentials.email} | ${credentials.password ?? '(không có)'}`)}</code>`,
+      `💳 <a href="${escapeHtml(credentials.checkoutUrl)}">Link thanh toán</a>`,
+      `⏱ Hạn: ${timeFormatter.format(expiresAt)} (15 phút)`,
     ];
     if (employee.salaryVisibility === 'topic') {
-      lines.push(`Đơn giá: ${money(task.unitRate)}/con`, `Tiền công khi thả ❤️: ${money(task.amount)}`);
+      lines.push(`💰 ${task.quantity} con · ${money(task.amount)}`);
     }
-    if (!cancelled) lines.push('', '👉 Thả tim (❤️) vào tin nhắn này để xác nhận đã xử lý.');
-    lines.push(`Mã: ${task.id.slice(0, 8)}`);
+    if (!cancelled) lines.push('', `❤️ Thả tim xác nhận · Mã: <code>${task.id.slice(0, 8)}</code>`);
+    else lines.push(`Mã: <code>${task.id.slice(0, 8)}</code>`);
     return lines.join('\n');
   }
   const lines = [
@@ -121,6 +138,10 @@ function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false):
   if (!cancelled) lines.push('', '👉 Thả tim (❤️) vào tin nhắn này để xác nhận hoàn thành.');
   lines.push(`Mã: ${task.id.slice(0, 8)}`);
   return lines.join('\n');
+}
+
+function taskMessageOptions(task: WorkTask): { parseMode?: 'HTML'; disableLinkPreview?: boolean } {
+  return task.capcutCredentials ? { parseMode: 'HTML', disableLinkPreview: true } : {};
 }
 
 interface ReactionAction {
@@ -655,6 +676,7 @@ export class TelegramWorkService {
         chatId: employee.telegramChatId,
         threadId: employee.telegramTopicId,
         text: taskMessage(task, employee),
+        ...taskMessageOptions(task),
       });
       return await this.store.mutate((draft) => {
         const saved = draft.tasks.find((item) => item.id === task.id)!;
@@ -708,6 +730,7 @@ export class TelegramWorkService {
         chatId: next.telegramChatId,
         messageId: next.telegramMessageId,
         text: taskMessage(next, employee),
+        ...taskMessageOptions(next),
       });
     }
     return this.store.mutate((draft) => {
@@ -735,6 +758,7 @@ export class TelegramWorkService {
       chatId: employee.telegramChatId,
       threadId: employee.telegramTopicId,
       text: taskMessage(task, employee),
+      ...taskMessageOptions(task),
     });
     return this.store.mutate((draft) => {
       const saved = draft.tasks.find((item) => item.id === id)!;
@@ -760,6 +784,7 @@ export class TelegramWorkService {
         chatId: task.telegramChatId,
         messageId: task.telegramMessageId,
         text: taskMessage(task, employee, true),
+        ...taskMessageOptions(task),
       });
     }
     return this.store.mutate((draft) => {
@@ -938,7 +963,7 @@ export class TelegramWorkService {
     await this.telegram.setMessageReaction(token, {
       chatId: task.telegramChatId,
       messageId: task.telegramMessageId,
-      emoji: completed ? '❤️' : undefined,
+      emoji: completed ? '❤' : undefined,
     }).catch((err) => log.warn(`bot thả reaction lỗi: ${(err as Error).message}`));
 
     const fullText = completed

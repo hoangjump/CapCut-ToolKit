@@ -11,10 +11,22 @@ import type { TelegramUpdate } from './types.js';
 
 class FakeTelegram implements TelegramBotApi {
   private nextMessageId = 100;
-  readonly sent: Array<{ chatId: string; threadId?: number; text: string }> = [];
+  readonly sent: Array<{
+    chatId: string;
+    threadId?: number;
+    text: string;
+    parseMode?: 'HTML';
+    disableLinkPreview?: boolean;
+  }> = [];
   readonly reactions: Array<{ chatId: string; messageId: number; emoji?: string }> = [];
 
-  async sendMessage(_token: string, input: { chatId: string; threadId?: number; text: string }): Promise<{ message_id: number }> {
+  async sendMessage(_token: string, input: {
+    chatId: string;
+    threadId?: number;
+    text: string;
+    parseMode?: 'HTML';
+    disableLinkPreview?: boolean;
+  }): Promise<{ message_id: number }> {
     this.sent.push(input);
     return { message_id: this.nextMessageId++ };
   }
@@ -41,6 +53,7 @@ async function waitFor(check: () => boolean, message: string): Promise<void> {
 
 test('heart detection only accepts the red heart emoji', () => {
   assert.equal(hasHeart([{ type: 'emoji', emoji: '❤️' }]), true);
+  assert.equal(hasHeart([{ type: 'emoji', emoji: '❤' }]), true);
   assert.equal(hasHeart([{ type: 'emoji', emoji: '👍' }]), false);
   assert.equal(hasHeart([]), false);
 });
@@ -160,7 +173,7 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
         email: `mail${index}@example.com`,
         password: `pass${index}`,
         mailLine: `mail${index}@example.com|pass${index}|refresh${index}|client${index}`,
-        checkoutUrl: `https://capcut.example/checkout/${index}`,
+        checkoutUrl: `https://capcut.example/checkout/${index}?token=abc&locale=vi`,
       });
     }
     let current = service.listDistributions('project-1')[0];
@@ -182,11 +195,20 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     const firstItem = current.items.find((item) => item.employeeId === duy.id)!;
     const task = service.listTasks().find((item) => item.distributionItemId === firstItem.id)!;
     assert.equal(task.capcutCredentials?.password, firstItem.password);
-    const sentText = fake.sent.find((message) => message.text.includes(firstItem.email))!.text;
-    assert.match(sentText, new RegExp(`Email: ${firstItem.email}`));
-    assert.match(sentText, new RegExp(`Mật khẩu: ${firstItem.password}`));
-    assert.match(sentText, new RegExp(`Mail full: ${firstItem.mailLine.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-    assert.match(sentText, new RegExp(`Link CapCut: ${firstItem.checkoutUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    const sentMessage = fake.sent.find((message) => message.text.includes(firstItem.email))!;
+    const sentText = sentMessage.text;
+    const expiresAt = new Intl.DateTimeFormat('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(new Date(task.createdAt).getTime() + 15 * 60_000));
+    assert.ok(sentText.includes(`<code>${firstItem.email} | ${firstItem.password}</code>`));
+    assert.doesNotMatch(sentText, /Mail full:|refresh\d|client\d/);
+    assert.ok(sentText.includes(`<a href="${firstItem.checkoutUrl.replaceAll('&', '&amp;')}">Link thanh toán</a>`));
+    assert.match(sentText, new RegExp(`Hạn: ${expiresAt} \\(15 phút\\)`));
+    assert.equal(sentMessage.parseMode, 'HTML');
+    assert.equal(sentMessage.disableLinkPreview, true);
     await assert.rejects(
       service.setTaskCompletion(task.id, true),
       /chỉ được tính hoặc trừ khi nhân viên thả\/gỡ reaction/,
@@ -199,12 +221,12 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
         message_id: task.telegramMessageId!,
         user: { id: 555 },
         old_reaction: [],
-        new_reaction: [{ type: 'emoji', emoji: '❤️' }],
+        new_reaction: [{ type: 'emoji', emoji: '❤' }],
       },
     });
     assert.equal(service.payroll().find((row) => row.employeeId === duy.id)!.totals.allAmount, 5_000);
     assert.equal(service.listDistributions('project-1')[0].completed, 1);
-    assert.equal(fake.reactions.at(-1)?.emoji, '❤️');
+    assert.equal(fake.reactions.at(-1)?.emoji, '❤');
     assert.match(fake.sent.at(-1)!.text, /\+1 con × 5\.000đ = 5\.000đ/);
     await service.close();
   } finally {
