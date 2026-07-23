@@ -1269,6 +1269,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         smsbowerService: body.smsbowerService ? String(body.smsbowerService) : undefined,
         ephemeralProxyPool: parseEphemeralPool(body.ephemeralProxyPool),
         blockImages: body.blockImages === true ? true : undefined,
+        headless: body.headless === true ? true : undefined,
         telegramDistribution: parseTelegramDistribution(body.telegramDistribution),
         note: body.note ? String(body.note) : undefined,
       });
@@ -1300,6 +1301,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       if (body.smsbowerService !== undefined) patch.smsbowerService = body.smsbowerService ? String(body.smsbowerService) : undefined;
       if (body.ephemeralProxyPool !== undefined) patch.ephemeralProxyPool = parseEphemeralPool(body.ephemeralProxyPool);
       if (body.blockImages !== undefined) patch.blockImages = body.blockImages === true ? true : undefined;
+      if (body.headless !== undefined) patch.headless = body.headless === true ? true : undefined;
       if (body.telegramDistribution !== undefined) patch.telegramDistribution = parseTelegramDistribution(body.telegramDistribution);
       if (body.note !== undefined) patch.note = String(body.note);
       const updated = await projects.update(id, patch);
@@ -1559,6 +1561,9 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         ephemeralIds.push(created.id);
       }
       const runIds = project.profileIds.length ? project.profileIds : ephemeralIds;
+      // Project chỉ ghi đè khi bật true headless. Khi tắt, giữ mặc định của
+      // server: Electron=headful, Docker=virtual display.
+      const runHeadless = project.headless === true ? true : headless;
       const results = await runProject(
         browsers,
         {
@@ -1571,7 +1576,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
           buyProductId: project.buyProductId,
           smsbowerService: project.smsbowerService,
         },
-        { concurrency: project.concurrency, headless, storeRoot },
+        { concurrency: project.concurrency, headless: runHeadless, storeRoot },
         {
           buyMail: buyMailDep,
           rentMail: rentMailDep,

@@ -32,6 +32,12 @@ function isGeoipIpError(err: unknown): boolean {
  *  compositing bằng phần cứng vốn nhanh nên KHÔNG áp các pref này (sẽ chậm đi). */
 const IS_WINDOWS = process.platform === 'win32';
 
+/** Camoufox 0.11+ humanizes every individual `page.mouse.move`. Keep the
+ *  native curve, but cap each segment tightly because PageHelper may emit a
+ *  short Bezier sequence on macOS/Linux. Windows emits one segment and can use
+ *  a slightly longer cap without making concurrent windows feel stuck. */
+const CURSOR_HUMANIZE_MAX_SECONDS = IS_WINDOWS ? 0.18 : 0.06;
+
 /** Prefs giảm tải CPU/render CHỈ cho Windows. Rỗng trên Mac/Linux. Áp qua
  *  firefox_user_prefs mỗi launch.
  *  - gfx.webrender.software: render bằng CPU thay GPU. Trên máy Win GPU yếu/tích
@@ -149,7 +155,12 @@ export class BrowserManager {
         const t0 = Date.now();
         const dir = await mkdtemp(join(tmpdir(), 'cf-warmup-'));
         try {
-          const ctx = (await Camoufox({ user_data_dir: dir, headless: true, humanize: true })) as BrowserContext;
+          const ctx = (await Camoufox({
+            user_data_dir: dir,
+            headless: true,
+            humanize: CURSOR_HUMANIZE_MAX_SECONDS,
+            config: { showcursor: false },
+          })) as BrowserContext;
           const page = ctx.pages()[0] ?? (await ctx.newPage());
           await page.goto('https://example.com', { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
           let mv = 'OK';
@@ -245,19 +256,9 @@ export class BrowserManager {
         // khác page.mouse.move của Playwright chỉ phát sự kiện chứ không nhấc con
         // trỏ thật. Đây là "mock con trỏ" vốn có; codex bỏ nó nên nhìn như mất.
         //
-        // humanize tách theo nền tảng:
-        //  - Mac: true — engine tự chọn thời lượng (tới ~1.5s). Compositing phần
-        //    cứng của Mac vẽ nhanh nên cú di mượt, KHÔNG bị lê; giữ true cho tự
-        //    nhiên nhất.
-        //  - Windows: cap 0.5s. Nhiều cửa sổ headful tranh compositor, 1.5s đó bị
-        //    kéo thành hàng chục giây ("con trỏ di mãi chưa xong"). Trần 0.5s vẫn
-        //    cong + human nhưng không lê khi máy vẽ chậm.
-        humanize: IS_WINDOWS ? 0.5 : true,
-        // showcursor: highlighter (chấm con trỏ) của Camoufox là 1 lớp overlay vẽ
-        // mỗi frame. Trên Win nhiều cửa sổ headful, lớp này tốn render → góp phần
-        // khựng. Tắt trên Win (chuyển động chuột humanize VẪN chạy, chỉ ẩn chấm).
-        // Mac giữ mặc định (render rẻ, tiện nhìn con trỏ khi theo dõi).
-        showcursor: IS_WINDOWS ? false : undefined,
+        // Camoufox mới animate MỖI mouse.move. Giới hạn ngắn giữ nguyên đường
+        // cong native nhưng tránh một chuỗi Bezier bị nhân thành nhiều giây.
+        humanize: CURSOR_HUMANIZE_MAX_SECONDS,
         // Browser geolocation permission. 'prompt' (Firefox default) asks the user,
         // 'allow' grants silently so the position (set by geoip) is served without a
         // dialog, 'disabled' turns the navigator.geolocation API off entirely.
@@ -265,7 +266,12 @@ export class BrowserManager {
         // Hide enumerated media devices (cameras/mics/speakers) via Camoufox's
         // config passthrough — mediaDevices.enumerateDevices() then returns empty.
         // Off when the profile needs real video/voice calls.
-        config: cfg.maskMediaDevices ? { 'mediaDevices:enabled': false } : undefined,
+        config: {
+          ...(cfg.maskMediaDevices ? { 'mediaDevices:enabled': false } : {}),
+          // `showcursor` thuộc config Camoufox, không phải Playwright launch
+          // option. Tắt overlay trên Windows; native humanized movement vẫn còn.
+          ...(IS_WINDOWS ? { showcursor: false } : {}),
+        },
         // Screen resolution: 'real' lets Camoufox pick one coherent with the OS; a
         // "WIDTHxHEIGHT" string constrains the fingerprint generator to that exact
         // size so screen.width/height AND availWidth/availHeight report it coherently

@@ -6,20 +6,19 @@ import type { Logger } from '../logger.js';
 /** Default per-action timeout — flows can override per call. */
 const DEFAULT_TIMEOUT = 30_000;
 
-/** True khi chạy trên Windows. Cú lướt chuột (moveMouseTo) tách theo nền tảng:
- *  mỗi bước là một page.mouse.move → trên Win bắt vẽ lại con trỏ, máy vẽ chậm
- *  nên nhiều bước = lướt lê thê; Mac compositor phần cứng nhanh nên không thấy.
- *  Win dùng ít bước (nhanh), Mac giữ nhiều bước (mượt, cong tự nhiên hơn). */
+/** True khi chạy trên Windows. Windows giao toàn bộ quỹ đạo cho Camoufox bằng
+ *  một mouse.move; macOS/Linux vẫn giữ Bezier nhưng dùng ít đoạn hơn vì bản
+ *  Camoufox mới humanize từng đoạn ở tầng engine. */
 const IS_WINDOWS = process.platform === 'win32';
-const GLIDE_STEPS_MIN = IS_WINDOWS ? 8 : 18;
-const GLIDE_STEPS_MAX = IS_WINDOWS ? 12 : 26;
-const GLIDE_WAIT_MIN = IS_WINDOWS ? 4 : 6;
-const GLIDE_WAIT_MAX = IS_WINDOWS ? 10 : 18;
+const GLIDE_STEPS_MIN = 8;
+const GLIDE_STEPS_MAX = 12;
+const GLIDE_WAIT_MIN = 3;
+const GLIDE_WAIT_MAX = 8;
 
 /** Human-like pause before each interactive step. Random in [PACE_MIN, PACE_MAX]
  *  ms — override via env (or set PACE_MAX_MS=0 to disable for fast debugging). */
-const PACE_MIN_MS = Number(process.env.PACE_MIN_MS ?? 1_000);
-const PACE_MAX_MS = Number(process.env.PACE_MAX_MS ?? 3_000);
+const PACE_MIN_MS = Number(process.env.PACE_MIN_MS ?? 300);
+const PACE_MAX_MS = Number(process.env.PACE_MAX_MS ?? 900);
 
 /** Where screenshots land. Set once by the runner before flows run. */
 let shotsDir = join(process.cwd(), 'profiles-store', 'shots');
@@ -69,7 +68,7 @@ export class PageHelper {
   }
 
   /** Glide the virtual cursor from its last position to a random point inside
-   *  the target element, following a cubic Bézier curve in ~20 small steps so
+   *  the target element, following a short cubic Bézier curve so
    *  the motion looks hand-driven rather than a teleport. Leaves the cursor
    *  hovering over that point; callers click right after. No-op-safe: if the box
    *  can't be measured it just moves to the element's center via Playwright. */
@@ -90,12 +89,13 @@ export class PageHelper {
       if (IS_WINDOWS) {
         // Camoufox `humanize` (bật ở browserManager) TỰ vẽ đường cong người cho
         // MỖI page.mouse.move ở tầng C++. Nên trên Win chỉ di 1 CÚ tới đích →
-        // engine animate đúng 1 quỹ đạo (≤0.5s). Trước đây lướt 8-12 bước, mỗi
+        // engine animate đúng 1 quỹ đạo (≤0.18s). Trước đây lướt 8-12 bước, mỗi
         // bước lại bị engine animate = CHỒNG LỚP → con trỏ "di mãi", khựng khi
         // máy vẽ chậm. Bỏ hẳn vòng lặp trên Win, giao đường cong cho Camoufox.
         await this.page.mouse.move(target.x, target.y);
       } else {
-        // Mac (giữ nguyên — đang mượt): Bézier nhiều bước tự vẽ đường cong.
+        // Mac/Linux: vẫn giữ Bezier, nhưng số đoạn ngắn để không chồng nhiều
+        // animation humanize của engine sau khi Camoufox được cập nhật.
         const start = this.cursor;
         const c1 = { x: randFloat(start.x, target.x), y: randFloat(start.y, target.y) };
         const c2 = { x: randFloat(start.x, target.x), y: randFloat(start.y, target.y) };

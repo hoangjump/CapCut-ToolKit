@@ -284,6 +284,9 @@ export interface ProjectRecord {
    *  nhanh hơn, tiết kiệm băng thông proxy. Chỉ áp cho profile tạm — profile lưu
    *  sẵn dùng cấu hình antiDetect riêng của nó. Absent/false = tải ảnh bình thường. */
   blockImages?: boolean;
+  /** Ép project chạy bằng true headless. Absent/false = kế thừa chế độ mặc định
+   *  của app/server (Electron hiện cửa sổ; Docker giữ virtual display). */
+  headless?: boolean;
   /** Tự phân phối kết quả flow CapCut vào Telegram topic theo quota. Tổng quota
    *  là số profile tạm sẽ chạy; mỗi checkout link thành một task 1 con. */
   telegramDistribution?: {

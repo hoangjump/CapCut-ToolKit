@@ -80,6 +80,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   const [poolLive, setPoolLive] = useState(project.ephemeralProxyPool?.liveOnly !== false);
   const [note, setNote] = useState(project.note || '');
   const [blockImages, setBlockImages] = useState(!!project.blockImages);
+  const [headless, setHeadless] = useState(project.headless === true);
   const [distributionEnabled, setDistributionEnabled] = useState(project.telegramDistribution?.enabled ?? false);
   const [quotaByEmployee, setQuotaByEmployee] = useState<Record<string, string>>(
     Object.fromEntries((project.telegramDistribution?.allocations ?? []).map((item) => [item.employeeId, String(item.quantity)])),
@@ -134,6 +135,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
           smsbowerService: smsService || undefined,
           ephemeralProxyPool: usePool ? { tags: poolTags.split(',').map((s) => s.trim()).filter(Boolean), liveOnly: poolLive } : null,
           blockImages,
+          headless,
           telegramDistribution: workEmployeesLoaded
             ? { enabled: distributionEnabled, allocations: distributionAllocations }
             : undefined,
@@ -142,12 +144,12 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
         setSaved(true); setTimeout(() => setSaved(false), 1200); onChanged();
       } catch (e) { toast.error((e as Error).message); }
     }, 300);
-  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
+  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
 
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return; }
     doSave();
-  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, distributionEnabled, quotaByEmployee, note, doSave]);
+  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, note, doSave]);
 
   useEffect(() => {
     if (workEmployeesLoaded && distributionEnabled && flowName === 'capcut-signin' && String(distributionTotal) !== ephemeral) {
@@ -319,6 +321,11 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
 
         <div className="border-t pt-4 space-y-3">
           <h3 className="font-semibold text-sm">Hiệu năng</h3>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <Switch checked={headless} onCheckedChange={setHeadless} />
+            <span className="text-sm">Chạy ẩn (Headless) <span className="text-muted-foreground">(không mở cửa sổ Camoufox)</span></span>
+          </label>
+          <p className="text-xs text-muted-foreground">Tắt để dùng chế độ mặc định: app desktop hiện cửa sổ, Docker tiếp tục dùng màn hình ảo.</p>
           <label className="flex items-center gap-3 cursor-pointer"><Switch checked={blockImages} onCheckedChange={setBlockImages} /><span className="text-sm">Chặn tải hình ảnh <span className="text-muted-foreground">(chạy nhanh hơn, tiết kiệm băng thông proxy)</span></span></label>
         </div>
 

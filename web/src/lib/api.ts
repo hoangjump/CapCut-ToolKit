@@ -102,6 +102,7 @@ export interface ProjectRecord {
   ephemeralProxyPool?: { tags?: string[]; liveOnly?: boolean } | null;
   concurrency?: number;
   blockImages?: boolean;
+  headless?: boolean;
   telegramDistribution?: {
     enabled: boolean;
     allocations: Array<{ employeeId: string; quantity: number }>;

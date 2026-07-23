@@ -18,6 +18,7 @@ export interface CreateProjectInput {
   ephemeralCount?: number;
   ephemeralProxyPool?: ProxyPoolFilter;
   blockImages?: boolean;
+  headless?: boolean;
   telegramDistribution?: ProjectRecord['telegramDistribution'];
   note?: string;
 }
@@ -65,6 +66,7 @@ export class ProjectStore {
       ephemeralCount: input.ephemeralCount,
       ephemeralProxyPool: input.ephemeralProxyPool,
       blockImages: input.blockImages,
+      headless: input.headless,
       telegramDistribution: input.telegramDistribution,
       note: input.note,
       createdAt: new Date().toISOString(),
