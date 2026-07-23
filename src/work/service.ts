@@ -275,7 +275,7 @@ export class TelegramWorkService {
   listDistributions(projectId?: string): DistributionRunDto[] {
     const state = this.store.snapshot();
     return state.distributionRuns
-      .filter((run) => !projectId || run.projectId === projectId)
+      .filter((run) => !run.clearedAt && (!projectId || run.projectId === projectId))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map((run) => this.distributionDto(state, run));
   }
@@ -296,7 +296,9 @@ export class TelegramWorkService {
     const total = normalized.reduce((sum, item) => sum + item.quantity, 0);
     if (!total) throw new Error('Phân phối Telegram cần ít nhất một quota lớn hơn 0');
     const created = await this.store.mutate((state) => {
-      const active = state.distributionRuns.find((run) => run.projectId === input.projectId && run.status !== 'finished');
+      const active = state.distributionRuns.find((run) => (
+        run.projectId === input.projectId && !run.clearedAt && run.status !== 'finished'
+      ));
       if (active) throw new Error('Project đang có một đợt phân phối chưa kết thúc');
       const seen = new Set<string>();
       const allocations = normalized.map((item) => {
@@ -407,6 +409,19 @@ export class TelegramWorkService {
     });
     void this.flushDistribution(runId);
     return this.distributionDto(this.store.snapshot(), run);
+  }
+
+  async clearDistribution(runId: string): Promise<void> {
+    await this.store.mutate((state) => {
+      const run = state.distributionRuns.find((entry) => entry.id === runId);
+      if (!run) throw new Error('Không tìm thấy đợt phân phối');
+      const now = new Date().toISOString();
+      run.status = 'finished';
+      run.flowFinishedAt ??= now;
+      run.clearedAt = now;
+      run.updatedAt = now;
+      state.distributionItems = state.distributionItems.filter((item) => item.runId !== runId);
+    });
   }
 
   async retryDistributionItem(itemId: string): Promise<DistributionRunDto> {

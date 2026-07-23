@@ -351,6 +351,7 @@ export const workApi = {
   distributions: (projectId?: string) => fetch('/api/work/distributions' + (projectId ? `?projectId=${encodeURIComponent(projectId)}` : '')).then((r) => parse<DistributionRun[]>(r)),
   pauseDistribution: (id: string) => post(`/api/work/distributions/${id}/pause`).then((r) => parse<DistributionRun>(r)),
   resumeDistribution: (id: string) => post(`/api/work/distributions/${id}/resume`).then((r) => parse<DistributionRun>(r)),
+  clearDistribution: (id: string) => fetch(`/api/work/distributions/${id}`, { method: 'DELETE' }).then(noContent),
   retryDistributionItem: (id: string) => post(`/api/work/distribution-items/${id}/retry`).then((r) => parse<DistributionRun>(r)),
 };
 

@@ -362,6 +362,10 @@ function DistributionStatus({ run, onChanged }: { run: DistributionRun; onChange
   async function action(request: () => Promise<unknown>, message: string) {
     try { await request(); toast.success(message); onChanged(); } catch (error) { toast.error((error as Error).message); }
   }
+  function clearRun() {
+    if (!confirm('Xóa đợt phân phối này? Link đang chờ sẽ bị bỏ; task đã gửi, số tim và tiền công vẫn được giữ.')) return;
+    void action(() => workApi.clearDistribution(run.id), 'Đã xóa đợt phân phối cũ');
+  }
   const statusLabel = run.status === 'running' ? 'Đang gửi' : run.status === 'paused' ? 'Tạm dừng' : 'Đã kết thúc';
   const failedItems = run.items.filter((item) => item.status === 'failed');
   return (
@@ -370,6 +374,7 @@ function DistributionStatus({ run, onChanged }: { run: DistributionRun; onChange
         <h3 className="text-sm font-semibold">Phân phối gần nhất</h3>
         <Badge variant={run.status === 'paused' ? 'muted' : run.status === 'finished' ? 'outline' : 'success'}>{statusLabel}</Badge>
         <Button className="ml-auto" size="sm" variant="outline" onClick={onChanged}><RefreshCw /> Làm mới</Button>
+        <Button size="sm" variant="outline" onClick={clearRun}><Trash2 className="text-destructive" /> Xóa đợt cũ</Button>
         {run.status === 'running' && <Button size="sm" variant="outline" onClick={() => action(() => workApi.pauseDistribution(run.id), 'Đã tạm dừng gửi Telegram')}><Pause /> Tạm dừng gửi</Button>}
         {run.status === 'paused' && <Button size="sm" onClick={() => action(() => workApi.resumeDistribution(run.id), 'Đã tiếp tục gửi Telegram')}><Play /> Tiếp tục gửi</Button>}
       </div>

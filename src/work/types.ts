@@ -90,6 +90,7 @@ export interface DistributionRun {
   allocations: DistributionAllocation[];
   nextAllocationIndex: number;
   flowFinishedAt?: string;
+  clearedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

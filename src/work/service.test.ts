@@ -228,6 +228,38 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     assert.equal(service.listDistributions('project-1')[0].completed, 1);
     assert.equal(fake.reactions.at(-1)?.emoji, '❤');
     assert.match(fake.sent.at(-1)!.text, /\+1 con × 5\.000đ = 5\.000đ/);
+
+    const stale = await service.startDistribution({
+      projectId: 'project-1',
+      projectName: 'Auto CapCut',
+      allocations: [{ employeeId: duy.id, quantity: 1 }],
+    });
+    await service.pauseDistribution(stale.id);
+    await service.enqueueCapcutResult(stale.id, {
+      profileName: 'stale-profile',
+      email: 'stale@example.com',
+      password: 'stale-pass',
+      mailLine: 'stale@example.com|stale-pass|refresh|client',
+      checkoutUrl: 'https://capcut.example/stale',
+    });
+    await assert.rejects(
+      service.startDistribution({
+        projectId: 'project-1',
+        projectName: 'Auto CapCut',
+        allocations: [{ employeeId: duy.id, quantity: 1 }],
+      }),
+      /đợt phân phối chưa kết thúc/,
+    );
+    await service.clearDistribution(stale.id);
+    assert.equal(service.listDistributions('project-1').some((item) => item.id === stale.id), false);
+    assert.equal(service.payroll().find((row) => row.employeeId === duy.id)!.totals.allAmount, 5_000);
+    const replacement = await service.startDistribution({
+      projectId: 'project-1',
+      projectName: 'Auto CapCut',
+      allocations: [{ employeeId: duy.id, quantity: 1 }],
+    });
+    assert.equal(replacement.status, 'running');
+    await service.clearDistribution(replacement.id);
     await service.close();
   } finally {
     await rm(root, { recursive: true, force: true });
