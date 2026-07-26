@@ -30,11 +30,17 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
+# Build React UI, gồm trang /pay/:token hiển thị luồng ảnh cho nhân viên.
+COPY web/package.json web/package-lock.json ./web/
+RUN npm --prefix web ci
+COPY web ./web
+RUN npm --prefix web run build && rm -rf web/node_modules
+
 # Bỏ devDependencies sau khi đã build xong để image gọn hơn. camoufox-js là
 # dependency thường nên vẫn còn lại sau prune.
 RUN npm prune --omit=dev
 
-# UI tĩnh — server đọc từ <root>/public ở cả dev lẫn prod.
+# UI cũ vẫn được giữ làm fallback nếu web/dist không tồn tại.
 COPY public ./public
 
 # Store (proxy list + session/cookie) sống trong volume này.

@@ -16,6 +16,7 @@ export function maskKey(key: string | undefined): string | null {
 export class SettingsStore {
   private readonly file: string;
   private settings: AppSettings = {};
+  private runtimePaymentPublicUrl: string | null | undefined;
 
   constructor(root = join(process.cwd(), 'profiles-store')) {
     this.file = join(root, 'settings.json');
@@ -138,6 +139,31 @@ export class SettingsStore {
 
   async setWorkTelegramWebhookSecret(secret: string | undefined): Promise<void> {
     this.settings.workTelegramWebhookSecret = secret?.trim() || undefined;
+    await this.persist();
+  }
+
+  getPaymentPublicUrl(): string | undefined {
+    if (this.runtimePaymentPublicUrl !== undefined) return this.runtimePaymentPublicUrl ?? undefined;
+    return (process.env.PAYMENT_PUBLIC_URL?.trim().replace(/\/+$/, '')
+      || this.settings.paymentPublicUrl)
+      || undefined;
+  }
+
+  setRuntimePaymentPublicUrl(url: string | null): void {
+    this.runtimePaymentPublicUrl = url?.trim().replace(/\/+$/, '') || null;
+  }
+
+  async setPaymentPublicUrl(url: string | undefined): Promise<void> {
+    this.settings.paymentPublicUrl = url?.trim().replace(/\/+$/, '') || undefined;
+    await this.persist();
+  }
+
+  getPaymentTunnelAutoStart(): boolean {
+    return this.settings.paymentTunnelAutoStart ?? true;
+  }
+
+  async setPaymentTunnelAutoStart(enabled: boolean): Promise<void> {
+    this.settings.paymentTunnelAutoStart = enabled;
     await this.persist();
   }
 

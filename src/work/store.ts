@@ -13,6 +13,7 @@ function emptyState(): TelegramWorkState {
     processedUpdates: [],
     distributionRuns: [],
     distributionItems: [],
+    paymentSessions: [],
   };
 }
 
@@ -44,6 +45,7 @@ export class TelegramWorkStore {
       processedUpdates: parsed.processedUpdates ?? [],
       distributionRuns: parsed.distributionRuns ?? [],
       distributionItems: parsed.distributionItems ?? [],
+      paymentSessions: parsed.paymentSessions ?? [],
     };
   }
 

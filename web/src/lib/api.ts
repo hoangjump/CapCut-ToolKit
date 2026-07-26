@@ -187,6 +187,9 @@ export interface WorkTask {
   source?: 'manual' | 'capcut-distribution';
   distributionRunId?: string;
   distributionItemId?: string;
+  paymentSessionId?: string;
+  paymentStatus?: PaymentSessionStatus;
+  paidAt?: string;
   capcutCredentials?: { email: string; password?: string; mailLine: string; checkoutUrl: string };
   createdAt: string;
   updatedAt: string;
@@ -204,7 +207,48 @@ export interface WorkTelegramConfig {
   mode: 'off' | 'polling' | 'webhook';
   webhookUrl: string;
   pollingActive: boolean;
+  paymentPublicUrl: string;
+  paymentBrowserEnabled: boolean;
+  tunnel?: TunnelStatus;
 }
+export interface TunnelStatus {
+  state: 'off' | 'starting' | 'online' | 'error';
+  publicUrl: string;
+  autoStart: boolean;
+  error?: string;
+}
+export type PaymentSessionStatus = 'pending' | 'starting' | 'ready' | 'paid' | 'expired' | 'failed' | 'closed';
+export interface PaymentSession {
+  status: PaymentSessionStatus;
+  email: string;
+  expiresAt: string;
+  error?: string;
+}
+export interface PaymentAdminSession {
+  id: string;
+  taskId: string;
+  employeeId: string;
+  employeeName: string;
+  email: string;
+  status: PaymentSessionStatus;
+  viewable: boolean;
+  proxyServer?: string;
+  createdAt: string;
+  expiresAt: string;
+  updatedAt: string;
+  error?: string;
+}
+export interface PaymentControl {
+  maxSessions: number;
+  running: number;
+  sessions: PaymentAdminSession[];
+}
+export type PaymentBrowserInput =
+  | { type: 'click'; x: number; y: number; button?: 'left' | 'middle' | 'right' }
+  | { type: 'move'; x: number; y: number }
+  | { type: 'wheel'; deltaX: number; deltaY: number }
+  | { type: 'key'; key: string; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }
+  | { type: 'text'; text: string };
 export interface DistributionItem {
   id: string;
   sequence: number;
@@ -324,11 +368,18 @@ export const projectApi = {
 // ---- Telegram employee tasks / payroll ----
 export const workApi = {
   config: () => fetch('/api/work/config').then((r) => parse<WorkTelegramConfig>(r)),
-  saveConfig: (body: { botToken?: string; chatId?: string }) =>
+  saveConfig: (body: {
+    botToken?: string;
+    chatId?: string;
+    paymentPublicUrl?: string;
+  }) =>
     put('/api/work/config', body).then((r) => parse<WorkTelegramConfig>(r)),
   enablePolling: () => post('/api/work/config/polling').then((r) => parse<WorkTelegramConfig>(r)),
   configureWebhook: (url: string) => post('/api/work/config/webhook', { url }).then((r) => parse<WorkTelegramConfig>(r)),
   disable: () => post('/api/work/config/off').then((r) => parse<WorkTelegramConfig>(r)),
+  tunnel: () => fetch('/api/work/tunnel').then((r) => parse<TunnelStatus>(r)),
+  startTunnel: () => post('/api/work/tunnel/start').then((r) => parse<TunnelStatus>(r)),
+  stopTunnel: () => post('/api/work/tunnel/stop').then((r) => parse<TunnelStatus>(r)),
   employees: () => fetch('/api/work/employees').then((r) => parse<WorkEmployee[]>(r)),
   createEmployee: (body: { fullName: string; defaultUnitRate: number; salaryVisibility: SalaryVisibility }) =>
     post('/api/work/employees', body).then((r) => parse<WorkEmployee>(r)),
@@ -353,6 +404,18 @@ export const workApi = {
   resumeDistribution: (id: string) => post(`/api/work/distributions/${id}/resume`).then((r) => parse<DistributionRun>(r)),
   clearDistribution: (id: string) => fetch(`/api/work/distributions/${id}`, { method: 'DELETE' }).then(noContent),
   retryDistributionItem: (id: string) => post(`/api/work/distribution-items/${id}/retry`).then((r) => parse<DistributionRun>(r)),
+  paymentSession: (token: string) => fetch(`/api/work/payment-sessions/${encodeURIComponent(token)}`).then((r) => parse<PaymentSession>(r)),
+  claimPaymentSession: (token: string) => post(`/api/work/payment-sessions/${encodeURIComponent(token)}/claim`).then((r) => parse<PaymentSession>(r)),
+  paymentFrameUrl: (token: string) => `/api/work/payment-sessions/${encodeURIComponent(token)}/frame`,
+  sendPaymentInput: (token: string, input: PaymentBrowserInput) =>
+    post(`/api/work/payment-sessions/${encodeURIComponent(token)}/input`, input).then(noContent),
+  closePaymentSession: (token: string) => fetch(`/api/work/payment-sessions/${encodeURIComponent(token)}`, { method: 'DELETE' }).then(noContent),
+  paymentControl: () => fetch('/api/work/payment-control').then((r) => parse<PaymentControl>(r)),
+  paymentControlFrameUrl: (id: string) => `/api/work/payment-control/${encodeURIComponent(id)}/frame`,
+  sendPaymentControlInput: (id: string, input: PaymentBrowserInput) =>
+    post(`/api/work/payment-control/${encodeURIComponent(id)}/input`, input).then(noContent),
+  closePaymentControlSession: (id: string) =>
+    fetch(`/api/work/payment-control/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(noContent),
 };
 
 export const CODE_TYPES = ['all', 'facebook', 'google', 'instagram', 'tiktok', 'twitter', 'apple', 'amazon', 'lazada', 'shopee', 'telegram', 'wechat'];

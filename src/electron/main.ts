@@ -270,6 +270,7 @@ async function openMainWindow(): Promise<void> {
     port: 0,
     storeRoot,
     headless: false,
+    embeddedTunnel: true,
   });
   await mainWindow.loadURL(server.url);
 }

@@ -244,6 +244,10 @@ export interface AppSettings {
   workTelegramMode?: 'off' | 'polling' | 'webhook';
   workTelegramWebhookUrl?: string;
   workTelegramWebhookSecret?: string;
+  /** URL công khai của app, dùng tạo link /pay/:token gửi cho nhân viên. */
+  paymentPublicUrl?: string;
+  /** Tự bật Cloudflare Quick Tunnel khi app desktop khởi động. */
+  paymentTunnelAutoStart?: boolean;
 }
 
 /** A saved automation job: run a named flow across a set of profiles, optionally

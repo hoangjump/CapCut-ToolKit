@@ -46,6 +46,10 @@ import { TelegramClient } from '../work/telegramClient.js';
 import { TelegramWorkService } from '../work/service.js';
 import { TelegramWorkStore } from '../work/store.js';
 import { registerTelegramWorkRoutes } from '../work/routes.js';
+import { PaymentSessionService } from '../work/paymentSessions.js';
+import { LocalPaymentBrowser } from '../work/localPaymentBrowser.js';
+import { paymentHostGuard } from './paymentHostGuard.js';
+import { TunnelManager } from './tunnelManager.js';
 
 const log = createLogger('server');
 
@@ -55,6 +59,7 @@ export interface ServerConfig {
   storeRoot?: string;
   headless?: boolean | 'virtual';
   publicDir?: string;
+  embeddedTunnel?: boolean;
 }
 
 export interface CreatedApp {
@@ -62,6 +67,7 @@ export interface CreatedApp {
   storeRoot: string;
   headless: boolean | 'virtual';
   publicDir: string;
+  tunnel: TunnelManager;
   close: () => Promise<void>;
 }
 
@@ -168,24 +174,28 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
 
   const settings = new SettingsStore(storeRoot);
   await settings.init();
+  const tunnel = new TunnelManager(settings);
 
-  const telegramWork = new TelegramWorkService(
-    new TelegramWorkStore(storeRoot),
-    settings,
-    new TelegramClient(),
-  );
+  const telegramStore = new TelegramWorkStore(storeRoot);
+  const paymentSessions = new PaymentSessionService(telegramStore, settings, new LocalPaymentBrowser());
+  const telegramWork = new TelegramWorkService(telegramStore, settings, new TelegramClient(), paymentSessions);
   await telegramWork.init();
 
   const projects = new ProjectStore(storeRoot);
   await projects.init();
 
   const app = express();
+  app.use(paymentHostGuard(() => settings.getPaymentPublicUrl()));
   app.use(express.json());
   app.use(express.static(publicDir));
 
   // Employee/topic task management. This module has its own bot credentials so
   // it does not interfere with the existing registration notifications.
-  registerTelegramWorkRoutes(app, telegramWork);
+  registerTelegramWorkRoutes(app, telegramWork, paymentSessions, tunnel);
+  app.get('/pay/:token', (_req, res) => {
+    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    res.sendFile(join(publicDir, 'index.html'));
+  });
 
   // Live log stream (SSE). Sends the ring buffer first so a client connecting
   // mid-run sees recent history, then streams each new line. The log bus in
@@ -1583,13 +1593,14 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
           appendSheet: appendSheetDep,
           notify: notifyDep,
           onResult: distributionRunId
-            ? async (row) => {
+            ? async (row, source) => {
                 await telegramWork.enqueueCapcutResult(distributionRunId!, {
                   profileName: row.profileName,
                   email: row.email,
                   password: row.password,
                   mailLine: row.mailLine,
                   checkoutUrl: row.checkoutUrl!,
+                  proxy: source.proxy,
                 });
               }
             : undefined,
@@ -1618,7 +1629,9 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     storeRoot,
     headless,
     publicDir,
+    tunnel,
     close: async () => {
+      await tunnel.close();
       await telegramWork.close();
       await browsers.closeAll();
     },
@@ -1639,6 +1652,8 @@ export async function startServer(config: ServerConfig = {}): Promise<StartedSer
   const resolvedPort = address?.port ?? port;
   const urlHost = host === '0.0.0.0' ? 'localhost' : host;
   const url = `http://${urlHost}:${resolvedPort}`;
+  created.tunnel.setOrigin(url, Boolean(config.embeddedTunnel));
+  if (config.embeddedTunnel) void created.tunnel.startIfEnabled();
 
   log.info(`proxy manager listening on ${url}`);
   log.info(`serving UI from ${created.publicDir}`);

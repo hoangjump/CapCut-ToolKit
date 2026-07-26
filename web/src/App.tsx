@@ -7,12 +7,16 @@ import { ProfilesTab } from '@/tabs/ProfilesTab';
 import { MailTab } from '@/tabs/MailTab';
 import { ProjectTab } from '@/tabs/ProjectTab';
 import { WorkTab } from '@/tabs/WorkTab';
+import { PaymentViewer } from '@/PaymentViewer';
 
 // macOS: chừa lề trái cho traffic lights (hiddenInset). Nhận diện qua UA — chỉ
 // ảnh hưởng lề cosmetic nên an toàn cả khi chạy trong trình duyệt lúc dev.
 const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent);
 
 export default function App() {
+  const paymentToken = /^\/pay\/([^/]+)\/?$/.exec(window.location.pathname)?.[1];
+  if (paymentToken) return <PaymentViewer token={decodeURIComponent(paymentToken)} />;
+
   const [tab, setTab] = useState('proxies');
   const [runSignal, setRunSignal] = useState(0);
 

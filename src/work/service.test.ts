@@ -7,6 +7,12 @@ import { SettingsStore } from '../settingsStore.js';
 import { TelegramWorkService, hasHeart } from './service.js';
 import { TelegramWorkStore } from './store.js';
 import type { TelegramBotApi } from './telegramClient.js';
+import {
+  PaymentSessionService,
+  type PaymentBrowser,
+  type PaymentBrowserCreateInput,
+  type PaymentBrowserInput,
+} from './paymentSessions.js';
 import type { TelegramUpdate } from './types.js';
 
 class FakeTelegram implements TelegramBotApi {
@@ -41,6 +47,16 @@ class FakeTelegram implements TelegramBotApi {
   async getUpdates(): Promise<TelegramUpdate[]> { return []; }
   async setWebhook(): Promise<void> {}
   async deleteWebhook(): Promise<void> {}
+}
+
+class UnusedBrowser implements PaymentBrowser {
+  async create(_input: PaymentBrowserCreateInput): Promise<{ sessionId: string }> {
+    throw new Error('Browser không được khởi động trước khi nhân viên claim link');
+  }
+  async close(): Promise<void> {}
+  async closeAll(): Promise<void> {}
+  async frame(): Promise<Buffer> { return Buffer.alloc(0); }
+  async input(_sessionId: string, _input: PaymentBrowserInput): Promise<void> {}
 }
 
 async function waitFor(check: () => boolean, message: string): Promise<void> {
@@ -151,8 +167,11 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     await settings.init();
     await settings.setWorkTelegramBotToken('test-token');
     await settings.setWorkTelegramChatId('-100123');
+    await settings.setPaymentPublicUrl('https://app.example');
     const fake = new FakeTelegram();
-    const service = new TelegramWorkService(new TelegramWorkStore(root), settings, fake);
+    const store = new TelegramWorkStore(root);
+    const payments = new PaymentSessionService(store, settings, new UnusedBrowser());
+    const service = new TelegramWorkService(store, settings, fake, payments);
     await service.init();
     await settings.setWorkTelegramMode('polling');
 
@@ -174,6 +193,7 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
         password: `pass${index}`,
         mailLine: `mail${index}@example.com|pass${index}|refresh${index}|client${index}`,
         checkoutUrl: `https://capcut.example/checkout/${index}?token=abc&locale=vi`,
+        proxy: { server: `http://proxy${index}.example:8080`, username: 'user', password: 'secret' },
       });
     }
     let current = service.listDistributions('project-1')[0];
@@ -193,7 +213,10 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     assert.equal(service.payroll().reduce((sum, row) => sum + row.totals.allAmount, 0), 0);
 
     const firstItem = current.items.find((item) => item.employeeId === duy.id)!;
+    assert.equal(firstItem.proxy, undefined);
     const task = service.listTasks().find((item) => item.distributionItemId === firstItem.id)!;
+    assert.equal(task.capcutCredentials?.proxy, undefined);
+    assert.equal(store.snapshot().paymentSessions[0].proxy?.password, 'secret');
     assert.equal(task.capcutCredentials?.password, firstItem.password);
     const sentMessage = fake.sent.find((message) => message.text.includes(firstItem.email))!;
     const sentText = sentMessage.text;
@@ -205,7 +228,8 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     }).format(new Date(new Date(task.createdAt).getTime() + 15 * 60_000));
     assert.ok(sentText.includes(`<code>${firstItem.email} | ${firstItem.password}</code>`));
     assert.doesNotMatch(sentText, /Mail full:|refresh\d|client\d/);
-    assert.ok(sentText.includes(`<a href="${firstItem.checkoutUrl.replaceAll('&', '&amp;')}">Link thanh toán</a>`));
+    assert.match(sentText, /<a href="https:\/\/app\.example\/pay\/[^"]+">Link thanh toán<\/a>/);
+    assert.equal(sentText.includes(firstItem.checkoutUrl), false);
     assert.match(sentText, new RegExp(`Hạn: ${expiresAt} \\(15 phút\\)`));
     assert.equal(sentMessage.parseMode, 'HTML');
     assert.equal(sentMessage.disableLinkPreview, true);

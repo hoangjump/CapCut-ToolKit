@@ -10,5 +10,8 @@ profiles-store/
 .env
 .env.local
 
+# Binary tải tự động lúc build Windows
+vendor/cloudflared/
+
 # OS
 .DS_Store

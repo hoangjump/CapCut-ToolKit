@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { BrowserManager } from '../browserManager.js';
-import type { MailCredentials, MailCodeType, RunResult } from '../types.js';
+import type { MailCredentials, MailCodeType, ProxyConfig, RunResult } from '../types.js';
 import { getCode, getMessages } from '../mailClient.js';
 import { getFlow } from '../flows/index.js';
 import { PageHelper, setShotsDir } from './helper.js';
@@ -43,7 +43,7 @@ export interface RunProjectDeps {
   notify?: (row: SheetRow) => Promise<void>;
   /** Queue a successful flow result for downstream employee distribution. The
    *  runner never lets a queue failure change the profile's flow result. */
-  onResult?: (row: SheetRow) => Promise<void>;
+  onResult?: (row: SheetRow, source: { profileId: string; proxy?: ProxyConfig }) => Promise<void>;
 }
 
 export interface RunProjectInput {
@@ -274,7 +274,7 @@ export async function runProject(
         }
         if (deps.onResult && !flowError && row.checkoutUrl && row.email) {
           try {
-            await deps.onResult(row);
+            await deps.onResult(row, { profileId: session.profile.id, proxy: session.profile.proxy });
             flowLog.info(`đã xếp hàng phân phối: ${row.email}`);
           } catch (e) {
             flowLog.warn(`xếp hàng phân phối lỗi: ${(e as Error).message}`);

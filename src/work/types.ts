@@ -1,3 +1,5 @@
+import type { ProxyConfig } from '../types.js';
+
 export type EmployeeStatus = 'unbound' | 'active' | 'inactive' | 'archived';
 export type SalaryVisibility = 'topic' | 'private' | 'admin-only';
 export type WorkTaskStatus = 'queued' | 'pending' | 'completed' | 'cancelled' | 'failed';
@@ -37,11 +39,15 @@ export interface WorkTask {
   source?: 'manual' | 'capcut-distribution';
   distributionRunId?: string;
   distributionItemId?: string;
+  paymentSessionId?: string;
+  paymentStatus?: PaymentSessionStatus;
+  paidAt?: string;
   capcutCredentials?: {
     email: string;
     password?: string;
     mailLine: string;
     checkoutUrl: string;
+    proxy?: ProxyConfig;
   };
   createdAt: string;
   updatedAt: string;
@@ -74,6 +80,26 @@ export interface TelegramWorkState {
   processedUpdates: ProcessedTelegramUpdate[];
   distributionRuns: DistributionRun[];
   distributionItems: DistributionItem[];
+  paymentSessions: WorkPaymentSession[];
+}
+
+export type PaymentSessionStatus = 'pending' | 'starting' | 'ready' | 'paid' | 'expired' | 'failed' | 'closed';
+
+export interface WorkPaymentSession {
+  id: string;
+  accessToken: string;
+  accessUrl: string;
+  taskId: string;
+  employeeId: string;
+  email: string;
+  checkoutUrl: string;
+  proxy?: ProxyConfig;
+  status: PaymentSessionStatus;
+  browserSessionId?: string;
+  error?: string;
+  createdAt: string;
+  expiresAt: string;
+  updatedAt: string;
 }
 
 export interface DistributionAllocation {
@@ -105,6 +131,7 @@ export interface DistributionItem {
   password?: string;
   mailLine: string;
   checkoutUrl: string;
+  proxy?: ProxyConfig;
   status: 'queued' | 'sending' | 'sent' | 'failed';
   taskId?: string;
   error?: string;

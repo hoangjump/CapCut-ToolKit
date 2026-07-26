@@ -27,6 +27,7 @@ Build production:
 ```bash
 npm run build                      # tsc -> dist/
 npm run server                     # chạy bản đã build
+npm run dist:win                   # build bộ cài Windows, kèm cloudflared.exe
 ```
 
 Biến môi trường:
@@ -48,6 +49,29 @@ docker compose up -d --build       # build image + chạy nền, web ở http://
 docker compose logs -f             # xem log
 docker compose down                # dừng + xóa container
 ```
+
+### Thanh toán nhân viên trong app Windows
+
+App tự chạy toàn bộ luồng, không cần VPS, Docker gateway hay cấu hình tên miền:
+
+1. Khi app mở, `cloudflared.exe` tạo một Quick Tunnel `https://...trycloudflare.com`.
+2. Bot gửi link `/pay/:token` vào Telegram cho nhân viên.
+3. Nhân viên bấm bắt đầu; app mở Camoufox headless bằng đúng proxy của tài khoản.
+4. Trang nhân viên nhận ảnh màn hình và gửi click/phím về app. Phiên tự đóng sau
+   15 phút; mặc định tối đa 3 phiên đồng thời.
+5. Thanh toán thành công chỉ đổi trạng thái. Tiền công vẫn chỉ cộng khi nhân viên
+   thả reaction ❤️ trên Telegram.
+
+Tab `Công việc -> Thanh toán` trên app PC hiển thị các phiên chờ/đang chạy và số
+slot đang dùng. Nút `Xem` mở popup màn hình remote ngay trong app để quản lý theo
+dõi hoặc thao tác hỗ trợ; browser tự đóng sau 5 giây khi phát hiện thanh toán xong.
+
+Trong `Công việc -> Telegram`, nút `Bật link nhân viên` dùng để bật lại tunnel nếu
+nó bị mất kết nối. App ghi nhớ lựa chọn và tự bật ở lần chạy sau. Public hostname
+chỉ được phép truy cập trang/API thanh toán, không thể mở dashboard quản trị.
+
+Lệnh `npm run dist:win` tự tải binary chính thức của Cloudflare và nhét vào bộ cài;
+máy nhân viên không phải cài thêm gì, máy quản lý cũng không cần mở port router.
 
 [Dockerfile](Dockerfile) dùng base image `mcr.microsoft.com/playwright:vX.Y-noble`
 **chỉ để lấy system lib** (Xvfb, fonts, thư viện đồ họa mà Firefox cần) — engine

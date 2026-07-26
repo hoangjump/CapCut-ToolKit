@@ -1,7 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
+import type { ProxyConfig } from '../types.js';
 import type { TelegramBotApi } from './telegramClient.js';
+import type { PaymentSessionService } from './paymentSessions.js';
 import { TelegramWorkStore } from './store.js';
 import type {
   EmployeeTotals,
@@ -106,7 +108,7 @@ export function employeeTotals(
   };
 }
 
-function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false): string {
+function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false, paymentUrl?: string): string {
   if (task.capcutCredentials) {
     const credentials = task.capcutCredentials;
     const expiresAt = new Date(new Date(task.createdAt).getTime() + CAPCUT_LINK_LIFETIME_MS);
@@ -114,7 +116,7 @@ function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false):
       cancelled ? '❌ LINK CAPCUT ĐÃ HỦY' : '📌 LINK CAPCUT MỚI',
       '',
       `<code>${escapeHtml(`${credentials.email} | ${credentials.password ?? '(không có)'}`)}</code>`,
-      `💳 <a href="${escapeHtml(credentials.checkoutUrl)}">Link thanh toán</a>`,
+      `💳 <a href="${escapeHtml(paymentUrl ?? credentials.checkoutUrl)}">Link thanh toán</a>`,
       `⏱ Hạn: ${timeFormatter.format(expiresAt)} (15 phút)`,
     ];
     if (employee.salaryVisibility === 'topic') {
@@ -144,6 +146,18 @@ function taskMessageOptions(task: WorkTask): { parseMode?: 'HTML'; disableLinkPr
   return task.capcutCredentials ? { parseMode: 'HTML', disableLinkPreview: true } : {};
 }
 
+function taskDto(task: WorkTask): WorkTask {
+  const result = structuredClone(task);
+  if (result.capcutCredentials) delete result.capcutCredentials.proxy;
+  return result;
+}
+
+function distributionItemDto(item: DistributionItem): DistributionItem {
+  const result = structuredClone(item);
+  delete result.proxy;
+  return result;
+}
+
 interface ReactionAction {
   kind: 'completed' | 'reopened' | 'ignored' | 'duplicate';
   task?: WorkTask;
@@ -162,6 +176,7 @@ export class TelegramWorkService {
     private readonly store: TelegramWorkStore,
     private readonly settings: SettingsStore,
     private readonly telegram: TelegramBotApi,
+    private readonly payments?: PaymentSessionService,
   ) {}
 
   async init(): Promise<void> {
@@ -180,6 +195,7 @@ export class TelegramWorkService {
         }
       }
     });
+    await this.payments?.init();
     await this.refreshPolling();
     for (const run of this.store.snapshot().distributionRuns) {
       if (run.status === 'running') void this.flushDistribution(run.id);
@@ -191,6 +207,7 @@ export class TelegramWorkService {
     this.pollAbort?.abort();
     this.pollAbort = undefined;
     this.pollingActive = false;
+    await this.payments?.close();
   }
 
   configDto() {
@@ -202,12 +219,19 @@ export class TelegramWorkService {
       mode: this.settings.getWorkTelegramMode(),
       webhookUrl: this.settings.getWorkTelegramWebhookUrl() ?? '',
       pollingActive: this.pollingActive,
+      paymentPublicUrl: this.settings.getPaymentPublicUrl() ?? '',
+      paymentBrowserEnabled: this.payments?.configured() ?? false,
     };
   }
 
-  async saveConfig(input: { botToken?: string; chatId?: string }): Promise<ReturnType<TelegramWorkService['configDto']>> {
+  async saveConfig(input: {
+    botToken?: string;
+    chatId?: string;
+    paymentPublicUrl?: string;
+  }): Promise<ReturnType<TelegramWorkService['configDto']>> {
     if (input.botToken !== undefined) await this.settings.setWorkTelegramBotToken(input.botToken);
     if (input.chatId !== undefined) await this.settings.setWorkTelegramChatId(input.chatId);
+    if (input.paymentPublicUrl !== undefined) await this.settings.setPaymentPublicUrl(input.paymentPublicUrl);
     await this.refreshPolling();
     return this.configDto();
   }
@@ -256,7 +280,9 @@ export class TelegramWorkService {
   }
 
   listTasks(): WorkTask[] {
-    return this.store.snapshot().tasks.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return this.store.snapshot().tasks
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(taskDto);
   }
 
   payroll(): PayrollRow[] {
@@ -334,6 +360,7 @@ export class TelegramWorkService {
     password?: string;
     mailLine: string;
     checkoutUrl: string;
+    proxy?: ProxyConfig;
   }): Promise<DistributionItem | undefined> {
     const item = await this.store.mutate((state) => {
       const run = state.distributionRuns.find((entry) => entry.id === runId);
@@ -361,6 +388,7 @@ export class TelegramWorkService {
         password: row.password,
         mailLine: row.mailLine,
         checkoutUrl: row.checkoutUrl,
+        proxy: row.proxy,
         status: 'queued' as const,
         createdAt: now,
         updatedAt: now,
@@ -461,7 +489,9 @@ export class TelegramWorkService {
         sent: items.filter((item) => item.employeeId === allocation.employeeId && item.status === 'sent').length,
         completed: tasks.filter((task) => task.employeeId === allocation.employeeId && task.status === 'completed').length,
       })),
-      items: structuredClone(items.sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
+      items: items
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .map(distributionItemDto),
     };
   }
 
@@ -500,6 +530,7 @@ export class TelegramWorkService {
               password: item.password,
               mailLine: item.mailLine,
               checkoutUrl: item.checkoutUrl,
+              proxy: item.proxy,
             },
           });
           await this.store.mutate((state) => {
@@ -661,10 +692,13 @@ export class TelegramWorkService {
     }
     const description = input.description.trim();
     if (!description) throw new Error('Nội dung công việc là bắt buộc');
+    if (input.capcutCredentials && (!this.payments || !this.payments.configured())) {
+      throw new Error('Link nhân viên chưa bật. Vào Công việc → Telegram và bật link công khai trước.');
+    }
     const quantity = positiveInteger(input.quantity ?? 1, 'Số lượng');
     const rate = input.unitRate === undefined ? employee.defaultUnitRate : unitRate(input.unitRate);
     const now = new Date().toISOString();
-    const task = await this.store.mutate((draft) => {
+    let task = await this.store.mutate((draft) => {
       const created: WorkTask = {
         id: randomUUID(),
         employeeId: employee.id,
@@ -686,14 +720,34 @@ export class TelegramWorkService {
       return created;
     });
 
+    if (task.capcutCredentials && this.payments) {
+      try {
+        const payment = await this.payments.createForTask({
+          taskId: task.id,
+          employeeId: task.employeeId,
+          email: task.capcutCredentials.email,
+          checkoutUrl: task.capcutCredentials.checkoutUrl,
+          proxy: task.capcutCredentials.proxy,
+        });
+        if (!payment) throw new Error('Link nhân viên chưa bật');
+        task = this.store.snapshot().tasks.find((item) => item.id === task.id) ?? task;
+      } catch (error) {
+        await this.store.mutate((state) => {
+          state.tasks = state.tasks.filter((item) => item.id !== task.id);
+          state.paymentSessions = state.paymentSessions.filter((item) => item.taskId !== task.id);
+        });
+        throw error;
+      }
+    }
+
     try {
       const sent = await this.telegram.sendMessage(token, {
         chatId: employee.telegramChatId,
         threadId: employee.telegramTopicId,
-        text: taskMessage(task, employee),
+        text: this.taskMessage(task, employee),
         ...taskMessageOptions(task),
       });
-      return await this.store.mutate((draft) => {
+      const saved = await this.store.mutate((draft) => {
         const saved = draft.tasks.find((item) => item.id === task.id)!;
         saved.status = 'pending';
         saved.deliveryStatus = 'sent';
@@ -703,6 +757,7 @@ export class TelegramWorkService {
         saved.updatedAt = new Date().toISOString();
         return structuredClone(saved);
       });
+      return taskDto(saved);
     } catch (err) {
       await this.store.mutate((draft) => {
         const saved = draft.tasks.find((item) => item.id === task.id)!;
@@ -711,6 +766,7 @@ export class TelegramWorkService {
         saved.deliveryError = (err as Error).message;
         saved.updatedAt = new Date().toISOString();
       });
+      await this.payments?.revokeTask(task.id).catch(() => {});
       throw err;
     }
   }
@@ -744,16 +800,17 @@ export class TelegramWorkService {
       await this.telegram.editMessageText(token, {
         chatId: next.telegramChatId,
         messageId: next.telegramMessageId,
-        text: taskMessage(next, employee),
+        text: this.taskMessage(next, employee),
         ...taskMessageOptions(next),
       });
     }
-    return this.store.mutate((draft) => {
+    const saved = await this.store.mutate((draft) => {
       const index = draft.tasks.findIndex((item) => item.id === id);
       if (index < 0) throw new Error('Không tìm thấy công việc');
       draft.tasks[index] = next;
       return structuredClone(next);
     });
+    return taskDto(saved);
   }
 
   async retryTask(id: string): Promise<WorkTask> {
@@ -772,10 +829,10 @@ export class TelegramWorkService {
     const sent = await this.telegram.sendMessage(token, {
       chatId: employee.telegramChatId,
       threadId: employee.telegramTopicId,
-      text: taskMessage(task, employee),
+      text: this.taskMessage(task, employee),
       ...taskMessageOptions(task),
     });
-    return this.store.mutate((draft) => {
+    const saved = await this.store.mutate((draft) => {
       const saved = draft.tasks.find((item) => item.id === id)!;
       saved.status = 'pending';
       saved.deliveryStatus = 'sent';
@@ -786,6 +843,7 @@ export class TelegramWorkService {
       saved.updatedAt = new Date().toISOString();
       return structuredClone(saved);
     });
+    return taskDto(saved);
   }
 
   async cancelTask(id: string): Promise<WorkTask> {
@@ -798,16 +856,18 @@ export class TelegramWorkService {
       await this.telegram.editMessageText(this.requireToken(), {
         chatId: task.telegramChatId,
         messageId: task.telegramMessageId,
-        text: taskMessage(task, employee, true),
+        text: this.taskMessage(task, employee, true),
         ...taskMessageOptions(task),
       });
     }
-    return this.store.mutate((draft) => {
+    const cancelled = await this.store.mutate((draft) => {
       const saved = draft.tasks.find((item) => item.id === id)!;
       saved.status = 'cancelled';
       saved.updatedAt = new Date().toISOString();
       return structuredClone(saved);
     });
+    await this.payments?.revokeTask(id);
+    return taskDto(cancelled);
   }
 
   async setTaskCompletion(id: string, completed: boolean): Promise<WorkTask> {
@@ -828,7 +888,7 @@ export class TelegramWorkService {
       return { kind: 'reopened', task: structuredClone(task), employee: structuredClone(employee), totals: employeeTotals(state, employee.id) };
     });
     await this.notifyReaction(action);
-    return action.task!;
+    return taskDto(action.task!);
   }
 
   async processWebhook(secret: string | undefined, update: TelegramUpdate): Promise<void> {
@@ -1014,6 +1074,10 @@ export class TelegramWorkService {
     const token = this.settings.getWorkTelegramBotToken();
     if (!token) throw new Error('Chưa cấu hình bot token cho module Công việc');
     return token;
+  }
+
+  private taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false): string {
+    return taskMessage(task, employee, cancelled, this.payments?.accessUrlForTask(task.id));
   }
 
   private requireChatId(): string {
