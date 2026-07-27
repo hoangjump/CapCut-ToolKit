@@ -387,6 +387,10 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
 
   async function refreshApiProxy(proxy: ProxyRecord): Promise<ProxyRecord> {
     if (proxy.apiProvider !== 'mktproxy' || !proxy.apiKey) return proxy;
+    if (proxyLeases.isLeased(proxy.id)) {
+      log.warn(`mktproxy: proxy ${proxy.id} đang được một phiên sử dụng, bỏ qua rotate`);
+      return proxy;
+    }
     // Whitelist IP máy trước — proxy ip_whitelist sẽ reset kết nối nếu IP chưa
     // được cho phép (ECONNRESET). Chạy mỗi lần test để bám theo IP hiện tại.
     await ensureWhitelist(proxy.apiKey);

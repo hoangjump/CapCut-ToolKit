@@ -360,7 +360,11 @@ export class PaymentSessionService {
         task.updatedAt = now;
       }
     });
-    setTimeout(() => void this.closeBrowser(id), status === 'paid' ? 5_000 : 500).unref?.();
+    if (status === 'failed') {
+      await this.closeBrowser(id);
+      return;
+    }
+    setTimeout(() => void this.closeBrowser(id), 1_500).unref?.();
   }
 
   private async start(id: string): Promise<PaymentSessionDto> {
@@ -413,7 +417,7 @@ export class PaymentSessionService {
         return found;
       });
       if (saved.status !== 'ready') {
-        setTimeout(() => void this.closeBrowser(id), saved.status === 'paid' ? 5_000 : 500).unref?.();
+        setTimeout(() => void this.closeBrowser(id), saved.status === 'paid' ? 1_500 : 500).unref?.();
       }
       return dto(saved);
     } catch (error) {

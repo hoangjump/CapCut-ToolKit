@@ -64,10 +64,11 @@ class FakePaymentProxyProvider implements PaymentProxyProvider {
 
   async acquire(sourceProxyId?: string) {
     this.acquired.push(sourceProxyId);
+    const attempt = this.acquired.length;
     return {
-      leaseId: 'payment-proxy-1',
-      proxy: { server: 'http://fresh-proxy.example:8080' },
-      egressIp: '203.0.113.10',
+      leaseId: `payment-proxy-${attempt}`,
+      proxy: { server: `http://fresh-proxy-${attempt}.example:8080` },
+      egressIp: `203.0.113.${attempt + 9}`,
     };
   }
 
@@ -232,12 +233,48 @@ test('payment preparation rotates to a fresh proxy and holds it until the sessio
 
     assert.equal(await service.prepareForTask('task-proxy'), true);
     assert.deepEqual(proxies.acquired, ['source-proxy-1']);
-    assert.equal(browser.created[0].proxy?.server, 'http://fresh-proxy.example:8080');
+    assert.equal(browser.created[0].proxy?.server, 'http://fresh-proxy-1.example:8080');
     assert.equal(browser.created[0].expectedProxyIp, '203.0.113.10');
     assert.equal(store.snapshot().paymentSessions[0].paymentProxyIp, '203.0.113.10');
 
     await service.closeByToken(token);
     assert.deepEqual(proxies.released, ['payment-proxy-1']);
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a risk failure releases the current lease before retrying with a fresh proxy', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-risk-retry-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setPaymentPublicUrl('https://app.example');
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    const browser = new FakeBrowser();
+    const proxies = new FakePaymentProxyProvider();
+    const service = new PaymentSessionService(store, settings, browser, proxies);
+    await service.init();
+    const created = await service.createForTask({
+      taskId: 'task-risk-retry',
+      employeeId: 'employee-1',
+      email: 'worker@example.com',
+      checkoutUrl: 'https://cashier.example/checkout',
+      proxyRecordId: 'source-proxy-1',
+    });
+    const token = created!.accessUrl.split('/').at(-1)!;
+
+    await service.claim(token);
+    await browser.created[0].onStatus('failed', 'Cổng thanh toán từ chối do risk');
+    assert.deepEqual(proxies.released, ['payment-proxy-1']);
+
+    const retried = await service.claim(token);
+    assert.equal(retried.status, 'ready');
+    assert.deepEqual(proxies.acquired, ['source-proxy-1', 'source-proxy-1']);
+    assert.equal(browser.created[1].proxy?.server, 'http://fresh-proxy-2.example:8080');
+    assert.equal(browser.created[1].expectedProxyIp, '203.0.113.11');
     await service.close();
   } finally {
     await rm(root, { recursive: true, force: true });

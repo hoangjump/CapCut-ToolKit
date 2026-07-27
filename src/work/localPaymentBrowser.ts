@@ -13,7 +13,6 @@ const log = createLogger('payment-browser');
 const WIDTH = 1280;
 const HEIGHT = 720;
 const FRAME_CACHE_MS = 75;
-const PROXY_CHECK_INTERVAL_MS = 10_000;
 const PROXY_CHECK_URL = 'https://api.ipify.org?format=json';
 const PAYMENT_FIREFOX_PREFS = {
   'browser.urlbar.speculativeConnect.enabled': false,
@@ -39,8 +38,6 @@ interface LocalSession {
   reported: boolean;
   latestFrame?: Buffer;
   frameAt: number;
-  lastProxyCheckAt: number;
-  lastProxyIp?: string;
   capture?: Promise<Buffer>;
 }
 
@@ -52,6 +49,16 @@ function successUrl(raw: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function paymentFailureFromText(text: string): string | undefined {
+  if (/couldn['’]?t process payment|transaction rejected due to risk issue|risk issue|try again later or contact customer support/i.test(text)) {
+    return 'Cổng thanh toán từ chối do risk; lần thử tiếp theo sẽ dùng proxy mới';
+  }
+  if (/payment failed|payment declined|thanh toán thất bại|giao dịch thất bại/i.test(text)) {
+    return 'Trang thanh toán báo thất bại';
+  }
+  return undefined;
 }
 
 async function upstreamProxy(proxy: ProxyConfig | undefined): Promise<string> {
@@ -198,8 +205,6 @@ export class LocalPaymentBrowser implements PaymentBrowser {
         checking: false,
         reported: false,
         frameAt: 0,
-        lastProxyCheckAt: Date.now(),
-        lastProxyIp: input.expectedProxyIp,
       } as LocalSession;
       const watch = (next: Page) => {
         session.activePage = next;
@@ -257,22 +262,6 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     if (session.checking || session.reported) return;
     session.checking = true;
     try {
-      if (input.expectedProxyIp && Date.now() - session.lastProxyCheckAt >= PROXY_CHECK_INTERVAL_MS) {
-        session.lastProxyCheckAt = Date.now();
-        let actualIp: string;
-        try {
-          actualIp = await this.proxyIp(session.context);
-        } catch (error) {
-          log.warn(`kiểm tra proxy payment ${session.id} lỗi: ${(error as Error).message}`);
-          actualIp = '';
-        }
-        if (actualIp) {
-          if (session.lastProxyIp && actualIp !== session.lastProxyIp) {
-            log.warn(`gateway payment ${session.id} đổi egress ${session.lastProxyIp} → ${actualIp}; giữ nguyên phiên`);
-          }
-          session.lastProxyIp = actualIp;
-        }
-      }
       for (const page of session.context.pages()) {
         if (successUrl(page.url())) return void await this.report(session, input, 'paid');
         for (const frame of page.frames()) {
@@ -281,9 +270,8 @@ export class LocalPaymentBrowser implements PaymentBrowser {
           if (/payment successful|payment completed|thanh toán thành công|giao dịch thành công/i.test(text)) {
             return void await this.report(session, input, 'paid');
           }
-          if (/payment failed|payment declined|thanh toán thất bại|giao dịch thất bại/i.test(text)) {
-            return void await this.report(session, input, 'failed', 'Trang thanh toán báo thất bại');
-          }
+          const failure = paymentFailureFromText(text);
+          if (failure) return void await this.report(session, input, 'failed', failure);
         }
       }
     } finally {
@@ -308,17 +296,6 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     if (session.reported) return;
     session.reported = true;
     clearInterval(session.monitor);
-    if (status === 'paid' && input.expectedProxyIp) {
-      try {
-        const actualIp = await this.proxyIp(session.context, 2_000);
-        if (session.lastProxyIp && actualIp !== session.lastProxyIp) {
-          log.warn(`gateway payment ${session.id} đổi egress trước khi hoàn tất ${session.lastProxyIp} → ${actualIp}; vẫn xác nhận kết quả`);
-        }
-        session.lastProxyIp = actualIp;
-      } catch (reason) {
-        log.warn(`không kiểm tra được proxy cuối phiên ${session.id}: ${(reason as Error).message}`);
-      }
-    }
     try {
       await input.onStatus(status, error);
     } catch (reason) {
