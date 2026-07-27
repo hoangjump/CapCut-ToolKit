@@ -167,6 +167,35 @@ export class SettingsStore {
     await this.persist();
   }
 
+  getPaymentTunnelToken(): string | undefined {
+    return this.settings.paymentTunnelToken;
+  }
+
+  async setPaymentTunnelToken(token: string | undefined): Promise<void> {
+    this.settings.paymentTunnelToken = token?.trim() || undefined;
+    await this.persist();
+  }
+
+  getPaymentTunnelDomain(): string | undefined {
+    return this.settings.paymentTunnelDomain;
+  }
+
+  async setPaymentTunnelDomain(domain: string | undefined): Promise<void> {
+    const raw = domain?.trim();
+    if (!raw) {
+      this.settings.paymentTunnelDomain = undefined;
+      await this.persist();
+      return;
+    }
+    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password
+      || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+      throw new Error('Domain tunnel phải có dạng https://pay.example.com');
+    }
+    this.settings.paymentTunnelDomain = parsed.origin;
+    await this.persist();
+  }
+
   private async persist(): Promise<void> {
     await writeFile(this.file, JSON.stringify(this.settings, null, 2), 'utf8');
   }

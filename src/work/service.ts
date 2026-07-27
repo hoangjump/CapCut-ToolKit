@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { SettingsStore } from '../settingsStore.js';
+import { maskKey, type SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
 import type { ProxyConfig } from '../types.js';
 import type { TelegramBotApi } from './telegramClient.js';
@@ -221,6 +221,9 @@ export class TelegramWorkService {
       pollingActive: this.pollingActive,
       paymentPublicUrl: this.settings.getPaymentPublicUrl() ?? '',
       paymentBrowserEnabled: this.payments?.configured() ?? false,
+      paymentTunnelHasToken: Boolean(this.settings.getPaymentTunnelToken()),
+      paymentTunnelTokenMasked: maskKey(this.settings.getPaymentTunnelToken()),
+      paymentTunnelDomain: this.settings.getPaymentTunnelDomain() ?? '',
     };
   }
 
@@ -228,10 +231,16 @@ export class TelegramWorkService {
     botToken?: string;
     chatId?: string;
     paymentPublicUrl?: string;
+    paymentTunnelToken?: string;
+    clearPaymentTunnelToken?: boolean;
+    paymentTunnelDomain?: string;
   }): Promise<ReturnType<TelegramWorkService['configDto']>> {
     if (input.botToken !== undefined) await this.settings.setWorkTelegramBotToken(input.botToken);
     if (input.chatId !== undefined) await this.settings.setWorkTelegramChatId(input.chatId);
     if (input.paymentPublicUrl !== undefined) await this.settings.setPaymentPublicUrl(input.paymentPublicUrl);
+    if (input.clearPaymentTunnelToken) await this.settings.setPaymentTunnelToken(undefined);
+    else if (input.paymentTunnelToken !== undefined) await this.settings.setPaymentTunnelToken(input.paymentTunnelToken);
+    if (input.paymentTunnelDomain !== undefined) await this.settings.setPaymentTunnelDomain(input.paymentTunnelDomain);
     await this.refreshPolling();
     return this.configDto();
   }

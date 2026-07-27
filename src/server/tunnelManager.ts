@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
 import type { SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
 
@@ -17,6 +17,8 @@ export type TunnelState = 'off' | 'starting' | 'online' | 'error';
 
 export interface TunnelStatus {
   state: TunnelState;
+  mode: 'quick' | 'named';
+  originUrl: string;
   publicUrl: string;
   autoStart: boolean;
   error?: string;
@@ -65,8 +67,13 @@ export class TunnelManager {
   }
 
   status(): TunnelStatus {
+    const namedConfigured = Boolean(
+      this.settings.getPaymentTunnelToken() || this.settings.getPaymentTunnelDomain(),
+    );
     return {
       state: this.state,
+      mode: namedConfigured ? 'named' : 'quick',
+      originUrl: this.origin ?? '',
       publicUrl: this.publicUrl,
       autoStart: this.settings.getPaymentTunnelAutoStart(),
       error: this.lastError,
@@ -82,6 +89,13 @@ export class TunnelManager {
     this.startPromise = this.launch();
     try {
       return await this.startPromise;
+    } catch (error) {
+      if (this.state === 'starting') {
+        this.state = 'error';
+        this.lastError = (error as Error).message;
+        this.settings.setRuntimePaymentPublicUrl(null);
+      }
+      throw error;
     } finally {
       this.startPromise = undefined;
     }
@@ -123,42 +137,53 @@ export class TunnelManager {
     this.lastError = undefined;
     this.settings.setRuntimePaymentPublicUrl(null);
 
+    const tunnelToken = this.settings.getPaymentTunnelToken();
+    const tunnelDomain = this.settings.getPaymentTunnelDomain();
+    if (Boolean(tunnelToken) !== Boolean(tunnelDomain)) {
+      throw new Error('Named Tunnel cần nhập đủ Tunnel token và domain HTTPS');
+    }
+    const namedTunnel = Boolean(tunnelToken && tunnelDomain);
     const executable = this.executable();
     const configPath = join(tmpdir(), `teamhatde-cloudflared-${process.pid}-${randomUUID()}.yml`);
     await writeFile(configPath, 'loglevel: info\n', 'utf8');
     this.configPath = configPath;
-    const child = spawn(executable, [
+    const args = [
       'tunnel',
       '--config',
       configPath,
       '--no-autoupdate',
       '--edge-ip-version',
       '4',
-      '--url',
-      this.origin,
-    ], {
+    ];
+    if (namedTunnel) args.push('run', '--url', this.origin);
+    else args.push('--url', this.origin);
+    const child = spawn(executable, args, {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: namedTunnel ? { ...process.env, TUNNEL_TOKEN: tunnelToken! } : process.env,
     });
     this.child = child;
+    log.info(namedTunnel ? `đang mở named tunnel: ${tunnelDomain}` : 'đang mở Quick Tunnel');
 
     return new Promise<TunnelStatus>((resolve, reject) => {
       let settled = false;
       let verifying = false;
       let output = '';
-      let quickTunnelUrl: string | undefined;
+      let candidatePublicUrl = tunnelDomain;
       let connectionRegistered = false;
       const timeout = setTimeout(() => {
         const detail = output.trim().split('\n').at(-1);
-        const reason = connectionRegistered && quickTunnelUrl
-          ? `Cloudflare Tunnel đã kết nối nhưng địa chỉ ${quickTunnelUrl} chưa chuyển tiếp được vào app`
+        const reason = connectionRegistered && candidatePublicUrl
+          ? `Cloudflare Tunnel đã kết nối nhưng địa chỉ ${candidatePublicUrl} chưa chuyển tiếp được vào app`
           : connectionRegistered
             ? 'Cloudflare Tunnel đã kết nối nhưng chưa nhận được địa chỉ công khai'
           : detail
             ? `Cloudflare Tunnel chưa kết nối: ${detail}`
             : 'Cloudflare Tunnel khởi động quá 45 giây';
-        const hint = connectionRegistered
-          ? 'Hãy thử bật lại link nhân viên hoặc đổi mạng.'
+        const hint = namedTunnel
+          ? `Trên Cloudflare Public Hostname, đặt Service thành ${this.origin}.`
+          : connectionRegistered
+            ? 'Hãy thử bật lại link nhân viên hoặc đổi mạng.'
           : 'Kiểm tra Windows Firewall hoặc mạng có chặn cloudflared/cổng 7844.';
         fail(new Error(`${reason}. ${hint}`));
       }, START_TIMEOUT_MS);
@@ -202,10 +227,10 @@ export class TunnelManager {
       const read = (chunk: Buffer) => {
         const text = chunk.toString('utf8');
         output = `${output}${text}`.slice(-8_000);
-        quickTunnelUrl ??= parseQuickTunnelUrl(output);
+        candidatePublicUrl ??= parseQuickTunnelUrl(output);
         connectionRegistered ||= /Registered tunnel connection/i.test(output);
-        if (!quickTunnelUrl) return;
-        verify(quickTunnelUrl);
+        if (!candidatePublicUrl || (namedTunnel && !connectionRegistered)) return;
+        verify(candidatePublicUrl);
       };
 
       child.stdout?.on('data', read);

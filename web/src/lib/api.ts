@@ -209,10 +209,15 @@ export interface WorkTelegramConfig {
   pollingActive: boolean;
   paymentPublicUrl: string;
   paymentBrowserEnabled: boolean;
+  paymentTunnelHasToken: boolean;
+  paymentTunnelTokenMasked: string | null;
+  paymentTunnelDomain: string;
   tunnel?: TunnelStatus;
 }
 export interface TunnelStatus {
   state: 'off' | 'starting' | 'online' | 'error';
+  mode: 'quick' | 'named';
+  originUrl: string;
   publicUrl: string;
   autoStart: boolean;
   error?: string;
@@ -372,6 +377,9 @@ export const workApi = {
     botToken?: string;
     chatId?: string;
     paymentPublicUrl?: string;
+    paymentTunnelToken?: string;
+    clearPaymentTunnelToken?: boolean;
+    paymentTunnelDomain?: string;
   }) =>
     put('/api/work/config', body).then((r) => parse<WorkTelegramConfig>(r)),
   enablePolling: () => post('/api/work/config/polling').then((r) => parse<WorkTelegramConfig>(r)),

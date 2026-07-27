@@ -267,7 +267,8 @@ async function openMainWindow(): Promise<void> {
   const { startServer } = await import('../server/index.js');
   server = await startServer({
     host: '127.0.0.1',
-    port: 0,
+    // Named Cloudflare Tunnel Public Hostname points to this stable origin.
+    port: 61367,
     storeRoot,
     headless: false,
     embeddedTunnel: true,

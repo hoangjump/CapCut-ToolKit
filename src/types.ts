@@ -246,8 +246,12 @@ export interface AppSettings {
   workTelegramWebhookSecret?: string;
   /** URL công khai của app, dùng tạo link /pay/:token gửi cho nhân viên. */
   paymentPublicUrl?: string;
-  /** Tự bật Cloudflare Quick Tunnel khi app desktop khởi động. */
+  /** Tự bật Cloudflare Tunnel khi app desktop khởi động. */
   paymentTunnelAutoStart?: boolean;
+  /** Token của named Cloudflare Tunnel, lấy từ lệnh cài connector. */
+  paymentTunnelToken?: string;
+  /** Domain HTTPS đã gắn Public Hostname vào named tunnel. */
+  paymentTunnelDomain?: string;
 }
 
 /** A saved automation job: run a named flow across a set of profiles, optionally

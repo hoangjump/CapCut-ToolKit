@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   Check,
@@ -416,11 +416,15 @@ function TelegramConfigPanel() {
   const [chatId, setChatId] = useState('');
   const [webhookUrl, setWebhookUrl] = useState('');
   const [paymentPublicUrl, setPaymentPublicUrl] = useState('');
+  const [tunnelToken, setTunnelToken] = useState('');
+  const [tunnelDomain, setTunnelDomain] = useState('');
+  const tunnelDomainDirty = useRef(false);
   const syncConfig = useCallback((value: WorkTelegramConfig) => {
     setConfig(value);
     setChatId(value.chatId);
     setWebhookUrl(value.webhookUrl);
     setPaymentPublicUrl(value.paymentPublicUrl);
+    if (!tunnelDomainDirty.current) setTunnelDomain(value.paymentTunnelDomain);
   }, []);
   const load = useCallback(async () => { try { syncConfig(await workApi.config()); } catch (err) { toast.error((err as Error).message); } }, [syncConfig]);
   useEffect(() => { load(); }, [load]);
@@ -439,6 +443,23 @@ function TelegramConfigPanel() {
     catch (err) { toast.error((err as Error).message); }
   }
 
+  async function saveTunnelConfig(clear = false) {
+    if (!clear && !tunnelToken.trim() && !config?.paymentTunnelHasToken) {
+      return toast.error('Nhập Tunnel token lấy từ Cloudflare Zero Trust');
+    }
+    if (!clear && !tunnelDomain.trim()) return toast.error('Nhập domain đã gắn Public Hostname');
+    try {
+      if (config?.tunnel && config.tunnel.state !== 'off') await workApi.stopTunnel();
+      const value = await workApi.saveConfig(clear
+        ? { clearPaymentTunnelToken: true, paymentTunnelDomain: '' }
+        : { paymentTunnelToken: tunnelToken.trim() || undefined, paymentTunnelDomain: tunnelDomain });
+      tunnelDomainDirty.current = false;
+      syncConfig(value);
+      setTunnelToken('');
+      toast.success(clear ? 'Đã chuyển về Quick Tunnel' : 'Đã lưu Named Tunnel');
+    } catch (err) { toast.error((err as Error).message); }
+  }
+
   return <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
     <div className="space-y-4">
       <Card><CardHeader><CardTitle className="text-base">Kết nối bot giao việc</CardTitle></CardHeader><CardContent className="space-y-4">
@@ -452,7 +473,16 @@ function TelegramConfigPanel() {
       </CardContent></Card>
 
       <Card><CardHeader className="flex-row items-center justify-between space-y-0"><CardTitle className="text-base">Link thanh toán cho nhân viên</CardTitle><Badge variant={config?.tunnel?.state === 'online' ? 'success' : config?.tunnel?.state === 'error' ? 'danger' : 'muted'}>{config?.tunnel?.state === 'online' ? 'Đang mở' : config?.tunnel?.state === 'starting' ? 'Đang kết nối' : config?.tunnel?.state === 'error' ? 'Có lỗi' : 'Đang tắt'}</Badge></CardHeader><CardContent className="space-y-4">
-        <div className="space-y-1.5"><Label>Địa chỉ công khai</Label><Input readOnly value={paymentPublicUrl} placeholder="App sẽ tự tạo link trycloudflare.com" /><p className="text-xs text-muted-foreground">App tự chạy Cloudflare Tunnel và tự gắn địa chỉ này vào tin nhắn Telegram.</p></div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-1.5"><Label>Cloudflare Tunnel token</Label><Input type="password" value={tunnelToken} onChange={(e) => setTunnelToken(e.target.value)} placeholder={config?.paymentTunnelTokenMasked || 'Token từ lệnh cài connector'} /></div>
+          <div className="space-y-1.5"><Label>Domain thanh toán</Label><Input value={tunnelDomain} onChange={(e) => { tunnelDomainDirty.current = true; setTunnelDomain(e.target.value); }} placeholder="pay.example.com" /></div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => void saveTunnelConfig()}>Lưu Named Tunnel</Button>
+          {config?.paymentTunnelHasToken && <Button variant="ghost" onClick={() => void saveTunnelConfig(true)}>Dùng Quick Tunnel</Button>}
+        </div>
+        <p className="text-xs text-muted-foreground">Trên Cloudflare Public Hostname, đặt Service thành <code className="text-foreground">{config?.tunnel?.originUrl || 'http://127.0.0.1:61367'}</code>. Đây là Tunnel token, không phải API token.</p>
+        <div className="space-y-1.5"><Label>Địa chỉ công khai</Label><Input readOnly value={paymentPublicUrl} placeholder={config?.paymentTunnelDomain || 'App sẽ tự tạo link trycloudflare.com'} /><p className="text-xs text-muted-foreground">App chỉ gửi link Telegram sau khi địa chỉ này truy cập được.</p></div>
         {config?.tunnel?.error && <p className="text-sm text-destructive">{config.tunnel.error}</p>}
         <div className="flex flex-wrap gap-2">
           <Button disabled={config?.tunnel?.state === 'starting' || config?.tunnel?.state === 'online'} onClick={() => runTunnel(workApi.startTunnel, 'Đã bật link nhân viên')}>{config?.tunnel?.state === 'starting' && <RefreshCw className="animate-spin" />}Bật link nhân viên</Button>
