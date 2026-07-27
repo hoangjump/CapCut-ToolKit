@@ -40,6 +40,7 @@ interface LocalSession {
   latestFrame?: Buffer;
   frameAt: number;
   lastProxyCheckAt: number;
+  lastProxyIp?: string;
   capture?: Promise<Buffer>;
 }
 
@@ -198,6 +199,7 @@ export class LocalPaymentBrowser implements PaymentBrowser {
         reported: false,
         frameAt: 0,
         lastProxyCheckAt: Date.now(),
+        lastProxyIp: input.expectedProxyIp,
       } as LocalSession;
       const watch = (next: Page) => {
         session.activePage = next;
@@ -261,20 +263,14 @@ export class LocalPaymentBrowser implements PaymentBrowser {
         try {
           actualIp = await this.proxyIp(session.context);
         } catch (error) {
-          return void await this.report(
-            session,
-            input,
-            'failed',
-            `Proxy payment mất kết nối: ${(error as Error).message}`,
-          );
+          log.warn(`kiểm tra proxy payment ${session.id} lỗi: ${(error as Error).message}`);
+          actualIp = '';
         }
-        if (actualIp !== input.expectedProxyIp) {
-          return void await this.report(
-            session,
-            input,
-            'failed',
-            `Proxy payment đã đổi IP (${input.expectedProxyIp} → ${actualIp})`,
-          );
+        if (actualIp) {
+          if (session.lastProxyIp && actualIp !== session.lastProxyIp) {
+            log.warn(`gateway payment ${session.id} đổi egress ${session.lastProxyIp} → ${actualIp}; giữ nguyên phiên`);
+          }
+          session.lastProxyIp = actualIp;
         }
       }
       for (const page of session.context.pages()) {
@@ -314,14 +310,13 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     clearInterval(session.monitor);
     if (status === 'paid' && input.expectedProxyIp) {
       try {
-        const actualIp = await this.proxyIp(session.context, 4_000);
-        if (actualIp !== input.expectedProxyIp) {
-          status = 'failed';
-          error = `Proxy payment đã đổi IP trước khi hoàn tất (${input.expectedProxyIp} → ${actualIp})`;
+        const actualIp = await this.proxyIp(session.context, 2_000);
+        if (session.lastProxyIp && actualIp !== session.lastProxyIp) {
+          log.warn(`gateway payment ${session.id} đổi egress trước khi hoàn tất ${session.lastProxyIp} → ${actualIp}; vẫn xác nhận kết quả`);
         }
+        session.lastProxyIp = actualIp;
       } catch (reason) {
-        status = 'failed';
-        error = `Không xác minh được proxy trước khi hoàn tất: ${(reason as Error).message}`;
+        log.warn(`không kiểm tra được proxy cuối phiên ${session.id}: ${(reason as Error).message}`);
       }
     }
     try {
