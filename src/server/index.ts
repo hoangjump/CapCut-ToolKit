@@ -1569,10 +1569,9 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     const tgChatId = settings.getTelegramChatId();
     const notifyDep = tgToken && tgChatId
       ? async (row: SheetRow) => {
-          const account = [row.email, row.password].filter(Boolean).join(' | ');
           const lines = [
             '✅ <b>CapCut đăng ký thành công</b>',
-            account ? `📧 <code>${escapeTelegramHtml(account)}</code>` : '',
+            row.email ? `📧 <code>${escapeTelegramHtml(row.email)}</code>` : '',
             row.checkoutUrl ? `💳 <a href="${escapeTelegramHtml(row.checkoutUrl)}">Link thanh toán</a>` : '',
           ].filter(Boolean);
           await telegramClient.sendMessage(tgToken, {

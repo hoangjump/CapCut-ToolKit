@@ -115,7 +115,7 @@ function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false, 
     const lines = [
       cancelled ? '❌ LINK CAPCUT ĐÃ HỦY' : '📌 LINK CAPCUT MỚI',
       '',
-      `<code>${escapeHtml(`${credentials.email} | ${credentials.password ?? '(không có)'}`)}</code>`,
+      `<code>${escapeHtml(credentials.email)}</code>`,
       `💳 <a href="${escapeHtml(paymentUrl ?? credentials.checkoutUrl)}">Link thanh toán</a>`,
       `⏱ Hạn: ${timeFormatter.format(expiresAt)} (15 phút)`,
     ];

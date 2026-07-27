@@ -256,7 +256,8 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
       minute: '2-digit',
       hour12: false,
     }).format(new Date(new Date(task.createdAt).getTime() + 15 * 60_000));
-    assert.ok(sentText.includes(`<code>${firstItem.email} | ${firstItem.password}</code>`));
+    assert.ok(sentText.includes(`<code>${firstItem.email}</code>`));
+    assert.equal(sentText.includes(firstItem.password!), false);
     assert.doesNotMatch(sentText, /Mail full:|refresh\d|client\d/);
     assert.match(sentText, /<a href="https:\/\/app\.example\/pay\/[^"]+">Link thanh toán<\/a>/);
     assert.equal(sentText.includes(firstItem.checkoutUrl), false);
