@@ -11,8 +11,7 @@ export function maskKey(key: string | undefined): string | null {
   return `${key.slice(0, 4)}…${key.slice(-4)}`;
 }
 
-/** App-level settings persisted to a single JSON file. Currently only holds the
- *  dongvanfb API key (a real-money secret) — kept local, returned to UI masked. */
+/** App-level settings persisted to a single local JSON file. */
 export class SettingsStore {
   private readonly file: string;
   private settings: AppSettings = {};
@@ -193,6 +192,23 @@ export class SettingsStore {
       throw new Error('Domain tunnel phải có dạng https://pay.example.com');
     }
     this.settings.paymentTunnelDomain = parsed.origin;
+    await this.persist();
+  }
+
+  getPaymentMaxSessions(): number | null {
+    if (this.settings.paymentMaxSessions === null) return null;
+    if (Number.isSafeInteger(this.settings.paymentMaxSessions) && this.settings.paymentMaxSessions! > 0) {
+      return this.settings.paymentMaxSessions!;
+    }
+    const configured = Number(process.env.PAYMENT_MAX_SESSIONS);
+    return Number.isSafeInteger(configured) && configured > 0 ? configured : null;
+  }
+
+  async setPaymentMaxSessions(maxSessions: number | null): Promise<void> {
+    if (maxSessions !== null && (!Number.isSafeInteger(maxSessions) || maxSessions <= 0)) {
+      throw new Error('Giới hạn browser phải là số nguyên lớn hơn 0');
+    }
+    this.settings.paymentMaxSessions = maxSessions;
     await this.persist();
   }
 

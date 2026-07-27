@@ -47,3 +47,12 @@ test('payment browser has no hard session limit by default', () => {
     else process.env.PAYMENT_MAX_SESSIONS = previous;
   }
 });
+
+test('payment browser capacity can be changed without restarting', () => {
+  const browser = new LocalPaymentBrowser(null);
+  assert.equal(browser.capacity(), null);
+  browser.setCapacity(8);
+  assert.equal(browser.capacity(), 8);
+  browser.setCapacity(null);
+  assert.equal(browser.capacity(), null);
+});

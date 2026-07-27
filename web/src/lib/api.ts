@@ -420,6 +420,8 @@ export const workApi = {
     post(`/api/work/payment-sessions/${encodeURIComponent(token)}/input`, input).then(noContent),
   closePaymentSession: (token: string) => fetch(`/api/work/payment-sessions/${encodeURIComponent(token)}`, { method: 'DELETE' }).then(noContent),
   paymentControl: () => fetch('/api/work/payment-control').then((r) => parse<PaymentControl>(r)),
+  updatePaymentControl: (maxSessions: number | null) =>
+    put('/api/work/payment-control', { maxSessions }).then((r) => parse<PaymentControl>(r)),
   paymentControlFrameUrl: (id: string) => `/api/work/payment-control/${encodeURIComponent(id)}/frame`,
   paymentControlStreamUrl: (id: string) => `/api/work/payment-control/${encodeURIComponent(id)}/stream`,
   sendPaymentControlInput: (id: string, input: PaymentBrowserInput) =>

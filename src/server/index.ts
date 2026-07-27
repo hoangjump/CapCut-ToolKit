@@ -200,7 +200,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   const paymentSessions = new PaymentSessionService(
     telegramStore,
     settings,
-    new LocalPaymentBrowser(),
+    new LocalPaymentBrowser(settings.getPaymentMaxSessions()),
     paymentProxyAllocator,
   );
   const telegramClient = new TelegramClient();

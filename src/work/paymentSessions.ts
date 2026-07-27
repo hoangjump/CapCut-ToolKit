@@ -122,6 +122,7 @@ export interface PaymentBrowser {
   frame(sessionId: string): Promise<Buffer>;
   input(sessionId: string, input: PaymentBrowserInput): Promise<void>;
   capacity?(): number | null;
+  setCapacity?(maxSessions: number | null): void;
 }
 
 export interface PaymentProxyProvider {
@@ -293,6 +294,16 @@ export class PaymentSessionService {
       )).length,
       sessions,
     };
+  }
+
+  async updateCapacity(raw: unknown): Promise<PaymentControlDto> {
+    const maxSessions = raw === null || raw === 0 ? null : Number(raw);
+    if (maxSessions !== null && (!Number.isSafeInteger(maxSessions) || maxSessions <= 0)) {
+      throw new Error('Giới hạn browser phải là số nguyên lớn hơn 0');
+    }
+    await this.settings.setPaymentMaxSessions(maxSessions);
+    this.browser.setCapacity?.(maxSessions);
+    return this.control();
   }
 
   getByToken(token: string): PaymentSessionDto {

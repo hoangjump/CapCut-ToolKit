@@ -58,6 +58,9 @@ export function registerTelegramWorkRoutes(
       res.set('Cache-Control', 'no-store');
       res.json(payments.control());
     });
+    app.put('/api/work/payment-control', async (req, res) => {
+      try { res.json(await payments.updateCapacity(req.body?.maxSessions)); } catch (err) { error(res, err); }
+    });
     app.get('/api/work/payment-control/:id/frame', async (req, res) => {
       res.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' });
       try { res.type('image/jpeg').send(await payments.controlFrame(String(req.params.id))); } catch (err) { error(res, err, 409); }

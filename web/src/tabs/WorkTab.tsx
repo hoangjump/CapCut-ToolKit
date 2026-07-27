@@ -38,6 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { RemotePaymentScreen } from '@/PaymentViewer';
 
 const formatMoney = (value: number) => `${new Intl.NumberFormat('vi-VN').format(value)}đ`;
@@ -319,9 +320,20 @@ function PayrollPanel() {
 function PaymentControlPanel() {
   const [control, setControl] = useState<PaymentControl>({ maxSessions: null, running: 0, sessions: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [limitEnabled, setLimitEnabled] = useState(false);
+  const [limitValue, setLimitValue] = useState('6');
+  const [savingLimit, setSavingLimit] = useState(false);
+  const limitDirty = useRef(false);
 
   const load = useCallback(async (silent = false) => {
-    try { setControl(await workApi.paymentControl()); }
+    try {
+      const next = await workApi.paymentControl();
+      setControl(next);
+      if (!limitDirty.current) {
+        setLimitEnabled(next.maxSessions !== null);
+        if (next.maxSessions !== null) setLimitValue(String(next.maxSessions));
+      }
+    }
     catch (err) { if (!silent) toast.error((err as Error).message); }
   }, []);
 
@@ -343,19 +355,61 @@ function PaymentControlPanel() {
     } catch (err) { toast.error((err as Error).message); }
   }
 
+  async function saveLimit() {
+    const maxSessions = limitEnabled ? Number(limitValue) : null;
+    if (maxSessions !== null && (!Number.isSafeInteger(maxSessions) || maxSessions <= 0)) {
+      toast.error('Giới hạn browser phải là số nguyên lớn hơn 0');
+      return;
+    }
+    setSavingLimit(true);
+    try {
+      const next = await workApi.updatePaymentControl(maxSessions);
+      limitDirty.current = false;
+      setControl(next);
+      setLimitEnabled(next.maxSessions !== null);
+      if (next.maxSessions !== null) setLimitValue(String(next.maxSessions));
+      toast.success(next.maxSessions === null ? 'Đã tắt giới hạn phiên' : `Đã giới hạn ${next.maxSessions} phiên thanh toán`);
+    } catch (err) { toast.error((err as Error).message); }
+    finally { setSavingLimit(false); }
+  }
+
   return <>
     <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
+      <CardHeader className="gap-3 space-y-0 md:flex-row md:items-center md:justify-between">
         <div>
           <CardTitle className="text-base">Bảng điều khiển thanh toán</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">Camoufox chạy trên máy này; màn hình được truyền cho nhân viên qua Cloudflare Tunnel.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm tabular-nums"><strong>{control.running}</strong>{control.maxSessions === null ? ' browser đang chạy · Không giới hạn' : `/${control.maxSessions} browser đang chạy`}</span>
+        <div className="flex w-full flex-wrap items-center justify-between gap-2 md:w-auto md:justify-end">
+          <span className="whitespace-nowrap text-sm tabular-nums"><strong>{control.running}</strong>{control.maxSessions === null ? ' browser đang chạy · Không giới hạn' : `/${control.maxSessions} browser đang chạy`}</span>
           <Button size="sm" variant="outline" onClick={() => void load()}><RefreshCw /> Làm mới</Button>
         </div>
       </CardHeader>
-      <CardContent><Table>
+      <CardContent>
+        <div className="mb-4 flex flex-wrap items-end gap-3 border-b pb-4">
+          <label className="flex h-9 items-center gap-2 text-sm">
+            <Switch checked={limitEnabled} onCheckedChange={(checked) => { limitDirty.current = true; setLimitEnabled(checked); }} />
+            Giới hạn số browser
+          </label>
+          <div className="space-y-1">
+            <Label htmlFor="payment-session-limit" className="text-xs text-muted-foreground">Số phiên tối đa</Label>
+            <Input
+              id="payment-session-limit"
+              className="h-9 w-28"
+              type="number"
+              min="1"
+              step="1"
+              disabled={!limitEnabled}
+              value={limitValue}
+              onChange={(event) => { limitDirty.current = true; setLimitValue(event.target.value); }}
+            />
+          </div>
+          <Button size="sm" disabled={savingLimit} onClick={() => void saveLimit()}>
+            {savingLimit && <RefreshCw className="animate-spin" />} Lưu giới hạn
+          </Button>
+          <span className="pb-2 text-xs text-muted-foreground">Phiên đang chạy không bị đóng khi giảm giới hạn.</span>
+        </div>
+        <div className="overflow-x-auto"><Table>
         <TableHeader><TableRow><TableHead>Nhân viên</TableHead><TableHead>Tài khoản</TableHead><TableHead>Proxy</TableHead><TableHead>Thời gian</TableHead><TableHead>Trạng thái</TableHead><TableHead className="text-right">Thao tác</TableHead></TableRow></TableHeader>
         <TableBody>
           {!control.sessions.length && <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">Chưa có phiên thanh toán đang chờ hoặc đang chạy.</TableCell></TableRow>}
@@ -371,7 +425,8 @@ function PaymentControlPanel() {
             </div></TableCell>
           </TableRow>)}
         </TableBody>
-      </Table></CardContent>
+        </Table></div>
+      </CardContent>
     </Card>
     {selected && <PaymentMonitorDialog session={selected} onClose={() => setSelectedId(null)} onStop={() => closeSession(selected)} />}
   </>;

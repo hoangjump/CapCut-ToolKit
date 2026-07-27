@@ -263,6 +263,8 @@ export interface AppSettings {
   paymentTunnelToken?: string;
   /** Domain HTTPS đã gắn Public Hostname vào named tunnel. */
   paymentTunnelDomain?: string;
+  /** Số browser thanh toán được chạy cùng lúc. null = không giới hạn. */
+  paymentMaxSessions?: number | null;
 }
 
 /** A saved automation job: run a named flow across a set of profiles, optionally

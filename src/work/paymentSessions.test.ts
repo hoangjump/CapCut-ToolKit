@@ -41,7 +41,11 @@ class FakeBrowser implements PaymentBrowser {
     this.inputs.push(input);
   }
 
-  capacity(): number { return 3; }
+  private maxSessions: number | null = 3;
+
+  capacity(): number | null { return this.maxSessions; }
+
+  setCapacity(maxSessions: number | null): void { this.maxSessions = maxSessions; }
 }
 
 class PaidDuringCreateBrowser extends FakeBrowser {
@@ -175,6 +179,28 @@ test('payment session starts lazily, keeps proxy and marks paid without changing
     assert.ok(task.paidAt);
     assert.equal(store.snapshot().earnings.length, 0);
     assert.equal(service.getByToken(token).status, 'paid');
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('payment session capacity is persisted and updated without restarting', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-capacity-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    const browser = new FakeBrowser();
+    const service = new PaymentSessionService(store, settings, browser);
+    await service.init();
+
+    assert.equal((await service.updateCapacity(7)).maxSessions, 7);
+    assert.equal(settings.getPaymentMaxSessions(), 7);
+    assert.equal((await service.updateCapacity(null)).maxSessions, null);
+    assert.equal(settings.getPaymentMaxSessions(), null);
+    await assert.rejects(service.updateCapacity(-1), /số nguyên lớn hơn 0/);
     await service.close();
   } finally {
     await rm(root, { recursive: true, force: true });
