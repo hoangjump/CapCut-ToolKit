@@ -123,8 +123,9 @@ function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false, 
       lines.push(`💰 ${task.quantity} con · ${money(task.amount)}`);
     }
     const autoVerify = Boolean(credentials.capcutCookies?.length || credentials.vipVerifiedAt);
-    if (!cancelled && autoVerify) lines.push('', `✅ Hệ thống tự kiểm tra VIP và cộng sản lượng · Mã: <code>${task.id.slice(0, 8)}</code>`);
-    else if (!cancelled) lines.push('', `❤️ Thả tim xác nhận · Mã: <code>${task.id.slice(0, 8)}</code>`);
+    if (!cancelled && autoVerify) {
+      lines.push('', '✅ Khi tài khoản lên VIP, hệ thống tự tim tin nhắn và cộng sản lượng.', 'Không cần thả tim hoặc bấm kiểm tra lại.', `Mã: <code>${task.id.slice(0, 8)}</code>`);
+    } else if (!cancelled) lines.push('', `❤️ Thả tim xác nhận · Mã: <code>${task.id.slice(0, 8)}</code>`);
     else lines.push(`Mã: <code>${task.id.slice(0, 8)}</code>`);
     return lines.join('\n');
   }
@@ -1098,18 +1099,26 @@ export class TelegramWorkService {
     if (!token || !task.telegramChatId || !task.telegramMessageId) return;
 
     const completed = action.kind === 'completed';
-    await this.telegram.setMessageReaction(token, {
+    const reactionApplied = await this.telegram.setMessageReaction(token, {
       chatId: task.telegramChatId,
       messageId: task.telegramMessageId,
       emoji: completed ? '❤' : undefined,
-    }).catch((err) => log.warn(`bot thả reaction lỗi: ${(err as Error).message}`));
+    }).then(() => true).catch((err) => {
+      log.warn(`bot thả reaction lỗi: ${(err as Error).message}`);
+      return false;
+    });
 
+    const autoCapcut = completed && task.source === 'capcut-distribution';
+    const autoNote = reactionApplied
+      ? '❤️ Bot đã tự tim tin nhắn gốc. Không cần bấm lại hoặc kiểm tra thủ công.'
+      : '✅ Hệ thống đã tự ghi nhận. Không cần bấm lại hoặc kiểm tra thủ công.';
     const fullText = completed
       ? [
-          `✅ Đã ghi nhận ${action.employee.fullName}`,
+          autoCapcut ? `✅ CapCut đã lên VIP: ${task.capcutCredentials?.email ?? task.description}` : `✅ Đã ghi nhận ${action.employee.fullName}`,
           `+${task.quantity} con × ${money(task.unitRate)} = ${money(task.amount)}`,
           `Hôm nay: ${action.totals.todayQuantity} con — ${money(action.totals.todayAmount)}`,
           `Tháng này: ${action.totals.monthQuantity} con — ${money(action.totals.monthAmount)}`,
+          ...(autoCapcut ? [autoNote] : []),
         ].join('\n')
       : [
           `↩️ Đã gỡ hoàn thành của ${action.employee.fullName}`,
@@ -1117,7 +1126,9 @@ export class TelegramWorkService {
           `Hôm nay còn: ${action.totals.todayQuantity} con — ${money(action.totals.todayAmount)}`,
         ].join('\n');
     const shortText = completed
-      ? `✅ Đã cộng ${task.quantity} con cho ${action.employee.fullName}.`
+      ? autoCapcut
+        ? `✅ ${task.capcutCredentials?.email ?? 'Tài khoản CapCut'} đã lên VIP. Đã tự cộng ${task.quantity} con và xác nhận tin nhắn; không cần thao tác thêm.`
+        : `✅ Đã cộng ${task.quantity} con cho ${action.employee.fullName}.`
       : `↩️ Đã trừ lại ${task.quantity} con của ${action.employee.fullName}.`;
     const topicText = action.employee.salaryVisibility === 'topic' ? fullText : shortText;
     await this.telegram.sendMessage(token, {

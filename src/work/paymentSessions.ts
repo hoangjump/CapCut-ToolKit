@@ -32,7 +32,7 @@ export interface PaymentAdminSessionDto {
 }
 
 export interface PaymentControlDto {
-  maxSessions: number;
+  maxSessions: number | null;
   running: number;
   sessions: PaymentAdminSessionDto[];
 }
@@ -121,7 +121,7 @@ export interface PaymentBrowser {
   closeAll(): Promise<void>;
   frame(sessionId: string): Promise<Buffer>;
   input(sessionId: string, input: PaymentBrowserInput): Promise<void>;
-  capacity?(): number;
+  capacity?(): number | null;
 }
 
 export interface PaymentProxyProvider {
@@ -251,7 +251,7 @@ export class PaymentSessionService {
     if (['closed', 'expired'].includes(session.status)) return false;
 
     const current = this.control();
-    if (session.status !== 'starting' && current.running >= current.maxSessions) return false;
+    if (current.maxSessions !== null && session.status !== 'starting' && current.running >= current.maxSessions) return false;
     try {
       const prepared = await this.claim(session.accessToken);
       return prepared.status === 'ready' || prepared.status === 'paid';
@@ -287,7 +287,7 @@ export class PaymentSessionService {
         error: ['failed', 'verification_failed'].includes(session.status) ? session.error : undefined,
       }));
     return {
-      maxSessions: this.browser.capacity?.() ?? 3,
+      maxSessions: this.browser.capacity?.() ?? null,
       running: state.paymentSessions.filter((session) => (
         session.status === 'starting' || Boolean(session.browserSessionId)
       )).length,

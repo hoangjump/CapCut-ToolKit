@@ -244,7 +244,7 @@ export interface PaymentAdminSession {
   error?: string;
 }
 export interface PaymentControl {
-  maxSessions: number;
+  maxSessions: number | null;
   running: number;
   sessions: PaymentAdminSession[];
 }

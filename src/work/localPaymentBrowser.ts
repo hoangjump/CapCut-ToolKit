@@ -97,15 +97,15 @@ function clamp(value: number, min: number, max: number): number {
 export class LocalPaymentBrowser implements PaymentBrowser {
   private readonly sessions = new Map<string, LocalSession>();
   private readonly starting = new Map<string, Promise<{ sessionId: string }>>();
-  private readonly maxSessions: number;
+  private readonly maxSessions?: number;
 
   constructor() {
-    const configured = Number(process.env.PAYMENT_MAX_SESSIONS || 3);
-    this.maxSessions = Number.isSafeInteger(configured) && configured > 0 ? configured : 3;
+    const configured = Number(process.env.PAYMENT_MAX_SESSIONS);
+    this.maxSessions = Number.isSafeInteger(configured) && configured > 0 ? configured : undefined;
   }
 
-  capacity(): number {
-    return this.maxSessions;
+  capacity(): number | null {
+    return this.maxSessions ?? null;
   }
 
   async create(input: PaymentBrowserCreateInput): Promise<{ sessionId: string }> {
@@ -113,7 +113,7 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     if (existing) return { sessionId: existing.id };
     const pending = this.starting.get(input.id);
     if (pending) return pending;
-    if (this.sessions.size + this.starting.size >= this.maxSessions) {
+    if (this.maxSessions !== undefined && this.sessions.size + this.starting.size >= this.maxSessions) {
       throw new Error(`App đang chạy đủ ${this.maxSessions} phiên thanh toán, hãy thử lại sau`);
     }
     const launch = this.launch(input);

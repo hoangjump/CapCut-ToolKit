@@ -317,7 +317,7 @@ function PayrollPanel() {
 }
 
 function PaymentControlPanel() {
-  const [control, setControl] = useState<PaymentControl>({ maxSessions: 3, running: 0, sessions: [] });
+  const [control, setControl] = useState<PaymentControl>({ maxSessions: null, running: 0, sessions: [] });
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
@@ -351,7 +351,7 @@ function PaymentControlPanel() {
           <p className="mt-1 text-sm text-muted-foreground">Camoufox chạy trên máy này; màn hình được truyền cho nhân viên qua Cloudflare Tunnel.</p>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-sm tabular-nums"><strong>{control.running}</strong>/{control.maxSessions} browser đang chạy</span>
+          <span className="text-sm tabular-nums"><strong>{control.running}</strong>{control.maxSessions === null ? ' browser đang chạy · Không giới hạn' : `/${control.maxSessions} browser đang chạy`}</span>
           <Button size="sm" variant="outline" onClick={() => void load()}><RefreshCw /> Làm mới</Button>
         </div>
       </CardHeader>

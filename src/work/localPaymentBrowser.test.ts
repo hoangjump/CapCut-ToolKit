@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { capcutVipFromResponse, capturePaymentFrame, paymentFailureFromText } from './localPaymentBrowser.js';
+import { capcutVipFromResponse, capturePaymentFrame, LocalPaymentBrowser, paymentFailureFromText } from './localPaymentBrowser.js';
 
 test('detects the payment risk message shown by the checkout page', () => {
   const text = "Couldn't process payment\nTransaction rejected due to risk issue. Try again later or contact customer support for details.";
@@ -35,4 +35,15 @@ test('reads active VIP and expiry from the CapCut subscription response', () => 
     },
   }), { isVip: true, vipEndTime: 1_900_000_000 });
   assert.deepEqual(capcutVipFromResponse({ data: {} }), { isVip: false, vipEndTime: 0 });
+});
+
+test('payment browser has no hard session limit by default', () => {
+  const previous = process.env.PAYMENT_MAX_SESSIONS;
+  delete process.env.PAYMENT_MAX_SESSIONS;
+  try {
+    assert.equal(new LocalPaymentBrowser().capacity(), null);
+  } finally {
+    if (previous === undefined) delete process.env.PAYMENT_MAX_SESSIONS;
+    else process.env.PAYMENT_MAX_SESSIONS = previous;
+  }
 });

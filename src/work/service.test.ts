@@ -261,7 +261,8 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     assert.match(sentText, /<a href="https:\/\/app\.example\/pay\/[^"]+">Link thanh toán<\/a>/);
     assert.equal(sentText.includes(firstItem.checkoutUrl), false);
     assert.match(sentText, new RegExp(`Hạn: ${expiresAt} \\(15 phút\\)`));
-    assert.match(sentText, /Hệ thống tự kiểm tra VIP và cộng sản lượng/);
+    assert.match(sentText, /hệ thống tự tim tin nhắn và cộng sản lượng/i);
+    assert.match(sentText, /Không cần thả tim hoặc bấm kiểm tra lại/);
     assert.doesNotMatch(sentText, /Thả tim xác nhận/);
     assert.equal(sentMessage.parseMode, 'HTML');
     assert.equal(sentMessage.disableLinkPreview, true);
@@ -293,6 +294,8 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     assert.equal(store.snapshot().distributionItems.find((item) => item.id === firstItem.id)!.capcutCookies, undefined);
     assert.equal(fake.reactions.at(-1)?.emoji, '❤');
     assert.match(fake.sent.at(-1)!.text, /\+1 con × 5\.000đ = 5\.000đ/);
+    assert.match(fake.sent.at(-1)!.text, /Bot đã tự tim tin nhắn gốc/);
+    assert.match(fake.sent.at(-1)!.text, /Không cần bấm lại hoặc kiểm tra thủ công/);
 
     const stale = await service.startDistribution({
       projectId: 'project-1',
