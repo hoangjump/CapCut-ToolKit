@@ -181,6 +181,81 @@ test('payment session starts lazily, keeps proxy and marks paid without changing
   }
 });
 
+test('payment session keeps CapCut cookies private and verifies VIP before paid', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-vip-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setPaymentPublicUrl('https://app.example');
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    const browser = new FakeBrowser();
+    const verified: Array<{ taskId: string; vipEndTime: number }> = [];
+    const service = new PaymentSessionService(store, settings, browser);
+    service.setVipVerifiedHandler(async (taskId, vipEndTime) => { verified.push({ taskId, vipEndTime }); });
+    await service.init();
+    const cookies = [{
+      name: 'sessionid', value: 'secret-session', domain: '.capcut.com', path: '/', expires: -1,
+      httpOnly: true, secure: true, sameSite: 'Lax' as const,
+    }];
+    const created = await service.createForTask({
+      taskId: 'task-vip', employeeId: 'employee-1', email: 'worker@example.com',
+      checkoutUrl: 'https://cashier.example/checkout', proxy: STATIC_PROXY, capcutCookies: cookies,
+    });
+    const token = created!.accessUrl.split('/').at(-1)!;
+
+    await service.claim(token);
+    assert.deepEqual(browser.created[0].capcutCookies, cookies);
+    assert.equal('capcutCookies' in service.getByToken(token), false);
+
+    await browser.created[0].onStatus('verifying');
+    assert.equal(service.getByToken(token).status, 'verifying');
+    await browser.created[0].onStatus('paid', undefined, { vipEndTime: 1_900_000_000 });
+    assert.deepEqual(verified, [{ taskId: 'task-vip', vipEndTime: 1_900_000_000 }]);
+    assert.equal(service.getByToken(token).status, 'paid');
+    assert.equal(store.snapshot().paymentSessions[0].capcutCookies, undefined);
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('VIP verification failure closes the browser without offering another payment attempt', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-vip-failure-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setPaymentPublicUrl('https://app.example');
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    const browser = new FakeBrowser();
+    const service = new PaymentSessionService(store, settings, browser);
+    await service.init();
+    const created = await service.createForTask({
+      taskId: 'task-vip-failure', employeeId: 'employee-1', email: 'worker@example.com',
+      checkoutUrl: 'https://cashier.example/checkout', proxy: STATIC_PROXY,
+      capcutCookies: [{
+        name: 'sessionid', value: 'secret-session', domain: '.capcut.com', path: '/', expires: -1,
+        httpOnly: true, secure: true, sameSite: 'Lax',
+      }],
+    });
+    const token = created!.accessUrl.split('/').at(-1)!;
+
+    await service.claim(token);
+    await browser.created[0].onStatus('verifying');
+    await browser.created[0].onStatus('verification_failed', 'CapCut chưa báo VIP');
+    assert.equal(service.getByToken(token).status, 'verification_failed');
+    assert.match(service.getByToken(token).error ?? '', /chưa báo VIP/);
+    assert.deepEqual(browser.closed, [`browser-${created!.id}`]);
+
+    assert.equal((await service.claim(token)).status, 'verification_failed');
+    assert.equal(browser.created.length, 1);
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('payment session can be prepared before the employee opens the Telegram link', async () => {
   const root = await mkdtemp(join(tmpdir(), 'payment-session-prepare-test-'));
   try {

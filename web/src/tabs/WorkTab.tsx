@@ -51,7 +51,9 @@ const paymentStatus: Record<PaymentAdminSession['status'], string> = {
   pending: 'Chờ nhân viên',
   starting: 'Đang mở browser',
   ready: 'Đang thao tác',
-  paid: 'Đã thanh toán',
+  verifying: 'Đang xác minh VIP',
+  paid: 'VIP đã xác minh',
+  verification_failed: 'Lỗi xác minh VIP',
   expired: 'Hết hạn',
   failed: 'Mở lỗi',
   closed: 'Đã đóng',
@@ -60,7 +62,7 @@ const paymentStatus: Record<PaymentAdminSession['status'], string> = {
 function statusVariant(status: string): 'success' | 'danger' | 'muted' | 'outline' {
   if (status === 'active' || status === 'completed') return 'success';
   if (status === 'ready' || status === 'paid') return 'success';
-  if (status === 'failed' || status === 'cancelled') return 'danger';
+  if (status === 'failed' || status === 'verification_failed' || status === 'cancelled') return 'danger';
   if (status === 'inactive' || status === 'archived') return 'muted';
   return 'outline';
 }
@@ -71,7 +73,7 @@ export function WorkTab() {
       <div className="flex flex-col items-start justify-between gap-3 border-b pb-3 md:flex-row md:items-center">
         <div>
           <h2 className="text-lg font-semibold">Công việc nhân viên</h2>
-          <p className="text-sm text-muted-foreground">Giao việc theo Telegram topic, tính sản lượng và tiền công từ reaction.</p>
+          <p className="text-sm text-muted-foreground">Giao việc theo Telegram topic; task CapCut tự cộng công sau khi xác minh VIP.</p>
         </div>
         <TabsList className="max-w-full overflow-x-auto">
           <TabsTrigger value="employees"><Users className="h-4 w-4" /> Nhân viên</TabsTrigger>
@@ -399,13 +401,13 @@ function PaymentMonitorDialog({
             onInput={(input) => workApi.sendPaymentControlInput(session.id, input)}
           />
         : <div className="flex min-h-80 flex-col items-center justify-center gap-3 bg-neutral-950 text-neutral-100">
-            {session.status === 'paid' ? <Check className="h-9 w-9 text-green-500" /> : <RefreshCw className="h-7 w-7 animate-spin" />}
-            <strong>{session.status === 'paid' ? 'Thanh toán thành công' : paymentStatus[session.status]}</strong>
+            {session.status === 'paid' ? <Check className="h-9 w-9 text-green-500" /> : session.status === 'verification_failed' ? <X className="h-9 w-9 text-red-500" /> : <RefreshCw className="h-7 w-7 animate-spin" />}
+            <strong>{session.status === 'paid' ? 'VIP đã xác minh và cộng công' : paymentStatus[session.status]}</strong>
             <span className="text-sm text-neutral-400">Browser sẽ tự đóng và giải phóng slot.</span>
           </div>}
       <DialogFooter className="border-t p-3">
         <Button variant="outline" onClick={onClose}>Ẩn popup</Button>
-        {session.status !== 'paid' && <Button variant="destructive" onClick={() => void onStop()}>Đóng browser</Button>}
+        {!['paid', 'verification_failed'].includes(session.status) && <Button variant="destructive" onClick={() => void onStop()}>Đóng browser</Button>}
       </DialogFooter>
     </DialogContent>
   </Dialog>;

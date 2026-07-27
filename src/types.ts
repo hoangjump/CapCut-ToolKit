@@ -6,6 +6,17 @@ export interface ProxyConfig {
   country?: string;
 }
 
+export interface BrowserCookieSnapshot {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires: number;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: 'Strict' | 'Lax' | 'None';
+}
+
 /** How a profile sources its proxy at launch time. */
 export type ProxyMode = 'static' | 'pool' | 'gateway';
 

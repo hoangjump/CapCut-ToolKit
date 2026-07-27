@@ -163,7 +163,7 @@ test('assigned employee reaction credits once and removing it reverses payroll',
   }
 });
 
-test('CapCut distribution respects round-robin quotas and only pays after heart', async () => {
+test('CapCut distribution respects quotas and auto-pays only after VIP verification', async () => {
   const root = await mkdtemp(join(tmpdir(), 'telegram-distribution-test-'));
   try {
     const settings = new SettingsStore(root);
@@ -210,6 +210,10 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
         checkoutUrl: `https://capcut.example/checkout/${index}?token=abc&locale=vi`,
         proxy: { server: `http://proxy${index}.example:8080`, username: 'user', password: 'secret' },
         proxyRecordId: `proxy-record-${index}`,
+        capcutCookies: [{
+          name: 'sessionid', value: `session-${index}`, domain: '.capcut.com', path: '/', expires: -1,
+          httpOnly: true, secure: true, sameSite: 'Lax',
+        }],
       });
     }
     let current = service.listDistributions('project-1')[0];
@@ -233,11 +237,16 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     const firstItem = current.items.find((item) => item.employeeId === duy.id)!;
     assert.equal(firstItem.proxy, undefined);
     assert.equal(firstItem.proxyRecordId, undefined);
+    assert.equal(firstItem.capcutCookies, undefined);
     const task = service.listTasks().find((item) => item.distributionItemId === firstItem.id)!;
     assert.equal(task.capcutCredentials?.proxy, undefined);
     assert.equal(task.capcutCredentials?.proxyRecordId, undefined);
-    assert.equal(store.snapshot().paymentSessions[0].proxy?.password, 'secret');
-    assert.equal(store.snapshot().paymentSessions[0].proxyRecordId, 'proxy-record-1');
+    assert.equal(task.capcutCredentials?.capcutCookies, undefined);
+    const storedTask = store.snapshot().tasks.find((item) => item.id === task.id)!;
+    const paymentSession = store.snapshot().paymentSessions.find((item) => item.taskId === task.id)!;
+    assert.equal(paymentSession.proxy?.password, 'secret');
+    assert.equal(paymentSession.proxyRecordId, storedTask.capcutCredentials?.proxyRecordId);
+    assert.equal(paymentSession.capcutCookies?.[0].name, 'sessionid');
     assert.equal(task.capcutCredentials?.password, firstItem.password);
     const sentMessage = fake.sent.find((message) => message.text.includes(firstItem.email))!;
     const sentText = sentMessage.text;
@@ -252,11 +261,13 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     assert.match(sentText, /<a href="https:\/\/app\.example\/pay\/[^"]+">Link thanh toán<\/a>/);
     assert.equal(sentText.includes(firstItem.checkoutUrl), false);
     assert.match(sentText, new RegExp(`Hạn: ${expiresAt} \\(15 phút\\)`));
+    assert.match(sentText, /Hệ thống tự kiểm tra VIP và cộng sản lượng/);
+    assert.doesNotMatch(sentText, /Thả tim xác nhận/);
     assert.equal(sentMessage.parseMode, 'HTML');
     assert.equal(sentMessage.disableLinkPreview, true);
     await assert.rejects(
       service.setTaskCompletion(task.id, true),
-      /chỉ được tính hoặc trừ khi nhân viên thả\/gỡ reaction/,
+      /tự động tính sau khi hệ thống xác minh/,
     );
     assert.equal(service.payroll().find((row) => row.employeeId === duy.id)!.totals.allAmount, 0);
     await service.processUpdate({
@@ -269,8 +280,17 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
         new_reaction: [{ type: 'emoji', emoji: '❤' }],
       },
     });
+    assert.equal(service.payroll().find((row) => row.employeeId === duy.id)!.totals.allAmount, 0);
+
+    const paymentInput = paymentBrowser.created.find((input) => input.id === paymentSession.id)!;
+    await paymentInput.onStatus('verifying');
+    assert.equal(store.snapshot().tasks.find((item) => item.id === task.id)!.paymentStatus, 'verifying');
+    await paymentInput.onStatus('paid', undefined, { vipEndTime: 1_900_000_000 });
     assert.equal(service.payroll().find((row) => row.employeeId === duy.id)!.totals.allAmount, 5_000);
     assert.equal(service.listDistributions('project-1')[0].completed, 1);
+    assert.equal(store.snapshot().tasks.find((item) => item.id === task.id)!.capcutCredentials?.vipEndTime, 1_900_000_000);
+    assert.equal(store.snapshot().tasks.find((item) => item.id === task.id)!.capcutCredentials?.capcutCookies, undefined);
+    assert.equal(store.snapshot().distributionItems.find((item) => item.id === firstItem.id)!.capcutCookies, undefined);
     assert.equal(fake.reactions.at(-1)?.emoji, '❤');
     assert.match(fake.sent.at(-1)!.text, /\+1 con × 5\.000đ = 5\.000đ/);
 

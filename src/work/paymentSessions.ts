@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
-import type { ProxyConfig } from '../types.js';
+import type { BrowserCookieSnapshot, ProxyConfig } from '../types.js';
 import type { TelegramWorkStore } from './store.js';
 import type { PaymentSessionStatus, WorkPaymentSession } from './types.js';
 
@@ -106,8 +106,13 @@ export interface PaymentBrowserCreateInput {
   checkoutUrl: string;
   proxy?: ProxyConfig;
   expectedProxyIp?: string;
+  capcutCookies?: BrowserCookieSnapshot[];
   expiresAt: string;
-  onStatus: (status: 'paid' | 'failed', error?: string) => Promise<void>;
+  onStatus: (
+    status: 'verifying' | 'paid' | 'verification_failed' | 'failed',
+    error?: string,
+    vip?: { vipEndTime: number },
+  ) => Promise<void>;
 }
 
 export interface PaymentBrowser {
@@ -145,13 +150,14 @@ function dto(session: WorkPaymentSession): PaymentSessionDto {
     status: session.status,
     email: session.email,
     expiresAt: session.expiresAt,
-    error: session.status === 'failed' ? session.error : undefined,
+    error: ['failed', 'verification_failed'].includes(session.status) ? session.error : undefined,
   };
 }
 
 export class PaymentSessionService {
   private cleanupTimer?: NodeJS.Timeout;
   private readonly starting = new Map<string, Promise<PaymentSessionDto>>();
+  private onVipVerified?: (taskId: string, vipEndTime: number) => Promise<void>;
 
   constructor(
     private readonly store: TelegramWorkStore,
@@ -159,6 +165,10 @@ export class PaymentSessionService {
     private readonly browser: PaymentBrowser,
     private readonly proxyProvider?: PaymentProxyProvider,
   ) {}
+
+  setVipVerifiedHandler(handler: (taskId: string, vipEndTime: number) => Promise<void>): void {
+    this.onVipVerified = handler;
+  }
 
   async init(): Promise<void> {
     await this.reconcilePersistedSessions();
@@ -195,6 +205,7 @@ export class PaymentSessionService {
     checkoutUrl: string;
     proxy?: ProxyConfig;
     proxyRecordId?: string;
+    capcutCookies?: BrowserCookieSnapshot[];
   }): Promise<{ id: string; accessUrl: string } | undefined> {
     if (!this.configured()) return undefined;
     const publicUrl = normalizeHttpUrl(this.settings.getPaymentPublicUrl()!, 'URL công khai');
@@ -212,6 +223,7 @@ export class PaymentSessionService {
       checkoutUrl: input.checkoutUrl,
       proxy: input.proxy,
       proxyRecordId: input.proxyRecordId,
+      capcutCookies: input.capcutCookies,
       status: 'pending',
       createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + SESSION_LIFETIME_MS).toISOString(),
@@ -272,7 +284,7 @@ export class PaymentSessionService {
         createdAt: session.createdAt,
         expiresAt: session.expiresAt,
         updatedAt: session.updatedAt,
-        error: session.status === 'failed' ? session.error : undefined,
+        error: ['failed', 'verification_failed'].includes(session.status) ? session.error : undefined,
       }));
     return {
       maxSessions: this.browser.capacity?.() ?? 3,
@@ -285,7 +297,7 @@ export class PaymentSessionService {
 
   getByToken(token: string): PaymentSessionDto {
     const session = this.requireToken(token);
-    if (new Date(session.expiresAt).getTime() <= Date.now() && !['paid', 'closed', 'expired'].includes(session.status)) {
+    if (new Date(session.expiresAt).getTime() <= Date.now() && !['paid', 'verification_failed', 'closed', 'expired'].includes(session.status)) {
       void this.expireDue();
       return { ...dto(session), status: 'expired' };
     }
@@ -294,11 +306,14 @@ export class PaymentSessionService {
 
   async claim(token: string): Promise<PaymentSessionDto> {
     const current = this.requireToken(token);
-    if (new Date(current.expiresAt).getTime() <= Date.now()) {
+    if (
+      new Date(current.expiresAt).getTime() <= Date.now()
+      && !['paid', 'verification_failed', 'closed', 'expired'].includes(current.status)
+    ) {
       await this.expireDue();
       return { ...dto(current), status: 'expired' };
     }
-    if (['ready', 'paid', 'closed', 'expired'].includes(current.status)) return dto(current);
+    if (['ready', 'verifying', 'paid', 'verification_failed', 'closed', 'expired'].includes(current.status)) return dto(current);
     const running = this.starting.get(current.id);
     if (running) return running;
     const promise = this.start(current.id);
@@ -345,22 +360,38 @@ export class PaymentSessionService {
     if (session) await this.finish(session.id, 'closed');
   }
 
-  private async updateFromBrowser(id: string, status: 'paid' | 'failed', error?: string): Promise<void> {
+  private async updateFromBrowser(
+    id: string,
+    status: 'verifying' | 'paid' | 'verification_failed' | 'failed',
+    error?: string,
+    vip?: { vipEndTime: number },
+  ): Promise<void> {
+    if (status === 'paid' && vip && this.onVipVerified) {
+      const taskId = this.store.snapshot().paymentSessions.find((item) => item.id === id)?.taskId;
+      try {
+        if (taskId) await this.onVipVerified(taskId, vip.vipEndTime);
+      } catch (reason) {
+        status = 'verification_failed';
+        error = `Đã xác minh VIP nhưng không cộng được sản lượng: ${(reason as Error).message}`;
+      }
+    }
     await this.store.mutate((state) => {
       const session = state.paymentSessions.find((item) => item.id === id);
       if (!session) return;
       const now = new Date().toISOString();
       session.status = status;
-      session.error = status === 'failed' ? error || 'Thanh toán thất bại' : undefined;
+      session.error = ['failed', 'verification_failed'].includes(status) ? error || 'Thanh toán thất bại' : undefined;
+      if (status === 'paid') session.capcutCookies = undefined;
       session.updatedAt = now;
       const task = state.tasks.find((item) => item.id === session.taskId);
       if (task) {
         task.paymentStatus = status;
-        if (status === 'paid') task.paidAt = now;
+        if (status === 'verifying' || status === 'paid') task.paidAt ??= now;
         task.updatedAt = now;
       }
     });
-    if (status === 'failed') {
+    if (status === 'verifying') return;
+    if (status === 'failed' || status === 'verification_failed') {
       await this.closeBrowser(id);
       return;
     }
@@ -402,8 +433,9 @@ export class PaymentSessionService {
         checkoutUrl: session.checkoutUrl,
         proxy,
         expectedProxyIp: paymentProxy?.egressIp,
+        capcutCookies: session.capcutCookies,
         expiresAt: session.expiresAt,
-        onStatus: (status, error) => this.updateFromBrowser(session.id, status, error),
+        onStatus: (status, error, vip) => this.updateFromBrowser(session.id, status, error, vip),
       });
       const saved = await this.store.mutate((state) => {
         const found = state.paymentSessions.find((item) => item.id === id)!;
@@ -416,7 +448,7 @@ export class PaymentSessionService {
         }
         return found;
       });
-      if (saved.status !== 'ready') {
+      if (['paid', 'failed', 'verification_failed'].includes(saved.status)) {
         setTimeout(() => void this.closeBrowser(id), saved.status === 'paid' ? 1_500 : 500).unref?.();
       }
       return dto(saved);
@@ -489,7 +521,7 @@ export class PaymentSessionService {
   private async expireDue(): Promise<void> {
     const due = this.store.snapshot().paymentSessions.filter((session) => (
       new Date(session.expiresAt).getTime() <= Date.now()
-      && !['paid', 'expired', 'closed'].includes(session.status)
+      && !['paid', 'verification_failed', 'expired', 'closed'].includes(session.status)
     ));
     await Promise.all(due.map((session) => this.finish(session.id, 'expired').catch((error) => {
       log.warn(`dọn phiên ${session.id} lỗi: ${(error as Error).message}`);
@@ -502,6 +534,17 @@ export class PaymentSessionService {
         // Browser processes only live in memory, so their IDs cannot survive an app restart.
         session.browserSessionId = undefined;
         session.paymentProxyLeaseId = undefined;
+        if (session.status === 'verifying') {
+          session.status = 'verification_failed';
+          session.error = 'App đã khởi động lại khi đang xác minh VIP; không thanh toán lại tài khoản này';
+          session.updatedAt = new Date().toISOString();
+          const task = state.tasks.find((item) => item.id === session.taskId);
+          if (task && task.paymentStatus !== 'paid') {
+            task.paymentStatus = 'verification_failed';
+            task.updatedAt = session.updatedAt;
+          }
+          continue;
+        }
         if (!['starting', 'ready'].includes(session.status)) continue;
         session.status = 'pending';
         session.error = undefined;

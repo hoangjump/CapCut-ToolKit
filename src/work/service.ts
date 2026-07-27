@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { maskKey, type SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
-import type { ProxyConfig } from '../types.js';
+import type { BrowserCookieSnapshot, ProxyConfig } from '../types.js';
 import type { TelegramBotApi } from './telegramClient.js';
 import type { PaymentSessionService } from './paymentSessions.js';
 import { TelegramWorkStore } from './store.js';
@@ -122,7 +122,9 @@ function taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false, 
     if (employee.salaryVisibility === 'topic') {
       lines.push(`💰 ${task.quantity} con · ${money(task.amount)}`);
     }
-    if (!cancelled) lines.push('', `❤️ Thả tim xác nhận · Mã: <code>${task.id.slice(0, 8)}</code>`);
+    const autoVerify = Boolean(credentials.capcutCookies?.length || credentials.vipVerifiedAt);
+    if (!cancelled && autoVerify) lines.push('', `✅ Hệ thống tự kiểm tra VIP và cộng sản lượng · Mã: <code>${task.id.slice(0, 8)}</code>`);
+    else if (!cancelled) lines.push('', `❤️ Thả tim xác nhận · Mã: <code>${task.id.slice(0, 8)}</code>`);
     else lines.push(`Mã: <code>${task.id.slice(0, 8)}</code>`);
     return lines.join('\n');
   }
@@ -151,6 +153,7 @@ function taskDto(task: WorkTask): WorkTask {
   if (result.capcutCredentials) {
     delete result.capcutCredentials.proxy;
     delete result.capcutCredentials.proxyRecordId;
+    delete result.capcutCredentials.capcutCookies;
   }
   return result;
 }
@@ -159,6 +162,7 @@ function distributionItemDto(item: DistributionItem): DistributionItem {
   const result = structuredClone(item);
   delete result.proxy;
   delete result.proxyRecordId;
+  delete result.capcutCookies;
   return result;
 }
 
@@ -181,7 +185,9 @@ export class TelegramWorkService {
     private readonly settings: SettingsStore,
     private readonly telegram: TelegramBotApi,
     private readonly payments?: PaymentSessionService,
-  ) {}
+  ) {
+    this.payments?.setVipVerifiedHandler((taskId, vipEndTime) => this.completeCapcutVip(taskId, vipEndTime));
+  }
 
   async init(): Promise<void> {
     await this.store.init();
@@ -378,6 +384,7 @@ export class TelegramWorkService {
     checkoutUrl: string;
     proxy?: ProxyConfig;
     proxyRecordId?: string;
+    capcutCookies?: BrowserCookieSnapshot[];
   }): Promise<DistributionItem | undefined> {
     const item = await this.store.mutate((state) => {
       const run = state.distributionRuns.find((entry) => entry.id === runId);
@@ -407,6 +414,7 @@ export class TelegramWorkService {
         checkoutUrl: row.checkoutUrl,
         proxy: row.proxy,
         proxyRecordId: row.proxyRecordId,
+        capcutCookies: row.capcutCookies,
         status: 'queued' as const,
         createdAt: now,
         updatedAt: now,
@@ -550,6 +558,7 @@ export class TelegramWorkService {
               checkoutUrl: item.checkoutUrl,
               proxy: item.proxy,
               proxyRecordId: item.proxyRecordId,
+              capcutCookies: item.capcutCookies,
             },
           });
           await this.store.mutate((state) => {
@@ -750,6 +759,7 @@ export class TelegramWorkService {
           checkoutUrl: task.capcutCredentials.checkoutUrl,
           proxy: task.capcutCredentials.proxy,
           proxyRecordId: task.capcutCredentials.proxyRecordId,
+          capcutCookies: task.capcutCredentials.capcutCookies,
         });
         if (!payment) throw new Error('Link nhân viên chưa bật');
         await this.payments.prepareForTask(task.id);
@@ -805,7 +815,7 @@ export class TelegramWorkService {
     const current = state.tasks.find((item) => item.id === id);
     if (!current) throw new Error('Không tìm thấy công việc');
     if (current.source === 'capcut-distribution') {
-      throw new Error('Task CapCut được khóa số lượng và đơn giá; chỉ reaction ❤️ mới cập nhật bảng công');
+      throw new Error('Task CapCut được khóa số lượng và đơn giá; hệ thống tự cập nhật sau khi xác minh VIP');
     }
     if (current.status !== 'pending') throw new Error('Chỉ sửa được công việc đang chờ');
     const employee = state.employees.find((item) => item.id === current.employeeId)!;
@@ -898,7 +908,7 @@ export class TelegramWorkService {
       const task = state.tasks.find((item) => item.id === id);
       if (!task) throw new Error('Không tìm thấy công việc');
       if (task.source === 'capcut-distribution') {
-        throw new Error('Task CapCut chỉ được tính hoặc trừ khi nhân viên thả/gỡ reaction ❤️ trên Telegram');
+        throw new Error('Task CapCut được tự động tính sau khi hệ thống xác minh tài khoản đã lên VIP');
       }
       const employee = state.employees.find((item) => item.id === task.employeeId)!;
       if (completed) {
@@ -990,6 +1000,10 @@ export class TelegramWorkService {
         recordProcessed(state, update.update_id, 'ignored: unknown task message');
         return { kind: 'ignored', reason: 'unknown-task' };
       }
+      if (task.source === 'capcut-distribution' && task.capcutCredentials?.capcutCookies?.length) {
+        recordProcessed(state, update.update_id, 'ignored: capcut task uses automatic VIP verification');
+        return { kind: 'ignored', reason: 'capcut-auto-verification' };
+      }
       const employee = state.employees.find((item) => item.id === task.employeeId);
       const userId = reaction.user ? String(reaction.user.id) : undefined;
       if (!employee || !userId || employee.telegramUserId !== userId) {
@@ -1035,6 +1049,32 @@ export class TelegramWorkService {
         createdAt: now,
       });
     }
+  }
+
+  private async completeCapcutVip(taskId: string, vipEndTime: number): Promise<void> {
+    const action = await this.store.mutate((state): ReactionAction => {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task || task.source !== 'capcut-distribution' || !task.capcutCredentials) {
+        throw new Error('Không tìm thấy task CapCut để cộng sản lượng');
+      }
+      if (task.status === 'completed') return { kind: 'duplicate' };
+      if (task.status !== 'pending') throw new Error(`Task CapCut đang ở trạng thái ${task.status}`);
+      const employee = state.employees.find((item) => item.id === task.employeeId);
+      if (!employee) throw new Error('Không tìm thấy nhân viên của task CapCut');
+      this.completeTaskInState(state, task, 'capcut-vip');
+      task.capcutCredentials.vipVerifiedAt = new Date().toISOString();
+      task.capcutCredentials.vipEndTime = vipEndTime;
+      task.capcutCredentials.capcutCookies = undefined;
+      const item = state.distributionItems.find((entry) => entry.id === task.distributionItemId);
+      if (item) item.capcutCookies = undefined;
+      return {
+        kind: 'completed',
+        task: structuredClone(task),
+        employee: structuredClone(employee),
+        totals: employeeTotals(state, employee.id),
+      };
+    });
+    await this.notifyReaction(action);
   }
 
   private reopenTaskInState(state: TelegramWorkState, task: WorkTask): void {

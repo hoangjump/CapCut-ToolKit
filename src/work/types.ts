@@ -1,4 +1,4 @@
-import type { ProxyConfig } from '../types.js';
+import type { BrowserCookieSnapshot, ProxyConfig } from '../types.js';
 
 export type EmployeeStatus = 'unbound' | 'active' | 'inactive' | 'archived';
 export type SalaryVisibility = 'topic' | 'private' | 'admin-only';
@@ -49,6 +49,9 @@ export interface WorkTask {
     checkoutUrl: string;
     proxy?: ProxyConfig;
     proxyRecordId?: string;
+    capcutCookies?: BrowserCookieSnapshot[];
+    vipVerifiedAt?: string;
+    vipEndTime?: number;
   };
   createdAt: string;
   updatedAt: string;
@@ -84,7 +87,7 @@ export interface TelegramWorkState {
   paymentSessions: WorkPaymentSession[];
 }
 
-export type PaymentSessionStatus = 'pending' | 'starting' | 'ready' | 'paid' | 'expired' | 'failed' | 'closed';
+export type PaymentSessionStatus = 'pending' | 'starting' | 'ready' | 'verifying' | 'paid' | 'verification_failed' | 'expired' | 'failed' | 'closed';
 
 export interface WorkPaymentSession {
   id: string;
@@ -96,6 +99,7 @@ export interface WorkPaymentSession {
   checkoutUrl: string;
   proxy?: ProxyConfig;
   proxyRecordId?: string;
+  capcutCookies?: BrowserCookieSnapshot[];
   paymentProxyLeaseId?: string;
   paymentProxyIp?: string;
   status: PaymentSessionStatus;
@@ -137,6 +141,7 @@ export interface DistributionItem {
   checkoutUrl: string;
   proxy?: ProxyConfig;
   proxyRecordId?: string;
+  capcutCookies?: BrowserCookieSnapshot[];
   status: 'queued' | 'sending' | 'sent' | 'failed';
   taskId?: string;
   error?: string;

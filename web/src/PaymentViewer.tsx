@@ -44,7 +44,7 @@ export function PaymentViewer({ token }: { token: string }) {
   useEffect(() => {
     const timer = window.setInterval(() => {
       tick((value) => value + 1);
-      if (session && ['starting', 'ready'].includes(session.status)) void load();
+      if (session && ['starting', 'ready', 'verifying'].includes(session.status)) void load();
     }, 1_000);
     return () => window.clearInterval(timer);
   }, [load, session]);
@@ -68,7 +68,13 @@ export function PaymentViewer({ token }: { token: string }) {
   if (!session) return null;
 
   if (session.status === 'paid') {
-    return <Centered><CheckCircle2 className="h-9 w-9 text-green-600" /><strong>Thanh toán thành công</strong><span className="text-sm text-muted-foreground">Bạn có thể đóng trang này và thả tim trên Telegram để ghi nhận sản lượng.</span></Centered>;
+    return <Centered><CheckCircle2 className="h-9 w-9 text-green-600" /><strong>VIP đã được xác minh</strong><span className="text-sm text-muted-foreground">Hệ thống đã tự cộng sản lượng và tiền công. Bạn không cần thả tim trên Telegram.</span></Centered>;
+  }
+  if (session.status === 'verifying') {
+    return <Centered><LoaderCircle className="h-7 w-7 animate-spin" /><strong>Đang xác minh VIP CapCut</strong><span className="text-sm text-muted-foreground">Thanh toán đã được ghi nhận. Vui lòng chờ hệ thống kiểm tra tài khoản.</span></Centered>;
+  }
+  if (session.status === 'verification_failed') {
+    return <Centered><XCircle className="h-7 w-7 text-destructive" /><strong>Chưa xác minh được VIP</strong><span className="text-sm text-muted-foreground">Không thanh toán lại. Hãy báo quản lý kiểm tra tài khoản.</span><span className="text-sm text-destructive">{session.error}</span></Centered>;
   }
   if (['expired', 'closed'].includes(session.status)) {
     return <Centered><XCircle className="h-7 w-7 text-muted-foreground" /><strong>{session.status === 'expired' ? 'Link đã hết hạn' : 'Phiên đã đóng'}</strong><span className="text-sm text-muted-foreground">Yêu cầu quản lý gửi một link thanh toán mới.</span></Centered>;

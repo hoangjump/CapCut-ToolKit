@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { BrowserManager } from '../browserManager.js';
-import type { MailCredentials, MailCodeType, ProxyConfig, RunResult } from '../types.js';
+import type { BrowserCookieSnapshot, MailCredentials, MailCodeType, ProxyConfig, RunResult } from '../types.js';
 import { getCode, getMessages } from '../mailClient.js';
 import { getFlow } from '../flows/index.js';
 import { PageHelper, setShotsDir } from './helper.js';
@@ -47,6 +47,7 @@ export interface RunProjectDeps {
     profileId: string;
     proxy?: ProxyConfig;
     proxyRecordId?: string;
+    capcutCookies?: BrowserCookieSnapshot[];
   }) => Promise<void>;
 }
 
@@ -278,10 +279,16 @@ export async function runProject(
         }
         if (deps.onResult && !flowError && row.checkoutUrl && row.email) {
           try {
+            const capcutCookies = (await session.context.cookies())
+              .filter((cookie) => /(^|\.)capcut\.com$/i.test(cookie.domain));
+            if (!capcutCookies.some((cookie) => ['sessionid', 'sid_guard'].includes(cookie.name))) {
+              throw new Error('Không lưu được cookie đăng nhập CapCut; không phân phối link để tránh mất tự động xác minh VIP');
+            }
             await deps.onResult(row, {
               profileId: session.profile.id,
               proxy: session.profile.proxy,
               proxyRecordId: session.profile.assignedProxyId,
+              capcutCookies,
             });
             flowLog.info(`đã xếp hàng phân phối: ${row.email}`);
           } catch (e) {

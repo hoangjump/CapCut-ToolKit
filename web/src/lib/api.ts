@@ -222,7 +222,7 @@ export interface TunnelStatus {
   autoStart: boolean;
   error?: string;
 }
-export type PaymentSessionStatus = 'pending' | 'starting' | 'ready' | 'paid' | 'expired' | 'failed' | 'closed';
+export type PaymentSessionStatus = 'pending' | 'starting' | 'ready' | 'verifying' | 'paid' | 'verification_failed' | 'expired' | 'failed' | 'closed';
 export interface PaymentSession {
   status: PaymentSessionStatus;
   email: string;

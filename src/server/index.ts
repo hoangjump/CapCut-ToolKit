@@ -1660,6 +1660,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
                   checkoutUrl: row.checkoutUrl!,
                   proxy: source.proxy,
                   proxyRecordId: source.proxyRecordId,
+                  capcutCookies: source.capcutCookies,
                 });
               }
             : undefined,
