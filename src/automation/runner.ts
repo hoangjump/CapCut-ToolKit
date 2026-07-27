@@ -269,7 +269,7 @@ export async function runProject(
             await deps.notify(row);
             flowLog.info(`đã báo Telegram: ${row.email || session.profile.name}`);
           } catch (e) {
-            flowLog.warn(`báo Telegram lỗi: ${(e as Error).message}`);
+            flowLog.warn(`báo Telegram quản lý lỗi: ${(e as Error).message}`);
           }
         }
         if (deps.onResult && !flowError && row.checkoutUrl && row.email) {

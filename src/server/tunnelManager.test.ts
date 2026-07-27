@@ -22,7 +22,8 @@ test('tunnel manager publishes and clears the runtime payment URL', { skip: proc
   try {
     await writeFile(executable, [
       '#!/usr/bin/env node',
-      "if (!process.argv.includes('--protocol') || !process.argv.includes('http2')) process.exit(2);",
+      "if (process.argv.includes('--protocol')) process.exit(2);",
+      "if (!process.argv.includes('--edge-ip-version') || !process.argv.includes('4')) process.exit(2);",
       "process.stderr.write('request=https://api.trycloudflare.com\\n');",
       "process.stderr.write('Visit https://worker-pay.trycloudflare.com\\n');",
       'setInterval(() => {}, 1000);',

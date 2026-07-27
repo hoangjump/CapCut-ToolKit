@@ -122,29 +122,31 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
     .filter((item) => Number.isSafeInteger(item.quantity) && item.quantity >= 0);
   const distributionTotal = distributionAllocations.reduce((sum, item) => sum + item.quantity, 0);
 
+  const saveNow = useCallback(async () => {
+    await projectApi.update(project.id, {
+      name: name.trim() || project.name, flowName, profileIds, mailId: mailId || undefined,
+      concurrency: Number(concurrency) || 2, ephemeralCount: Number(ephemeral) || 0,
+      mailProvider,
+      buyAccountType: buyType || undefined, buyQuality: buyQuality || undefined,
+      buyProductId: buyProductId || undefined,
+      smsbowerService: smsService || undefined,
+      ephemeralProxyPool: usePool ? { tags: poolTags.split(',').map((s) => s.trim()).filter(Boolean), liveOnly: poolLive } : null,
+      blockImages,
+      headless,
+      telegramDistribution: workEmployeesLoaded
+        ? { enabled: distributionEnabled, allocations: distributionAllocations }
+        : undefined,
+      note,
+    });
+    setSaved(true); setTimeout(() => setSaved(false), 1200); onChanged();
+  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
+
   const doSave = useCallback(() => {
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      try {
-        await projectApi.update(project.id, {
-          name: name.trim() || project.name, flowName, profileIds, mailId: mailId || undefined,
-          concurrency: Number(concurrency) || 2, ephemeralCount: Number(ephemeral) || 0,
-          mailProvider,
-          buyAccountType: buyType || undefined, buyQuality: buyQuality || undefined,
-          buyProductId: buyProductId || undefined,
-          smsbowerService: smsService || undefined,
-          ephemeralProxyPool: usePool ? { tags: poolTags.split(',').map((s) => s.trim()).filter(Boolean), liveOnly: poolLive } : null,
-          blockImages,
-          headless,
-          telegramDistribution: workEmployeesLoaded
-            ? { enabled: distributionEnabled, allocations: distributionAllocations }
-            : undefined,
-          note,
-        });
-        setSaved(true); setTimeout(() => setSaved(false), 1200); onChanged();
-      } catch (e) { toast.error((e as Error).message); }
+    saveTimer.current = setTimeout(() => {
+      void saveNow().catch((error) => toast.error((error as Error).message));
     }, 300);
-  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
+  }, [saveNow]);
 
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return; }
@@ -175,8 +177,11 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
     try { await projectApi.remove(project.id); toast.success('Đã xóa project'); onDeleted(); } catch (e) { toast.error((e as Error).message); }
   }
   async function run() {
+    if (distributionEnabled && distributionTotal < 1) return toast.error('Nhập số lượng cần gửi cho ít nhất một nhân viên');
     setRunning(true); setResults(null); setRunError('');
     try {
+      clearTimeout(saveTimer.current);
+      await saveNow();
       const r = await projectApi.run(project.id);
       setResults(r.results);
       if (r.distributionRunId) refreshDistribution();
@@ -236,7 +241,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
         {flowName === 'capcut-signin' && (
           <div className="border-t pt-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <div><h3 className="font-semibold text-sm">Tự phân phối link CapCut</h3><p className="text-xs text-muted-foreground">Mỗi link thành một task, gửi đủ email + password + mail full + link; chỉ thả ❤️ mới tính 1 con.</p></div>
+              <div><h3 className="font-semibold text-sm">Tự phân phối link CapCut</h3><p className="text-xs text-muted-foreground">Mỗi link thành một task, gửi email + password và nút thanh toán; chỉ thả ❤️ mới tính 1 con.</p></div>
               <Switch checked={distributionEnabled} onCheckedChange={(value) => { setDistributionEnabled(value); if (value) setProfileIds([]); }} />
             </div>
             {distributionEnabled && <>

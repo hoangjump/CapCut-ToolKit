@@ -92,6 +92,15 @@ function parseHeadless(): boolean | 'virtual' {
   return true;
 }
 
+function escapeTelegramHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
 /** Normalize a project's ephemeral proxy-pool config from the request body.
  *  Accepts { tags?: string[], liveOnly?: boolean }. Returns undefined when the
  *  caller didn't enable a pool (falsey/empty) so ephemeral profiles fall back to
@@ -178,7 +187,8 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
 
   const telegramStore = new TelegramWorkStore(storeRoot);
   const paymentSessions = new PaymentSessionService(telegramStore, settings, new LocalPaymentBrowser());
-  const telegramWork = new TelegramWorkService(telegramStore, settings, new TelegramClient(), paymentSessions);
+  const telegramClient = new TelegramClient();
+  const telegramWork = new TelegramWorkService(telegramStore, settings, telegramClient, paymentSessions);
   await telegramWork.init();
 
   const projects = new ProjectStore(storeRoot);
@@ -1485,45 +1495,25 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
           if (!res.ok) throw new Error(`Sheet webhook HTTP ${res.status}`);
         }
       : undefined;
-    // Build the Telegram notify dependency only when both bot token + chat id are
-    // set. Sends a Markdown message per successful registration (email + full
-    // credential line + checkout link). The runner swallows failures so a
-    // Telegram hiccup never changes the run outcome.
+    // Optional manager notification, separate from employee-topic distribution.
+    // Keep it short and HTML-escaped so long checkout URLs/credentials cannot
+    // break Telegram entity parsing.
     const tgToken = settings.getTelegramBotToken();
     const tgChatId = settings.getTelegramChatId();
     const notifyDep = tgToken && tgChatId
       ? async (row: SheetRow) => {
+          const account = [row.email, row.password].filter(Boolean).join(' | ');
           const lines = [
-            '✅ *CapCut đăng ký thành công*',
-            row.email ? `📧 \`${row.email}\`` : '',
-            row.mailLine ? `🔑 \`${row.mailLine}\`` : '',
-            row.checkoutUrl ? `💳 [Link thanh toán](${row.checkoutUrl})` : '',
+            '✅ <b>CapCut đăng ký thành công</b>',
+            account ? `📧 <code>${escapeTelegramHtml(account)}</code>` : '',
+            row.checkoutUrl ? `💳 <a href="${escapeTelegramHtml(row.checkoutUrl)}">Link thanh toán</a>` : '',
           ].filter(Boolean);
-          // Telegram đi qua MẠNG MÁY (không qua proxy profile). Mạng máy đôi khi
-          // chập → "fetch failed"; thử lại tối đa 3 lượt cách nhau 1.5s để hiccup
-          // vặt không làm mất thông báo.
-          let lastErr: Error | undefined;
-          for (let attempt = 1; attempt <= 3; attempt += 1) {
-            try {
-              const res = await fetch(`https://api.telegram.org/bot${tgToken}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  chat_id: tgChatId,
-                  text: lines.join('\n'),
-                  parse_mode: 'Markdown',
-                  disable_web_page_preview: true,
-                }),
-                signal: AbortSignal.timeout(15_000),
-              });
-              if (!res.ok) throw new Error(`Telegram HTTP ${res.status}`);
-              return;
-            } catch (e) {
-              lastErr = e as Error;
-              if (attempt < 3) await new Promise((r) => setTimeout(r, 1_500));
-            }
-          }
-          throw lastErr ?? new Error('Telegram gửi thất bại');
+          await telegramClient.sendMessage(tgToken, {
+            chatId: tgChatId,
+            text: lines.join('\n'),
+            parseMode: 'HTML',
+            disableLinkPreview: true,
+          });
         }
       : undefined;
     // Ephemeral profiles: create N throwaway profiles now, run against them, and

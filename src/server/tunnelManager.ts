@@ -6,6 +6,7 @@ import type { SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('cloudflared');
+const START_TIMEOUT_MS = 45_000;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..', '..');
 
@@ -121,8 +122,8 @@ export class TunnelManager {
     const child = spawn(executable, [
       'tunnel',
       '--no-autoupdate',
-      '--protocol',
-      'http2',
+      '--edge-ip-version',
+      '4',
       '--url',
       this.origin,
     ], {
@@ -135,7 +136,11 @@ export class TunnelManager {
       let settled = false;
       let verifying = false;
       let output = '';
-      const timeout = setTimeout(() => fail(new Error('Cloudflare Tunnel khởi động quá 30 giây')), 30_000);
+      const timeout = setTimeout(() => {
+        const detail = output.trim().split('\n').at(-1);
+        const reason = detail ? `Cloudflare Tunnel chưa kết nối: ${detail}` : 'Cloudflare Tunnel khởi động quá 45 giây';
+        fail(new Error(`${reason}. Kiểm tra Windows Firewall hoặc mạng có chặn cloudflared/cổng 7844.`));
+      }, START_TIMEOUT_MS);
       timeout.unref?.();
 
       const finish = (url: string) => {

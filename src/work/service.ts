@@ -313,6 +313,9 @@ export class TelegramWorkService {
   }): Promise<DistributionRunDto> {
     this.requireToken();
     this.requireChatId();
+    if (!this.payments?.configured()) {
+      throw new Error('Cloudflare Tunnel chưa sẵn sàng. Hãy bật link nhân viên trước khi chạy project.');
+    }
     if (this.settings.getWorkTelegramMode() === 'off') {
       throw new Error('Hãy bật polling hoặc webhook trước khi chạy phân phối Telegram');
     }
@@ -541,6 +544,7 @@ export class TelegramWorkService {
               saved.updatedAt = new Date().toISOString();
             }
           });
+          log.info(`đã gửi link ${item.email} tới nhân viên ${item.employeeId}`);
         } catch (err) {
           await this.store.mutate((state) => {
             const saved = state.distributionItems.find((entry) => entry.id === item.id);
@@ -550,6 +554,7 @@ export class TelegramWorkService {
               saved.updatedAt = new Date().toISOString();
             }
           });
+          log.warn(`gửi link ${item.email} lỗi: ${(err as Error).message}`);
         }
       }
     } finally {

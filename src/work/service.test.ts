@@ -180,6 +180,17 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     await service.processUpdate({ update_id: 10, message: { message_id: 1, message_thread_id: 45, text: `/bind ${duy.bindCode}`, chat: { id: -100123 }, from: { id: 555 } } });
     await service.processUpdate({ update_id: 11, message: { message_id: 2, message_thread_id: 46, text: `/bind ${tai.bindCode}`, chat: { id: -100123 }, from: { id: 777 } } });
 
+    settings.setRuntimePaymentPublicUrl(null);
+    await assert.rejects(
+      service.startDistribution({
+        projectId: 'project-1',
+        projectName: 'Auto CapCut',
+        allocations: [{ employeeId: duy.id, quantity: 1 }],
+      }),
+      /Cloudflare Tunnel chưa sẵn sàng/,
+    );
+    settings.setRuntimePaymentPublicUrl('https://app.example');
+
     const run = await service.startDistribution({
       projectId: 'project-1',
       projectName: 'Auto CapCut',
