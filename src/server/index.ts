@@ -192,6 +192,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   // Employee/topic task management. This module has its own bot credentials so
   // it does not interfere with the existing registration notifications.
   registerTelegramWorkRoutes(app, telegramWork, paymentSessions, tunnel);
+  app.get('/pay/health', (_req, res) => res.status(204).end());
   app.get('/pay/:token', (_req, res) => {
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
     res.sendFile(join(publicDir, 'index.html'));

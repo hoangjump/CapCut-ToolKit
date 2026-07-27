@@ -13,6 +13,7 @@ test('payment public hostname only allows viewer assets and payment session rout
   assert.equal(shouldRestrictToPaymentRoutes('127.0.0.1', 'https://pay.example.com', true), true);
 
   assert.equal(isAllowedPaymentRequest('GET', '/pay/token-123'), true);
+  assert.equal(isAllowedPaymentRequest('GET', '/pay/health'), true);
   assert.equal(isAllowedPaymentRequest('GET', '/assets/index.js'), true);
   assert.equal(isAllowedPaymentRequest('GET', '/api/work/payment-sessions/token-123'), true);
   assert.equal(isAllowedPaymentRequest('POST', '/api/work/payment-sessions/token-123/claim'), true);

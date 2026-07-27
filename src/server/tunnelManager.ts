@@ -18,6 +18,20 @@ export interface TunnelStatus {
   error?: string;
 }
 
+export type TunnelProbe = (publicUrl: string) => Promise<boolean>;
+
+async function defaultTunnelProbe(publicUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${publicUrl}/pay/health`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(3_000),
+    });
+    return response.status === 204;
+  } catch {
+    return false;
+  }
+}
+
 export function parseQuickTunnelUrl(text: string): string | undefined {
   const matches = text.matchAll(/https:\/\/([a-z0-9-]+)\.trycloudflare\.com/gi);
   for (const match of matches) {
@@ -35,7 +49,10 @@ export class TunnelManager {
   private startPromise?: Promise<TunnelStatus>;
   private readonly expectedStops = new Set<ChildProcess>();
 
-  constructor(private readonly settings: SettingsStore) {}
+  constructor(
+    private readonly settings: SettingsStore,
+    private readonly probe: TunnelProbe = defaultTunnelProbe,
+  ) {}
 
   setOrigin(origin: string, clearPublicUrl = false): void {
     this.origin = origin;
@@ -101,7 +118,14 @@ export class TunnelManager {
     this.settings.setRuntimePaymentPublicUrl(null);
 
     const executable = this.executable();
-    const child = spawn(executable, ['tunnel', '--no-autoupdate', '--url', this.origin], {
+    const child = spawn(executable, [
+      'tunnel',
+      '--no-autoupdate',
+      '--protocol',
+      'http2',
+      '--url',
+      this.origin,
+    ], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -109,6 +133,7 @@ export class TunnelManager {
 
     return new Promise<TunnelStatus>((resolve, reject) => {
       let settled = false;
+      let verifying = false;
       let output = '';
       const timeout = setTimeout(() => fail(new Error('Cloudflare Tunnel khởi động quá 30 giây')), 30_000);
       timeout.unref?.();
@@ -134,11 +159,24 @@ export class TunnelManager {
         this.lastError = error.message;
         reject(error);
       };
+      const verify = (url: string) => {
+        if (settled || verifying) return;
+        verifying = true;
+        void (async () => {
+          while (!settled && this.child === child && child.exitCode === null) {
+            if (await this.probe(url)) {
+              finish(url);
+              return;
+            }
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+          }
+        })().catch((error) => fail(error as Error));
+      };
       const read = (chunk: Buffer) => {
         const text = chunk.toString('utf8');
         output = `${output}${text}`.slice(-8_000);
         const url = parseQuickTunnelUrl(output);
-        if (url) finish(url);
+        if (url) verify(url);
       };
 
       child.stdout?.on('data', read);

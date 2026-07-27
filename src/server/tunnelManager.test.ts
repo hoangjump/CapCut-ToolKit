@@ -22,6 +22,7 @@ test('tunnel manager publishes and clears the runtime payment URL', { skip: proc
   try {
     await writeFile(executable, [
       '#!/usr/bin/env node',
+      "if (!process.argv.includes('--protocol') || !process.argv.includes('http2')) process.exit(2);",
       "process.stderr.write('request=https://api.trycloudflare.com\\n');",
       "process.stderr.write('Visit https://worker-pay.trycloudflare.com\\n');",
       'setInterval(() => {}, 1000);',
@@ -30,12 +31,18 @@ test('tunnel manager publishes and clears the runtime payment URL', { skip: proc
     process.env.CLOUDFLARED_PATH = executable;
     const settings = new SettingsStore(root);
     await settings.init();
-    const tunnel = new TunnelManager(settings);
+    let probeAttempts = 0;
+    const tunnel = new TunnelManager(settings, async (url) => {
+      probeAttempts += 1;
+      assert.equal(url, 'https://worker-pay.trycloudflare.com');
+      return probeAttempts >= 2;
+    });
     tunnel.setOrigin('http://127.0.0.1:3000');
 
     const online = await tunnel.start(false);
     assert.equal(online.state, 'online');
     assert.equal(online.publicUrl, 'https://worker-pay.trycloudflare.com');
+    assert.equal(probeAttempts, 2);
     assert.equal(settings.getPaymentPublicUrl(), online.publicUrl);
 
     const stopped = await tunnel.stop(false);
