@@ -136,10 +136,19 @@ export class TunnelManager {
       let settled = false;
       let verifying = false;
       let output = '';
+      let quickTunnelUrl: string | undefined;
+      let connectionRegistered = false;
       const timeout = setTimeout(() => {
         const detail = output.trim().split('\n').at(-1);
-        const reason = detail ? `Cloudflare Tunnel chưa kết nối: ${detail}` : 'Cloudflare Tunnel khởi động quá 45 giây';
-        fail(new Error(`${reason}. Kiểm tra Windows Firewall hoặc mạng có chặn cloudflared/cổng 7844.`));
+        const reason = connectionRegistered
+          ? 'Cloudflare Tunnel đã kết nối nhưng chưa nhận được địa chỉ công khai'
+          : detail
+            ? `Cloudflare Tunnel chưa kết nối: ${detail}`
+            : 'Cloudflare Tunnel khởi động quá 45 giây';
+        const hint = connectionRegistered
+          ? 'Hãy thử bật lại link nhân viên.'
+          : 'Kiểm tra Windows Firewall hoặc mạng có chặn cloudflared/cổng 7844.';
+        fail(new Error(`${reason}. ${hint}`));
       }, START_TIMEOUT_MS);
       timeout.unref?.();
 
@@ -180,8 +189,14 @@ export class TunnelManager {
       const read = (chunk: Buffer) => {
         const text = chunk.toString('utf8');
         output = `${output}${text}`.slice(-8_000);
-        const url = parseQuickTunnelUrl(output);
-        if (url) verify(url);
+        quickTunnelUrl ??= parseQuickTunnelUrl(output);
+        connectionRegistered ||= /Registered tunnel connection/i.test(output);
+        if (!quickTunnelUrl) return;
+        if (connectionRegistered) {
+          finish(quickTunnelUrl);
+          return;
+        }
+        verify(quickTunnelUrl);
       };
 
       child.stdout?.on('data', read);

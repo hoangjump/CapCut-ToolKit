@@ -15,7 +15,7 @@ test('quick tunnel URL is extracted from cloudflared logs', () => {
   assert.equal(parseQuickTunnelUrl('still starting'), undefined);
 });
 
-test('tunnel manager publishes and clears the runtime payment URL', { skip: process.platform === 'win32' }, async () => {
+test('tunnel manager publishes after cloudflared registers the connection', { skip: process.platform === 'win32' }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'tunnel-manager-test-'));
   const executable = join(root, 'fake-cloudflared');
   const previous = process.env.CLOUDFLARED_PATH;
@@ -26,6 +26,7 @@ test('tunnel manager publishes and clears the runtime payment URL', { skip: proc
       "if (!process.argv.includes('--edge-ip-version') || !process.argv.includes('4')) process.exit(2);",
       "process.stderr.write('request=https://api.trycloudflare.com\\n');",
       "process.stderr.write('Visit https://worker-pay.trycloudflare.com\\n');",
+      "setTimeout(() => process.stderr.write('INF Registered tunnel connection connIndex=0 protocol=quic\\n'), 20);",
       'setInterval(() => {}, 1000);',
     ].join('\n'), 'utf8');
     await chmod(executable, 0o755);
@@ -36,14 +37,14 @@ test('tunnel manager publishes and clears the runtime payment URL', { skip: proc
     const tunnel = new TunnelManager(settings, async (url) => {
       probeAttempts += 1;
       assert.equal(url, 'https://worker-pay.trycloudflare.com');
-      return probeAttempts >= 2;
+      return false;
     });
     tunnel.setOrigin('http://127.0.0.1:3000');
 
     const online = await tunnel.start(false);
     assert.equal(online.state, 'online');
     assert.equal(online.publicUrl, 'https://worker-pay.trycloudflare.com');
-    assert.equal(probeAttempts, 2);
+    assert.ok(probeAttempts >= 1);
     assert.equal(settings.getPaymentPublicUrl(), online.publicUrl);
 
     const stopped = await tunnel.stop(false);
