@@ -186,7 +186,8 @@ export class LocalPaymentBrowser implements PaymentBrowser {
       context.on('page', watch);
       for (const openPage of context.pages()) watch(openPage);
 
-      await page.goto(input.checkoutUrl, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      // The employee can watch the page finish loading; waiting for the full DOM only adds dead time.
+      await page.goto(input.checkoutUrl, { waitUntil: 'commit', timeout: 45_000 });
       session.monitor = setInterval(() => void this.checkPayment(session, input), 1_000);
       session.monitor.unref?.();
       session.timer = setTimeout(() => void this.close(session.id), Math.max(1_000, session.expiresAt - Date.now()));

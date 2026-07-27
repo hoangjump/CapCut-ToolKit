@@ -49,9 +49,12 @@ class FakeTelegram implements TelegramBotApi {
   async deleteWebhook(): Promise<void> {}
 }
 
-class UnusedBrowser implements PaymentBrowser {
-  async create(_input: PaymentBrowserCreateInput): Promise<{ sessionId: string }> {
-    throw new Error('Browser không được khởi động trước khi nhân viên claim link');
+class PrewarmBrowser implements PaymentBrowser {
+  readonly created: PaymentBrowserCreateInput[] = [];
+
+  async create(input: PaymentBrowserCreateInput): Promise<{ sessionId: string }> {
+    this.created.push(input);
+    return { sessionId: `browser-${input.id}` };
   }
   async close(): Promise<void> {}
   async closeAll(): Promise<void> {}
@@ -170,7 +173,8 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
     await settings.setPaymentPublicUrl('https://app.example');
     const fake = new FakeTelegram();
     const store = new TelegramWorkStore(root);
-    const payments = new PaymentSessionService(store, settings, new UnusedBrowser());
+    const paymentBrowser = new PrewarmBrowser();
+    const payments = new PaymentSessionService(store, settings, paymentBrowser);
     const service = new TelegramWorkService(store, settings, fake, payments);
     await service.init();
     await settings.setWorkTelegramMode('polling');
@@ -217,6 +221,8 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
 
     await service.resumeDistribution(run.id);
     await waitFor(() => service.listDistributions('project-1')[0]?.sent === 3, 'distribution did not flush');
+    assert.equal(paymentBrowser.created.length, 3);
+    assert.equal(store.snapshot().paymentSessions.every((session) => session.status === 'ready'), true);
     await service.finishDistribution(run.id);
     await waitFor(() => service.listDistributions('project-1')[0]?.status === 'finished', 'distribution did not finish');
     current = service.listDistributions('project-1')[0];

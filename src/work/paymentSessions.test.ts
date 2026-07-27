@@ -49,6 +49,12 @@ class PaidDuringCreateBrowser extends FakeBrowser {
   }
 }
 
+class MissingFrameBrowser extends FakeBrowser {
+  override async frame(): Promise<Buffer> {
+    throw new Error('Phiên trình duyệt chưa sẵn sàng hoặc đã đóng');
+  }
+}
+
 test('payment browser input rejects malformed public requests', () => {
   assert.deepEqual(parsePaymentBrowserInput({ type: 'click', x: 10, y: 20 }), {
     type: 'click', x: 10, y: 20, button: undefined,
@@ -119,6 +125,108 @@ test('payment session starts lazily, keeps proxy and marks paid without changing
     assert.ok(task.paidAt);
     assert.equal(store.snapshot().earnings.length, 0);
     assert.equal(service.getByToken(token).status, 'paid');
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('payment session can be prepared before the employee opens the Telegram link', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-prepare-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setPaymentPublicUrl('https://app.example');
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    const browser = new FakeBrowser();
+    const service = new PaymentSessionService(store, settings, browser);
+    await service.init();
+    await service.createForTask({
+      taskId: 'task-prepare',
+      employeeId: 'employee-1',
+      email: 'worker@example.com',
+      checkoutUrl: 'https://cashier.example/checkout',
+    });
+
+    assert.equal(await service.prepareForTask('task-prepare'), true);
+    assert.equal(browser.created.length, 1);
+    assert.equal(store.snapshot().paymentSessions[0].status, 'ready');
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('persisted ready sessions reset after app restart instead of returning endless frame conflicts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-restart-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setPaymentPublicUrl('https://app.example');
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    await store.mutate((state) => {
+      state.tasks.push({
+        id: 'task-restart', employeeId: 'employee-1', description: 'Pay', quantity: 1,
+        unitRate: 5_000, amount: 5_000, status: 'pending', deliveryStatus: 'sent',
+        paymentStatus: 'ready', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      });
+    });
+    const first = new PaymentSessionService(store, settings, new FakeBrowser());
+    await first.init();
+    const created = await first.createForTask({
+      taskId: 'task-restart', employeeId: 'employee-1', email: 'worker@example.com',
+      checkoutUrl: 'https://cashier.example/checkout',
+    });
+    const token = created!.accessUrl.split('/').at(-1)!;
+    await first.claim(token);
+    await first.close();
+
+    const reloadedStore = new TelegramWorkStore(root);
+    await reloadedStore.init();
+    const restarted = new PaymentSessionService(reloadedStore, settings, new FakeBrowser());
+    await restarted.init();
+    const session = reloadedStore.snapshot().paymentSessions[0];
+    assert.equal(session.status, 'pending');
+    assert.equal(session.browserSessionId, undefined);
+    assert.equal(reloadedStore.snapshot().tasks[0].paymentStatus, 'pending');
+    await restarted.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a crashed browser marks the session failed so the employee can retry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-crash-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setPaymentPublicUrl('https://app.example');
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    await store.mutate((state) => {
+      state.tasks.push({
+        id: 'task-crash', employeeId: 'employee-1', description: 'Pay', quantity: 1,
+        unitRate: 5_000, amount: 5_000, status: 'pending', deliveryStatus: 'sent',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      });
+    });
+    const service = new PaymentSessionService(store, settings, new MissingFrameBrowser());
+    await service.init();
+    const created = await service.createForTask({
+      taskId: 'task-crash', employeeId: 'employee-1', email: 'worker@example.com',
+      checkoutUrl: 'https://cashier.example/checkout',
+    });
+    const token = created!.accessUrl.split('/').at(-1)!;
+    await service.claim(token);
+
+    await assert.rejects(service.frame(token), /đã đóng/);
+    const session = store.snapshot().paymentSessions[0];
+    assert.equal(session.status, 'failed');
+    assert.equal(session.browserSessionId, undefined);
+    assert.match(session.error ?? '', /đã đóng/);
+    assert.equal(store.snapshot().tasks[0].paymentStatus, 'failed');
     await service.close();
   } finally {
     await rm(root, { recursive: true, force: true });

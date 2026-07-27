@@ -150,6 +150,7 @@ export class PaymentSessionService {
   ) {}
 
   async init(): Promise<void> {
+    await this.reconcilePersistedSessions();
     await this.expireDue();
     this.cleanupTimer = setInterval(() => void this.expireDue(), 30_000);
     this.cleanupTimer.unref?.();
@@ -212,6 +213,23 @@ export class PaymentSessionService {
 
   accessUrlForTask(taskId: string): string | undefined {
     return this.store.snapshot().paymentSessions.find((item) => item.taskId === taskId)?.accessUrl;
+  }
+
+  async prepareForTask(taskId: string): Promise<boolean> {
+    const session = this.store.snapshot().paymentSessions.find((item) => item.taskId === taskId);
+    if (!session) return false;
+    if (['ready', 'paid'].includes(session.status)) return true;
+    if (['closed', 'expired'].includes(session.status)) return false;
+
+    const current = this.control();
+    if (session.status !== 'starting' && current.running >= current.maxSessions) return false;
+    try {
+      const prepared = await this.claim(session.accessToken);
+      return prepared.status === 'ready' || prepared.status === 'paid';
+    } catch (error) {
+      log.warn(`chuẩn bị trước phiên ${session.id} lỗi: ${(error as Error).message}`);
+      return false;
+    }
   }
 
   control(): PaymentControlDto {
@@ -277,22 +295,22 @@ export class PaymentSessionService {
 
   async frame(token: string): Promise<Buffer> {
     const session = this.requireReadyToken(token);
-    return this.browser.frame(session.browserSessionId!);
+    return this.useBrowser(session, (id) => this.browser.frame(id));
   }
 
   async input(token: string, input: PaymentBrowserInput): Promise<void> {
     const session = this.requireReadyToken(token);
-    await this.browser.input(session.browserSessionId!, input);
+    await this.useBrowser(session, (id) => this.browser.input(id, input));
   }
 
   async controlFrame(id: string): Promise<Buffer> {
     const session = this.requireReadyId(id);
-    return this.browser.frame(session.browserSessionId!);
+    return this.useBrowser(session, (browserId) => this.browser.frame(browserId));
   }
 
   async controlInput(id: string, input: PaymentBrowserInput): Promise<void> {
     const session = this.requireReadyId(id);
-    await this.browser.input(session.browserSessionId!, input);
+    await this.useBrowser(session, (browserId) => this.browser.input(browserId, input));
   }
 
   async closeById(id: string): Promise<void> {
@@ -389,6 +407,30 @@ export class PaymentSessionService {
     if (browserSessionId) await this.browser.close(browserSessionId).catch(() => {});
   }
 
+  private async useBrowser<T>(
+    session: WorkPaymentSession,
+    action: (browserSessionId: string) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await action(session.browserSessionId!);
+    } catch (error) {
+      await this.store.mutate((state) => {
+        const found = state.paymentSessions.find((item) => item.id === session.id);
+        if (!found || found.status !== 'ready' || found.browserSessionId !== session.browserSessionId) return;
+        found.status = 'failed';
+        found.error = (error as Error).message || 'Trình duyệt thanh toán đã đóng';
+        found.browserSessionId = undefined;
+        found.updatedAt = new Date().toISOString();
+        const task = state.tasks.find((item) => item.id === found.taskId);
+        if (task && task.paymentStatus !== 'paid') {
+          task.paymentStatus = 'failed';
+          task.updatedAt = found.updatedAt;
+        }
+      });
+      throw error;
+    }
+  }
+
   private async finish(id: string, status: 'expired' | 'closed'): Promise<void> {
     await this.store.mutate((state) => {
       const session = state.paymentSessions.find((item) => item.id === id);
@@ -409,6 +451,24 @@ export class PaymentSessionService {
     await Promise.all(due.map((session) => this.finish(session.id, 'expired').catch((error) => {
       log.warn(`dọn phiên ${session.id} lỗi: ${(error as Error).message}`);
     })));
+  }
+
+  private async reconcilePersistedSessions(): Promise<void> {
+    await this.store.mutate((state) => {
+      for (const session of state.paymentSessions) {
+        // Browser processes only live in memory, so their IDs cannot survive an app restart.
+        session.browserSessionId = undefined;
+        if (!['starting', 'ready'].includes(session.status)) continue;
+        session.status = 'pending';
+        session.error = undefined;
+        session.updatedAt = new Date().toISOString();
+        const task = state.tasks.find((item) => item.id === session.taskId);
+        if (task && task.paymentStatus !== 'paid') {
+          task.paymentStatus = 'pending';
+          task.updatedAt = session.updatedAt;
+        }
+      }
+    });
   }
 
   private requireToken(token: string): WorkPaymentSession {

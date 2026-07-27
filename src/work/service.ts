@@ -744,6 +744,7 @@ export class TelegramWorkService {
           proxy: task.capcutCredentials.proxy,
         });
         if (!payment) throw new Error('Link nhân viên chưa bật');
+        await this.payments.prepareForTask(task.id);
         task = this.store.snapshot().tasks.find((item) => item.id === task.id) ?? task;
       } catch (error) {
         await this.store.mutate((state) => {
