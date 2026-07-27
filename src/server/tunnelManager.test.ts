@@ -15,7 +15,7 @@ test('quick tunnel URL is extracted from cloudflared logs', () => {
   assert.equal(parseQuickTunnelUrl('still starting'), undefined);
 });
 
-test('tunnel manager publishes after cloudflared registers the connection', { skip: process.platform === 'win32' }, async () => {
+test('tunnel manager isolates local config and publishes after the public URL responds', { skip: process.platform === 'win32' }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'tunnel-manager-test-'));
   const executable = join(root, 'fake-cloudflared');
   const previous = process.env.CLOUDFLARED_PATH;
@@ -23,6 +23,7 @@ test('tunnel manager publishes after cloudflared registers the connection', { sk
     await writeFile(executable, [
       '#!/usr/bin/env node',
       "if (process.argv.includes('--protocol')) process.exit(2);",
+      "if (!process.argv.includes('--config') || !process.argv.includes('/dev/null')) process.exit(2);",
       "if (!process.argv.includes('--edge-ip-version') || !process.argv.includes('4')) process.exit(2);",
       "process.stderr.write('request=https://api.trycloudflare.com\\n');",
       "process.stderr.write('Visit https://worker-pay.trycloudflare.com\\n');",
@@ -37,14 +38,14 @@ test('tunnel manager publishes after cloudflared registers the connection', { sk
     const tunnel = new TunnelManager(settings, async (url) => {
       probeAttempts += 1;
       assert.equal(url, 'https://worker-pay.trycloudflare.com');
-      return false;
+      return probeAttempts >= 2;
     });
     tunnel.setOrigin('http://127.0.0.1:3000');
 
     const online = await tunnel.start(false);
     assert.equal(online.state, 'online');
     assert.equal(online.publicUrl, 'https://worker-pay.trycloudflare.com');
-    assert.ok(probeAttempts >= 1);
+    assert.equal(probeAttempts, 2);
     assert.equal(settings.getPaymentPublicUrl(), online.publicUrl);
 
     const stopped = await tunnel.stop(false);

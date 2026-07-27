@@ -121,6 +121,8 @@ export class TunnelManager {
     const executable = this.executable();
     const child = spawn(executable, [
       'tunnel',
+      '--config',
+      process.platform === 'win32' ? 'NUL' : '/dev/null',
       '--no-autoupdate',
       '--edge-ip-version',
       '4',
@@ -140,13 +142,15 @@ export class TunnelManager {
       let connectionRegistered = false;
       const timeout = setTimeout(() => {
         const detail = output.trim().split('\n').at(-1);
-        const reason = connectionRegistered
-          ? 'Cloudflare Tunnel đã kết nối nhưng chưa nhận được địa chỉ công khai'
+        const reason = connectionRegistered && quickTunnelUrl
+          ? `Cloudflare Tunnel đã kết nối nhưng địa chỉ ${quickTunnelUrl} chưa chuyển tiếp được vào app`
+          : connectionRegistered
+            ? 'Cloudflare Tunnel đã kết nối nhưng chưa nhận được địa chỉ công khai'
           : detail
             ? `Cloudflare Tunnel chưa kết nối: ${detail}`
             : 'Cloudflare Tunnel khởi động quá 45 giây';
         const hint = connectionRegistered
-          ? 'Hãy thử bật lại link nhân viên.'
+          ? 'Hãy thử bật lại link nhân viên hoặc đổi mạng.'
           : 'Kiểm tra Windows Firewall hoặc mạng có chặn cloudflared/cổng 7844.';
         fail(new Error(`${reason}. ${hint}`));
       }, START_TIMEOUT_MS);
@@ -192,10 +196,6 @@ export class TunnelManager {
         quickTunnelUrl ??= parseQuickTunnelUrl(output);
         connectionRegistered ||= /Registered tunnel connection/i.test(output);
         if (!quickTunnelUrl) return;
-        if (connectionRegistered) {
-          finish(quickTunnelUrl);
-          return;
-        }
         verify(quickTunnelUrl);
       };
 
