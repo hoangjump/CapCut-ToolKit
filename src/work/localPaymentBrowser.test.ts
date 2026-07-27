@@ -56,3 +56,79 @@ test('payment browser capacity can be changed without restarting', () => {
   browser.setCapacity(null);
   assert.equal(browser.capacity(), null);
 });
+
+test('payment browser verifies CapCut VIP without waiting for a VNC success page', async () => {
+  const browser = new LocalPaymentBrowser(null);
+  const statuses: string[] = [];
+  const monitor = setInterval(() => {}, 10_000);
+  monitor.unref?.();
+  const session = {
+    id: 'payment-session-1',
+    context: {
+      pages: () => [],
+      request: {
+        post: async () => ({
+          ok: () => true,
+          status: () => 200,
+          json: async () => ({
+            data: { subscription_user_infos: { vip: { vip_infos: [{ is_vip: true, vip_end_time: 1_900_000_000 }] } } },
+          }),
+        }),
+      },
+    },
+    checking: false,
+    reported: false,
+    nextVipCheckAt: 0,
+    monitor,
+  };
+  const input = {
+    capcutCookies: [{
+      name: 'sessionid', value: 'secret', domain: '.capcut.com', path: '/', expires: -1,
+      httpOnly: true, secure: true, sameSite: 'Lax',
+    }],
+    onStatus: async (status: string) => { statuses.push(status); },
+  };
+
+  await (browser as any).checkPayment(session, input);
+
+  assert.deepEqual(statuses, ['verifying', 'paid']);
+  assert.equal(session.reported, true);
+});
+
+test('payment browser throttles background VIP checks to every three seconds', async () => {
+  const browser = new LocalPaymentBrowser(null);
+  let requests = 0;
+  const monitor = setInterval(() => {}, 10_000);
+  monitor.unref?.();
+  const session = {
+    id: 'payment-session-2',
+    context: {
+      pages: () => [],
+      request: {
+        post: async () => {
+          requests += 1;
+          return { ok: () => true, status: () => 200, json: async () => ({ data: {} }) };
+        },
+      },
+    },
+    checking: false,
+    reported: false,
+    nextVipCheckAt: 0,
+    monitor,
+  };
+  const input = {
+    capcutCookies: [{
+      name: 'sessionid', value: 'secret', domain: '.capcut.com', path: '/', expires: -1,
+      httpOnly: true, secure: true, sameSite: 'Lax',
+    }],
+    onStatus: async () => {},
+  };
+  const startedAt = Date.now();
+
+  await (browser as any).checkPayment(session, input);
+  await (browser as any).checkPayment(session, input);
+  clearInterval(monitor);
+
+  assert.equal(requests, 1);
+  assert.ok(session.nextVipCheckAt >= startedAt + 3_000);
+});

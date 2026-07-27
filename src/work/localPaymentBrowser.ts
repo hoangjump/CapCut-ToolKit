@@ -6,7 +6,7 @@ import { Camoufox } from 'camoufox-js';
 import type { BrowserContext, Page } from 'playwright-core';
 import { anonymizeProxy, closeAnonymizedProxy } from 'proxy-chain';
 import { createLogger } from '../logger.js';
-import type { BrowserCookieSnapshot, ProxyConfig } from '../types.js';
+import type { ProxyConfig } from '../types.js';
 import type { PaymentBrowser, PaymentBrowserCreateInput, PaymentBrowserInput } from './paymentSessions.js';
 
 const log = createLogger('payment-browser');
@@ -15,8 +15,7 @@ const HEIGHT = 720;
 const FRAME_CACHE_MS = 75;
 const PROXY_CHECK_URL = 'https://api.ipify.org?format=json';
 const CAPCUT_VIP_CHECK_URL = 'https://commerce-api-sg.capcut.com/commerce/v3/trade/subscription_infos';
-const CAPCUT_APP_URL = 'https://www.capcut.com/editor?enter_from=page_header&from_page=landing_page&start_tab=video';
-const CAPCUT_VIP_VERIFY_MS = 90_000;
+const CAPCUT_VIP_POLL_MS = 3_000;
 // Payment frames must not block on remote web fonts that may stall behind the proxy.
 process.env.PW_TEST_SCREENSHOT_NO_FONTS_READY = '1';
 const PAYMENT_FIREFOX_PREFS = {
@@ -41,6 +40,7 @@ interface LocalSession {
   monitor: NodeJS.Timeout;
   checking: boolean;
   reported: boolean;
+  nextVipCheckAt: number;
   latestFrame?: Buffer;
   frameAt: number;
   capture?: Promise<Buffer>;
@@ -219,6 +219,7 @@ export class LocalPaymentBrowser implements PaymentBrowser {
           throw new Error(`Proxy payment sai IP: cần ${input.expectedProxyIp}, thực tế ${actualIp}`);
         }
       }
+      if (input.capcutCookies?.length) await context.addCookies(input.capcutCookies);
       const page = context.pages()[0] ?? await context.newPage();
       await page.setViewportSize({ width: WIDTH, height: HEIGHT });
       const sessionId = input.id || randomUUID();
@@ -231,13 +232,14 @@ export class LocalPaymentBrowser implements PaymentBrowser {
         expiresAt: new Date(input.expiresAt).getTime(),
         checking: false,
         reported: false,
+        nextVipCheckAt: Date.now() + CAPCUT_VIP_POLL_MS,
         frameAt: 0,
       } as LocalSession;
       const watch = (next: Page) => {
         session.activePage = next;
         void next.setViewportSize({ width: WIDTH, height: HEIGHT }).catch(() => {});
         next.on('framenavigated', (frame) => {
-          if (successUrl(frame.url())) void this.report(session, input, 'paid');
+          if (!input.capcutCookies?.length && successUrl(frame.url())) void this.report(session, input, 'paid');
         });
       };
       context.on('page', watch);
@@ -289,16 +291,26 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     if (session.checking || session.reported) return;
     session.checking = true;
     try {
+      const autoVerifyVip = Boolean(input.capcutCookies?.length);
       for (const page of session.context.pages()) {
-        if (successUrl(page.url())) return void await this.report(session, input, 'paid');
+        if (!autoVerifyVip && successUrl(page.url())) return void await this.report(session, input, 'paid');
         for (const frame of page.frames()) {
-          if (successUrl(frame.url())) return void await this.report(session, input, 'paid');
+          if (!autoVerifyVip && successUrl(frame.url())) return void await this.report(session, input, 'paid');
           const text = await frame.locator('body').innerText({ timeout: 800 }).catch(() => '');
-          if (/payment successful|payment completed|thanh toán thành công|giao dịch thành công/i.test(text)) {
+          if (!autoVerifyVip && /payment successful|payment completed|thanh toán thành công|giao dịch thành công/i.test(text)) {
             return void await this.report(session, input, 'paid');
           }
           const failure = paymentFailureFromText(text);
           if (failure) return void await this.report(session, input, 'failed', failure);
+        }
+      }
+      if (autoVerifyVip && Date.now() >= session.nextVipCheckAt) {
+        session.nextVipCheckAt = Date.now() + CAPCUT_VIP_POLL_MS;
+        try {
+          const vip = await this.checkCapcutVip(session);
+          if (vip.isVip) return void await this.reportVip(session, input, vip.vipEndTime);
+        } catch {
+          // A transient API/proxy error should not interrupt an active payment.
         }
       }
     } finally {
@@ -314,50 +326,39 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     return body.ip;
   }
 
-  private async verifyCapcutVip(
+  private async checkCapcutVip(session: LocalSession): Promise<{ isVip: boolean; vipEndTime: number }> {
+    const response = await session.context.request.post(CAPCUT_VIP_CHECK_URL, {
+      timeout: 10_000,
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'https://www.capcut.com',
+        Referer: 'https://www.capcut.com/',
+        appId: '348188',
+        appvr: '12.4.0',
+        lan: 'en',
+        loc: 'VN',
+        pf: '7',
+      },
+      data: { scene: ['vip', 'workspace'], app_id: 348188, vip_levels: ['vip', 'ultra'] },
+    });
+    if (!response.ok()) throw new Error(`CapCut VIP API HTTP ${response.status()}`);
+    return capcutVipFromResponse(await response.json());
+  }
+
+  private async reportVip(
     session: LocalSession,
-    cookies: BrowserCookieSnapshot[],
-  ): Promise<{ vipEndTime: number }> {
-    await session.context.addCookies(cookies);
-    const page = await session.context.newPage();
-    await page.setViewportSize({ width: WIDTH, height: HEIGHT });
-    await page.goto(CAPCUT_APP_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
-    await page.waitForTimeout(1_500);
-    const deadline = Math.min(session.expiresAt, Date.now() + CAPCUT_VIP_VERIFY_MS);
-    let lastError = '';
-    let attempt = 0;
-    while (Date.now() < deadline) {
-      attempt += 1;
-      try {
-        const raw = await page.evaluate(async ({ endpoint }) => {
-          const response = await fetch(endpoint, {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-              appId: '348188',
-              appvr: '12.4.0',
-              lan: 'en',
-              loc: 'VN',
-              pf: '7',
-            },
-            body: JSON.stringify({ scene: ['vip', 'workspace'], app_id: 348188, vip_levels: ['vip', 'ultra'] }),
-          });
-          return await response.json();
-        }, { endpoint: CAPCUT_VIP_CHECK_URL });
-        const result = capcutVipFromResponse(raw);
-        if (result.isVip) return { vipEndTime: result.vipEndTime };
-        const body = raw as any;
-        lastError = String(body?.errmsg ?? body?.message ?? body?.ret ?? 'CapCut chưa trả trạng thái VIP');
-      } catch (error) {
-        lastError = (error as Error).message;
-      }
-      if (attempt % 5 === 0) {
-        await page.reload({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {});
-      }
-      await page.waitForTimeout(3_000);
-    }
-    throw new Error(`Thanh toán đã nhận nhưng chưa xác minh được VIP CapCut${lastError ? `: ${lastError}` : ''}`);
+    input: PaymentBrowserCreateInput,
+    vipEndTime: number,
+  ): Promise<void> {
+    if (session.reported) return;
+    session.reported = true;
+    clearInterval(session.monitor);
+    await input.onStatus('verifying').catch((reason) => {
+      log.warn(`cập nhật trạng thái xác minh ${session.id} lỗi: ${(reason as Error).message}`);
+    });
+    await input.onStatus('paid', undefined, { vipEndTime }).catch((reason) => {
+      log.warn(`cập nhật VIP ${session.id} lỗi: ${(reason as Error).message}`);
+    });
   }
 
   private async report(
@@ -369,18 +370,6 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     if (session.reported) return;
     session.reported = true;
     clearInterval(session.monitor);
-    if (status === 'paid' && input.capcutCookies?.length) {
-      await input.onStatus('verifying').catch((reason) => {
-        log.warn(`cập nhật trạng thái xác minh ${session.id} lỗi: ${(reason as Error).message}`);
-      });
-      try {
-        const vip = await this.verifyCapcutVip(session, input.capcutCookies);
-        await input.onStatus('paid', undefined, vip);
-      } catch (reason) {
-        await input.onStatus('verification_failed', (reason as Error).message).catch(() => {});
-      }
-      return;
-    }
     try {
       await input.onStatus(status, error);
     } catch (reason) {
