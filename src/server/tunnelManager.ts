@@ -1,7 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import type { SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
 
@@ -48,6 +51,7 @@ export class TunnelManager {
   private publicUrl = '';
   private lastError?: string;
   private startPromise?: Promise<TunnelStatus>;
+  private configPath?: string;
   private readonly expectedStops = new Set<ChildProcess>();
 
   constructor(
@@ -100,6 +104,7 @@ export class TunnelManager {
       this.expectedStops.add(child);
       child.kill();
     }
+    await this.removeConfig();
     this.settings.setRuntimePaymentPublicUrl(null);
     this.publicUrl = '';
     this.lastError = undefined;
@@ -119,10 +124,13 @@ export class TunnelManager {
     this.settings.setRuntimePaymentPublicUrl(null);
 
     const executable = this.executable();
+    const configPath = join(tmpdir(), `teamhatde-cloudflared-${process.pid}-${randomUUID()}.yml`);
+    await writeFile(configPath, 'loglevel: info\n', 'utf8');
+    this.configPath = configPath;
     const child = spawn(executable, [
       'tunnel',
       '--config',
-      process.platform === 'win32' ? 'NUL' : '/dev/null',
+      configPath,
       '--no-autoupdate',
       '--edge-ip-version',
       '4',
@@ -172,6 +180,7 @@ export class TunnelManager {
         clearTimeout(timeout);
         if (child.exitCode === null) child.kill();
         this.child = undefined;
+        void this.removeConfig(configPath);
         this.settings.setRuntimePaymentPublicUrl(null);
         this.state = 'error';
         this.lastError = error.message;
@@ -209,6 +218,7 @@ export class TunnelManager {
       });
       child.once('close', (code) => {
         if (this.child === child) this.child = undefined;
+        void this.removeConfig(configPath);
         if (this.expectedStops.delete(child)) {
           if (!settled) {
             settled = true;
@@ -227,6 +237,13 @@ export class TunnelManager {
         this.lastError = `Cloudflare Tunnel đã dừng (${code ?? '?'})`;
       });
     });
+  }
+
+  private async removeConfig(expectedPath?: string): Promise<void> {
+    const configPath = expectedPath ?? this.configPath;
+    if (!configPath) return;
+    if (this.configPath === configPath) this.configPath = undefined;
+    await rm(configPath, { force: true }).catch(() => {});
   }
 
   private executable(): string {

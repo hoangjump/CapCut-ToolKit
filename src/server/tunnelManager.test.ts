@@ -22,8 +22,10 @@ test('tunnel manager isolates local config and publishes after the public URL re
   try {
     await writeFile(executable, [
       '#!/usr/bin/env node',
+      "const { readFileSync } = require('node:fs');",
       "if (process.argv.includes('--protocol')) process.exit(2);",
-      "if (!process.argv.includes('--config') || !process.argv.includes('/dev/null')) process.exit(2);",
+      "const configIndex = process.argv.indexOf('--config');",
+      "if (configIndex < 0 || readFileSync(process.argv[configIndex + 1], 'utf8').trim() !== 'loglevel: info') process.exit(2);",
       "if (!process.argv.includes('--edge-ip-version') || !process.argv.includes('4')) process.exit(2);",
       "process.stderr.write('request=https://api.trycloudflare.com\\n');",
       "process.stderr.write('Visit https://worker-pay.trycloudflare.com\\n');",
