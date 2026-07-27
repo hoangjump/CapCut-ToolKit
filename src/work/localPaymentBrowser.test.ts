@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { paymentFailureFromText } from './localPaymentBrowser.js';
+import { capturePaymentFrame, paymentFailureFromText } from './localPaymentBrowser.js';
 
 test('detects the payment risk message shown by the checkout page', () => {
   const text = "Couldn't process payment\nTransaction rejected due to risk issue. Try again later or contact customer support for details.";
@@ -13,4 +13,15 @@ test('detects the payment risk message shown by the checkout page', () => {
 
 test('does not fail an active payment without a known failure message', () => {
   assert.equal(paymentFailureFromText('Scan the QR code to complete your payment'), undefined);
+});
+
+test('keeps the latest frame when a screenshot temporarily times out', async () => {
+  const previous = Buffer.from('previous-jpeg');
+  const page = {
+    screenshot: async () => {
+      throw new Error('page.screenshot: Timeout 5000ms exceeded. Call log: - waiting for fonts to load...');
+    },
+  };
+
+  assert.equal(await capturePaymentFrame(page, previous), previous);
 });

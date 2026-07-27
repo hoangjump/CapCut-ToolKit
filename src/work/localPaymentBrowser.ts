@@ -14,6 +14,8 @@ const WIDTH = 1280;
 const HEIGHT = 720;
 const FRAME_CACHE_MS = 75;
 const PROXY_CHECK_URL = 'https://api.ipify.org?format=json';
+// Payment frames must not block on remote web fonts that may stall behind the proxy.
+process.env.PW_TEST_SCREENSHOT_NO_FONTS_READY = '1';
 const PAYMENT_FIREFOX_PREFS = {
   'browser.urlbar.speculativeConnect.enabled': false,
   'media.peerconnection.enabled': false,
@@ -59,6 +61,15 @@ export function paymentFailureFromText(text: string): string | undefined {
     return 'Trang thanh toán báo thất bại';
   }
   return undefined;
+}
+
+export async function capturePaymentFrame(page: Pick<Page, 'screenshot'>, previous?: Buffer): Promise<Buffer> {
+  try {
+    return await page.screenshot({ type: 'jpeg', quality: 68, timeout: 5_000 });
+  } catch (error) {
+    if (previous && /screenshot: Timeout \d+ms exceeded/i.test((error as Error).message)) return previous;
+    throw error;
+  }
 }
 
 async function upstreamProxy(proxy: ProxyConfig | undefined): Promise<string> {
@@ -234,7 +245,7 @@ export class LocalPaymentBrowser implements PaymentBrowser {
 
   private async capture(session: LocalSession): Promise<Buffer> {
     const page = this.pageFor(session);
-    const frame = await page.screenshot({ type: 'jpeg', quality: 68, timeout: 8_000 });
+    const frame = await capturePaymentFrame(page, session.latestFrame);
     session.latestFrame = frame;
     session.frameAt = Date.now();
     return frame;
