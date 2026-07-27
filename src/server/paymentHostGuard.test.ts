@@ -18,6 +18,7 @@ test('payment public hostname only allows viewer assets and payment session rout
   assert.equal(isAllowedPaymentRequest('GET', '/api/work/payment-sessions/token-123'), true);
   assert.equal(isAllowedPaymentRequest('POST', '/api/work/payment-sessions/token-123/claim'), true);
   assert.equal(isAllowedPaymentRequest('GET', '/api/work/payment-sessions/token-123/frame'), true);
+  assert.equal(isAllowedPaymentRequest('GET', '/api/work/payment-sessions/token-123/stream'), true);
   assert.equal(isAllowedPaymentRequest('POST', '/api/work/payment-sessions/token-123/input'), true);
   assert.equal(isAllowedPaymentRequest('DELETE', '/api/work/payment-sessions/token-123'), true);
   assert.equal(isAllowedPaymentRequest('POST', '/api/work/payment-sessions/session-id/status'), false);

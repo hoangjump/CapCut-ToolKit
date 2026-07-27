@@ -31,7 +31,7 @@ export function isAllowedPaymentRequest(method: string, path: string): boolean {
   if ((verb === 'GET' || verb === 'HEAD' || verb === 'DELETE')
     && /^\/api\/work\/payment-sessions\/[^/]+\/?$/.test(path)) return true;
   if ((verb === 'GET' || verb === 'HEAD')
-    && /^\/api\/work\/payment-sessions\/[^/]+\/frame\/?$/.test(path)) return true;
+    && /^\/api\/work\/payment-sessions\/[^/]+\/(frame|stream)\/?$/.test(path)) return true;
   if (verb === 'POST' && /^\/api\/work\/payment-sessions\/[^/]+\/(claim|input)\/?$/.test(path)) return true;
   return false;
 }

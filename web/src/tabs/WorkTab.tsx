@@ -395,6 +395,7 @@ function PaymentMonitorDialog({
       {session.status === 'ready'
         ? <RemotePaymentScreen
             frameEndpoint={workApi.paymentControlFrameUrl(session.id)}
+            streamEndpoint={workApi.paymentControlStreamUrl(session.id)}
             onInput={(input) => workApi.sendPaymentControlInput(session.id, input)}
           />
         : <div className="flex min-h-80 flex-col items-center justify-center gap-3 bg-neutral-950 text-neutral-100">

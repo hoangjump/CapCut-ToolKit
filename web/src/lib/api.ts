@@ -415,11 +415,13 @@ export const workApi = {
   paymentSession: (token: string) => fetch(`/api/work/payment-sessions/${encodeURIComponent(token)}`).then((r) => parse<PaymentSession>(r)),
   claimPaymentSession: (token: string) => post(`/api/work/payment-sessions/${encodeURIComponent(token)}/claim`).then((r) => parse<PaymentSession>(r)),
   paymentFrameUrl: (token: string) => `/api/work/payment-sessions/${encodeURIComponent(token)}/frame`,
+  paymentStreamUrl: (token: string) => `/api/work/payment-sessions/${encodeURIComponent(token)}/stream`,
   sendPaymentInput: (token: string, input: PaymentBrowserInput) =>
     post(`/api/work/payment-sessions/${encodeURIComponent(token)}/input`, input).then(noContent),
   closePaymentSession: (token: string) => fetch(`/api/work/payment-sessions/${encodeURIComponent(token)}`, { method: 'DELETE' }).then(noContent),
   paymentControl: () => fetch('/api/work/payment-control').then((r) => parse<PaymentControl>(r)),
   paymentControlFrameUrl: (id: string) => `/api/work/payment-control/${encodeURIComponent(id)}/frame`,
+  paymentControlStreamUrl: (id: string) => `/api/work/payment-control/${encodeURIComponent(id)}/stream`,
   sendPaymentControlInput: (id: string, input: PaymentBrowserInput) =>
     post(`/api/work/payment-control/${encodeURIComponent(id)}/input`, input).then(noContent),
   closePaymentControlSession: (id: string) =>

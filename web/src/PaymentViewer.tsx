@@ -89,6 +89,7 @@ export function PaymentViewer({ token }: { token: string }) {
       {session.status === 'ready' ? (
         <RemotePaymentScreen
           frameEndpoint={workApi.paymentFrameUrl(token)}
+          streamEndpoint={workApi.paymentStreamUrl(token)}
           onInput={(input) => workApi.sendPaymentInput(token, input)}
         />
       ) : (
@@ -111,46 +112,120 @@ export function PaymentViewer({ token }: { token: string }) {
 
 export function RemotePaymentScreen({
   frameEndpoint,
+  streamEndpoint,
   onInput,
 }: {
   frameEndpoint: string;
+  streamEndpoint?: string;
   onInput: (input: PaymentBrowserInput) => Promise<void>;
 }) {
   const [frameUrl, setFrameUrl] = useState('');
   const [frameError, setFrameError] = useState('');
   const screenRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     let stopped = false;
-    let timer: number | undefined;
+    let polling = false;
+    let pollTimer: number | undefined;
+    let reconnectTimer: number | undefined;
+    let connectTimer: number | undefined;
+    let socket: WebSocket | undefined;
     let currentUrl = '';
+
+    const showFrame = (blob: Blob) => {
+      const nextUrl = URL.createObjectURL(blob);
+      if (stopped) { URL.revokeObjectURL(nextUrl); return; }
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      currentUrl = nextUrl;
+      setFrameUrl(nextUrl);
+      setFrameError('');
+    };
+
     const poll = async () => {
+      if (!polling || stopped) return;
       try {
         const response = await fetch(`${frameEndpoint}?t=${Date.now()}`, { cache: 'no-store' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const nextUrl = URL.createObjectURL(await response.blob());
-        if (stopped) { URL.revokeObjectURL(nextUrl); return; }
-        if (currentUrl) URL.revokeObjectURL(currentUrl);
-        currentUrl = nextUrl;
-        setFrameUrl(nextUrl);
-        setFrameError('');
-        timer = window.setTimeout(poll, 250);
+        if (!polling || stopped) return;
+        showFrame(await response.blob());
+        pollTimer = window.setTimeout(poll, 250);
       } catch {
-        if (!stopped) {
+        if (!stopped && polling) {
           setFrameError('Đang chờ hình ảnh từ trình duyệt…');
-          timer = window.setTimeout(poll, 700);
+          pollTimer = window.setTimeout(poll, 700);
         }
       }
     };
-    void poll();
+
+    const startPolling = () => {
+      if (polling || stopped) return;
+      polling = true;
+      void poll();
+    };
+
+    const stopPolling = () => {
+      polling = false;
+      if (pollTimer) window.clearTimeout(pollTimer);
+      pollTimer = undefined;
+    };
+
+    const connect = () => {
+      if (!streamEndpoint) {
+        startPolling();
+        return;
+      }
+      const url = new URL(streamEndpoint, window.location.href);
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+      const nextSocket = new WebSocket(url);
+      socket = nextSocket;
+      nextSocket.binaryType = 'blob';
+      nextSocket.onopen = () => {
+        socketRef.current = nextSocket;
+        connectTimer = window.setTimeout(startPolling, 1_500);
+      };
+      nextSocket.onmessage = (event) => {
+        if (event.data instanceof Blob) {
+          if (connectTimer) window.clearTimeout(connectTimer);
+          connectTimer = undefined;
+          stopPolling();
+          showFrame(event.data);
+          return;
+        }
+        try {
+          const message = JSON.parse(String(event.data)) as { type?: string; message?: string };
+          if (message.type === 'error' && message.message) setFrameError(message.message);
+        } catch {}
+      };
+      nextSocket.onerror = () => nextSocket.close();
+      nextSocket.onclose = () => {
+        if (socketRef.current === nextSocket) socketRef.current = null;
+        if (connectTimer) window.clearTimeout(connectTimer);
+        connectTimer = undefined;
+        if (stopped) return;
+        startPolling();
+        reconnectTimer = window.setTimeout(connect, 1_500);
+      };
+    };
+
+    connect();
     return () => {
       stopped = true;
-      if (timer) window.clearTimeout(timer);
+      stopPolling();
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (connectTimer) window.clearTimeout(connectTimer);
+      socket?.close(1000);
+      socketRef.current = null;
       if (currentUrl) URL.revokeObjectURL(currentUrl);
     };
-  }, [frameEndpoint]);
+  }, [frameEndpoint, streamEndpoint]);
 
   const send = useCallback((input: PaymentBrowserInput) => {
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'input', input }));
+      return;
+    }
     void onInput(input).catch(() => {});
   }, [onInput]);
 

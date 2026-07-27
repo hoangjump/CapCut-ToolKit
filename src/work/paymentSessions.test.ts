@@ -15,6 +15,8 @@ import {
 } from './paymentSessions.js';
 import { TelegramWorkStore } from './store.js';
 
+const STATIC_PROXY: ProxyConfig = { server: 'http://proxy.example:8080', username: 'user', password: 'pass' };
+
 class FakeBrowser implements PaymentBrowser {
   readonly created: Array<PaymentBrowserCreateInput> = [];
   readonly closed: string[] = [];
@@ -83,6 +85,34 @@ test('payment browser input rejects malformed public requests', () => {
   assert.throws(() => parsePaymentBrowserInput({ type: 'unknown' }), /Loại điều khiển/);
 });
 
+test('payment session fails closed instead of using the machine IP when proxy is missing', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-no-proxy-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setPaymentPublicUrl('https://app.example');
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    const browser = new FakeBrowser();
+    const service = new PaymentSessionService(store, settings, browser);
+    await service.init();
+    const created = await service.createForTask({
+      taskId: 'task-no-proxy',
+      employeeId: 'employee-1',
+      email: 'worker@example.com',
+      checkoutUrl: 'https://cashier.example/checkout',
+    });
+    const token = created!.accessUrl.split('/').at(-1)!;
+
+    await assert.rejects(service.claim(token), /bắt buộc phải có proxy/);
+    assert.equal(browser.created.length, 0);
+    assert.equal(store.snapshot().paymentSessions[0].status, 'failed');
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('payment session starts lazily, keeps proxy and marks paid without changing payroll', async () => {
   const root = await mkdtemp(join(tmpdir(), 'payment-session-test-'));
   try {
@@ -109,7 +139,7 @@ test('payment session starts lazily, keeps proxy and marks paid without changing
     const browser = new FakeBrowser();
     const service = new PaymentSessionService(store, settings, browser);
     await service.init();
-    const proxy = { server: 'http://proxy.example:8080', username: 'user', password: 'pass' };
+    const proxy = STATIC_PROXY;
 
     const created = await service.createForTask({
       taskId: 'task-1',
@@ -166,6 +196,7 @@ test('payment session can be prepared before the employee opens the Telegram lin
       employeeId: 'employee-1',
       email: 'worker@example.com',
       checkoutUrl: 'https://cashier.example/checkout',
+      proxy: STATIC_PROXY,
     });
 
     assert.equal(await service.prepareForTask('task-prepare'), true);
@@ -233,6 +264,7 @@ test('persisted ready sessions reset after app restart instead of returning endl
     const created = await first.createForTask({
       taskId: 'task-restart', employeeId: 'employee-1', email: 'worker@example.com',
       checkoutUrl: 'https://cashier.example/checkout',
+      proxy: STATIC_PROXY,
     });
     const token = created!.accessUrl.split('/').at(-1)!;
     await first.claim(token);
@@ -272,6 +304,7 @@ test('a crashed browser marks the session failed so the employee can retry', asy
     const created = await service.createForTask({
       taskId: 'task-crash', employeeId: 'employee-1', email: 'worker@example.com',
       checkoutUrl: 'https://cashier.example/checkout',
+      proxy: STATIC_PROXY,
     });
     const token = created!.accessUrl.split('/').at(-1)!;
     await service.claim(token);
@@ -324,6 +357,7 @@ test('paid status reported during browser creation is not overwritten by ready',
       employeeId: 'employee-1',
       email: 'worker@example.com',
       checkoutUrl: 'https://cashier.example/checkout',
+      proxy: STATIC_PROXY,
     });
 
     const token = created!.accessUrl.split('/').at(-1)!;

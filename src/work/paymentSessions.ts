@@ -379,6 +379,11 @@ export class PaymentSessionService {
       const paymentProxy = this.proxyProvider
         ? await this.proxyProvider.acquire(session.proxyRecordId)
         : undefined;
+      const proxy = paymentProxy?.proxy ?? session.proxy;
+      if (!proxy?.server) {
+        if (paymentProxy) this.proxyProvider?.release(paymentProxy.leaseId);
+        throw new Error('Payment bắt buộc phải có proxy hợp lệ; không cho phép dùng IP máy');
+      }
       if (paymentProxy) {
         await this.store.mutate((state) => {
           const found = state.paymentSessions.find((item) => item.id === id)!;
@@ -391,7 +396,7 @@ export class PaymentSessionService {
       const created = await this.browser.create({
         id: session.id,
         checkoutUrl: session.checkoutUrl,
-        proxy: paymentProxy?.proxy ?? session.proxy,
+        proxy,
         expectedProxyIp: paymentProxy?.egressIp,
         expiresAt: session.expiresAt,
         onStatus: (status, error) => this.updateFromBrowser(session.id, status, error),

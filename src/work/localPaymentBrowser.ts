@@ -12,9 +12,19 @@ import type { PaymentBrowser, PaymentBrowserCreateInput, PaymentBrowserInput } f
 const log = createLogger('payment-browser');
 const WIDTH = 1280;
 const HEIGHT = 720;
-const FRAME_CACHE_MS = 220;
+const FRAME_CACHE_MS = 75;
 const PROXY_CHECK_INTERVAL_MS = 10_000;
 const PROXY_CHECK_URL = 'https://api.ipify.org?format=json';
+const PAYMENT_FIREFOX_PREFS = {
+  'browser.urlbar.speculativeConnect.enabled': false,
+  'media.peerconnection.enabled': false,
+  'network.dns.disablePrefetch': true,
+  'network.http.speculative-parallel-limit': 0,
+  'network.predictor.enabled': false,
+  'network.prefetch-next': false,
+  'network.proxy.socks_remote_dns': true,
+  'network.trr.mode': 5,
+};
 
 interface LocalSession {
   id: string;
@@ -43,8 +53,8 @@ function successUrl(raw: string): boolean {
   }
 }
 
-async function upstreamProxy(proxy: ProxyConfig | undefined): Promise<string | undefined> {
-  if (!proxy?.server) return undefined;
+async function upstreamProxy(proxy: ProxyConfig | undefined): Promise<string> {
+  if (!proxy?.server) throw new Error('Payment bắt buộc phải có proxy; kết nối trực tiếp đã bị chặn');
   const value = new URL(proxy.server);
   if (proxy.username) value.username = encodeURIComponent(proxy.username);
   if (proxy.password) value.password = encodeURIComponent(proxy.password);
@@ -151,11 +161,14 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     let context: BrowserContext | undefined;
     let relayUrl: string | undefined;
     try {
-      relayUrl = await upstreamProxy(input.proxy);
+      const paymentRelayUrl = await upstreamProxy(input.proxy);
+      relayUrl = paymentRelayUrl;
       const launchOptions = (headless: boolean) => ({
         user_data_dir: profileDir,
         headless,
-        proxy: relayUrl ? { server: relayUrl } : undefined,
+        proxy: { server: paymentRelayUrl },
+        block_webrtc: true,
+        firefox_user_prefs: PAYMENT_FIREFOX_PREFS,
         humanize: 0.04,
         config: { showcursor: false },
       });
@@ -244,11 +257,18 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     try {
       if (input.expectedProxyIp && Date.now() - session.lastProxyCheckAt >= PROXY_CHECK_INTERVAL_MS) {
         session.lastProxyCheckAt = Date.now();
-        const actualIp = await this.proxyIp(session.context).catch((error) => {
-          log.warn(`kiểm tra IP payment ${session.id} lỗi: ${(error as Error).message}`);
-          return undefined;
-        });
-        if (actualIp && actualIp !== input.expectedProxyIp) {
+        let actualIp: string;
+        try {
+          actualIp = await this.proxyIp(session.context);
+        } catch (error) {
+          return void await this.report(
+            session,
+            input,
+            'failed',
+            `Proxy payment mất kết nối: ${(error as Error).message}`,
+          );
+        }
+        if (actualIp !== input.expectedProxyIp) {
           return void await this.report(
             session,
             input,
@@ -275,8 +295,8 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     }
   }
 
-  private async proxyIp(context: BrowserContext): Promise<string> {
-    const response = await context.request.get(PROXY_CHECK_URL, { timeout: 10_000 });
+  private async proxyIp(context: BrowserContext, timeout = 10_000): Promise<string> {
+    const response = await context.request.get(PROXY_CHECK_URL, { timeout });
     if (!response.ok()) throw new Error(`HTTP ${response.status()}`);
     const body = await response.json() as { ip?: string };
     if (!body.ip) throw new Error('Không đọc được IP proxy');
@@ -292,6 +312,18 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     if (session.reported) return;
     session.reported = true;
     clearInterval(session.monitor);
+    if (status === 'paid' && input.expectedProxyIp) {
+      try {
+        const actualIp = await this.proxyIp(session.context, 4_000);
+        if (actualIp !== input.expectedProxyIp) {
+          status = 'failed';
+          error = `Proxy payment đã đổi IP trước khi hoàn tất (${input.expectedProxyIp} → ${actualIp})`;
+        }
+      } catch (reason) {
+        status = 'failed';
+        error = `Không xác minh được proxy trước khi hoàn tất: ${(reason as Error).message}`;
+      }
+    }
     try {
       await input.onStatus(status, error);
     } catch (reason) {

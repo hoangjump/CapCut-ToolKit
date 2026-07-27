@@ -24,7 +24,8 @@
     "express": "^4.21.2",
     "playwright": "1.53.1",
     "proxy-agent": "^6.5.0",
-    "proxy-chain": "^3.0.0"
+    "proxy-chain": "^3.0.0",
+    "ws": "^8.21.1"
   },
   "overrides": {
     "playwright-core": "1.53.1"
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3",
     "tsx": "^4.19.0",

@@ -49,6 +49,7 @@ import { TelegramWorkStore } from '../work/store.js';
 import { registerTelegramWorkRoutes } from '../work/routes.js';
 import { PaymentSessionService } from '../work/paymentSessions.js';
 import { LocalPaymentBrowser } from '../work/localPaymentBrowser.js';
+import { PaymentStreamServer } from '../work/paymentStream.js';
 import { paymentHostGuard } from './paymentHostGuard.js';
 import { TunnelManager } from './tunnelManager.js';
 import { PaymentProxyAllocator, type RotatedPaymentProxy } from './paymentProxyAllocator.js';
@@ -70,6 +71,8 @@ export interface CreatedApp {
   headless: boolean | 'virtual';
   publicDir: string;
   tunnel: TunnelManager;
+  paymentSessions: PaymentSessionService;
+  getPaymentPublicUrl: () => string | undefined;
   close: () => Promise<void>;
 }
 
@@ -1682,6 +1685,8 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     headless,
     publicDir,
     tunnel,
+    paymentSessions,
+    getPaymentPublicUrl: () => settings.getPaymentPublicUrl(),
     close: async () => {
       await tunnel.close();
       await telegramWork.close();
@@ -1699,6 +1704,7 @@ export async function startServer(config: ServerConfig = {}): Promise<StartedSer
     const listening = created.app.listen(port, host, () => resolve(listening));
     listening.once('error', reject);
   });
+  const paymentStream = new PaymentStreamServer(server, created.paymentSessions, created.getPaymentPublicUrl);
 
   const address = server.address() as AddressInfo | null;
   const resolvedPort = address?.port ?? port;
@@ -1716,6 +1722,7 @@ export async function startServer(config: ServerConfig = {}): Promise<StartedSer
     url,
     port: resolvedPort,
     close: async () => {
+      await paymentStream.close();
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       }).catch((err) => {
