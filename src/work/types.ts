@@ -48,6 +48,7 @@ export interface WorkTask {
     mailLine: string;
     checkoutUrl: string;
     proxy?: ProxyConfig;
+    proxyRecordId?: string;
   };
   createdAt: string;
   updatedAt: string;
@@ -94,6 +95,9 @@ export interface WorkPaymentSession {
   email: string;
   checkoutUrl: string;
   proxy?: ProxyConfig;
+  proxyRecordId?: string;
+  paymentProxyLeaseId?: string;
+  paymentProxyIp?: string;
   status: PaymentSessionStatus;
   browserSessionId?: string;
   error?: string;
@@ -132,6 +136,7 @@ export interface DistributionItem {
   mailLine: string;
   checkoutUrl: string;
   proxy?: ProxyConfig;
+  proxyRecordId?: string;
   status: 'queued' | 'sending' | 'sent' | 'failed';
   taskId?: string;
   error?: string;

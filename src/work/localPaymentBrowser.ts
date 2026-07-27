@@ -13,6 +13,8 @@ const log = createLogger('payment-browser');
 const WIDTH = 1280;
 const HEIGHT = 720;
 const FRAME_CACHE_MS = 220;
+const PROXY_CHECK_INTERVAL_MS = 10_000;
+const PROXY_CHECK_URL = 'https://api.ipify.org?format=json';
 
 interface LocalSession {
   id: string;
@@ -27,6 +29,7 @@ interface LocalSession {
   reported: boolean;
   latestFrame?: Buffer;
   frameAt: number;
+  lastProxyCheckAt: number;
   capture?: Promise<Buffer>;
 }
 
@@ -162,6 +165,12 @@ export class LocalPaymentBrowser implements PaymentBrowser {
         log.warn(`Camoufox payment headless lỗi, thử headful: ${(error as Error).message.split('\n')[0]}`);
         context = await Camoufox(launchOptions(false)) as BrowserContext;
       }
+      if (input.expectedProxyIp) {
+        const actualIp = await this.proxyIp(context);
+        if (actualIp !== input.expectedProxyIp) {
+          throw new Error(`Proxy payment sai IP: cần ${input.expectedProxyIp}, thực tế ${actualIp}`);
+        }
+      }
       const page = context.pages()[0] ?? await context.newPage();
       await page.setViewportSize({ width: WIDTH, height: HEIGHT });
       const sessionId = input.id || randomUUID();
@@ -175,6 +184,7 @@ export class LocalPaymentBrowser implements PaymentBrowser {
         checking: false,
         reported: false,
         frameAt: 0,
+        lastProxyCheckAt: Date.now(),
       } as LocalSession;
       const watch = (next: Page) => {
         session.activePage = next;
@@ -232,6 +242,21 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     if (session.checking || session.reported) return;
     session.checking = true;
     try {
+      if (input.expectedProxyIp && Date.now() - session.lastProxyCheckAt >= PROXY_CHECK_INTERVAL_MS) {
+        session.lastProxyCheckAt = Date.now();
+        const actualIp = await this.proxyIp(session.context).catch((error) => {
+          log.warn(`kiểm tra IP payment ${session.id} lỗi: ${(error as Error).message}`);
+          return undefined;
+        });
+        if (actualIp && actualIp !== input.expectedProxyIp) {
+          return void await this.report(
+            session,
+            input,
+            'failed',
+            `Proxy payment đã đổi IP (${input.expectedProxyIp} → ${actualIp})`,
+          );
+        }
+      }
       for (const page of session.context.pages()) {
         if (successUrl(page.url())) return void await this.report(session, input, 'paid');
         for (const frame of page.frames()) {
@@ -248,6 +273,14 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     } finally {
       session.checking = false;
     }
+  }
+
+  private async proxyIp(context: BrowserContext): Promise<string> {
+    const response = await context.request.get(PROXY_CHECK_URL, { timeout: 10_000 });
+    if (!response.ok()) throw new Error(`HTTP ${response.status()}`);
+    const body = await response.json() as { ip?: string };
+    if (!body.ip) throw new Error('Không đọc được IP proxy');
+    return body.ip;
   }
 
   private async report(

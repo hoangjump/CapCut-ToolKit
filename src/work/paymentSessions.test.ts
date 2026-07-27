@@ -11,6 +11,7 @@ import {
   type PaymentBrowser,
   type PaymentBrowserCreateInput,
   type PaymentBrowserInput,
+  type PaymentProxyProvider,
 } from './paymentSessions.js';
 import { TelegramWorkStore } from './store.js';
 
@@ -52,6 +53,24 @@ class PaidDuringCreateBrowser extends FakeBrowser {
 class MissingFrameBrowser extends FakeBrowser {
   override async frame(): Promise<Buffer> {
     throw new Error('Phiên trình duyệt chưa sẵn sàng hoặc đã đóng');
+  }
+}
+
+class FakePaymentProxyProvider implements PaymentProxyProvider {
+  readonly acquired: Array<string | undefined> = [];
+  readonly released: string[] = [];
+
+  async acquire(sourceProxyId?: string) {
+    this.acquired.push(sourceProxyId);
+    return {
+      leaseId: 'payment-proxy-1',
+      proxy: { server: 'http://fresh-proxy.example:8080' },
+      egressIp: '203.0.113.10',
+    };
+  }
+
+  release(leaseId: string): void {
+    this.released.push(leaseId);
   }
 }
 
@@ -152,6 +171,42 @@ test('payment session can be prepared before the employee opens the Telegram lin
     assert.equal(await service.prepareForTask('task-prepare'), true);
     assert.equal(browser.created.length, 1);
     assert.equal(store.snapshot().paymentSessions[0].status, 'ready');
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('payment preparation rotates to a fresh proxy and holds it until the session closes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'payment-session-proxy-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setPaymentPublicUrl('https://app.example');
+    const store = new TelegramWorkStore(root);
+    await store.init();
+    const browser = new FakeBrowser();
+    const proxies = new FakePaymentProxyProvider();
+    const service = new PaymentSessionService(store, settings, browser, proxies);
+    await service.init();
+    const created = await service.createForTask({
+      taskId: 'task-proxy',
+      employeeId: 'employee-1',
+      email: 'worker@example.com',
+      checkoutUrl: 'https://cashier.example/checkout',
+      proxy: { server: 'http://registration-proxy.example:8080' },
+      proxyRecordId: 'source-proxy-1',
+    });
+    const token = created!.accessUrl.split('/').at(-1)!;
+
+    assert.equal(await service.prepareForTask('task-proxy'), true);
+    assert.deepEqual(proxies.acquired, ['source-proxy-1']);
+    assert.equal(browser.created[0].proxy?.server, 'http://fresh-proxy.example:8080');
+    assert.equal(browser.created[0].expectedProxyIp, '203.0.113.10');
+    assert.equal(store.snapshot().paymentSessions[0].paymentProxyIp, '203.0.113.10');
+
+    await service.closeByToken(token);
+    assert.deepEqual(proxies.released, ['payment-proxy-1']);
     await service.close();
   } finally {
     await rm(root, { recursive: true, force: true });

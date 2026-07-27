@@ -1,6 +1,7 @@
 import { Camoufox } from 'camoufox-js';
 import type { BrowserContext } from 'playwright-core';
 import { anonymizeProxy, closeAnonymizedProxy } from 'proxy-chain';
+import { ProxyLeaseRegistry } from './proxyLeaseRegistry.js';
 import { rm, mkdtemp } from 'node:fs/promises';
 import { randomInt } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -87,14 +88,7 @@ export type ProfileTask<T> = (session: Session) => Promise<T>;
 export class BrowserManager {
   private readonly log: Logger;
   private readonly sessions = new Map<string, Session>();
-  /** ProxyStore ids currently leased by an open (or opening) pool session. A
-   *  proxy in here is off-limits to other concurrent draws — so N concurrent
-   *  sessions get N distinct IPs. Populated synchronously at draw time (no await
-   *  between check and mark) so two racing opens can't both grab the same id. */
-  private readonly leasedProxyIds = new Set<string>();
-  /** FIFO of opens blocked because every matching proxy was leased. Each waiter's
-   *  resolve() is called when a lease is released, waking one to retry its draw. */
-  private readonly leaseWaiters: Array<() => void> = [];
+  private readonly proxyLeases: ProxyLeaseRegistry;
   /** One-shot warmup guard: the FIRST Camoufox launch in a process must prime the
    *  engine's mouse subsystem, otherwise every subsequent page.mouse.move throws
    *  "gBrowser ... ownerWindow is undefined" for the whole process and clicks fall
@@ -110,34 +104,13 @@ export class BrowserManager {
     /** Hook resolve proxy dạng API (mktproxy xoay): mỗi lần rút từ pool sẽ gọi
      *  để LẤY IP MỚI (rotate-ip) + whitelist — nhờ vậy mỗi profile tạm/đăng ký
      *  một IP khác. Do createApp cung cấp (nó có key server + client mktproxy). */
-    private readonly deps: { resolveApiProxy?: (r: ProxyRecord) => Promise<ProxyConfig | undefined> } = {},
+    private readonly deps: {
+      resolveApiProxy?: (r: ProxyRecord) => Promise<ProxyConfig | undefined>;
+      proxyLeases?: ProxyLeaseRegistry;
+    } = {},
   ) {
     this.log = createLogger('browser');
-  }
-
-  /** Wait until a lease is released (or timeout elapses). Used when all matching
-   *  proxies are busy so an open blocks instead of doubling up on an IP. */
-  private waitForLease(timeoutMs: number): Promise<void> {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        const i = this.leaseWaiters.indexOf(wake);
-        if (i >= 0) this.leaseWaiters.splice(i, 1);
-        resolve();
-      }, timeoutMs);
-      const wake = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-      this.leaseWaiters.push(wake);
-    });
-  }
-
-  /** Release a leased proxy id and wake the oldest blocked open, if any. */
-  private releaseLease(proxyId: string | undefined): void {
-    if (!proxyId) return;
-    if (!this.leasedProxyIds.delete(proxyId)) return;
-    const wake = this.leaseWaiters.shift();
-    if (wake) wake();
+    this.proxyLeases = deps.proxyLeases ?? new ProxyLeaseRegistry();
   }
 
   /** Prime the engine's mouse subsystem once per process (see warmupPromise). A
@@ -307,7 +280,7 @@ export class BrowserManager {
     } catch (err) {
       // Launch failed after the lease was taken — free the proxy (and any relay
       // we already opened) so it isn't stranded as busy, then rethrow.
-      this.releaseLease(leasedProxyId);
+      this.proxyLeases.release(leasedProxyId);
       if (proxyRelayUrl) void closeAnonymizedProxy(proxyRelayUrl, true);
       throw err;
     }
@@ -328,7 +301,7 @@ export class BrowserManager {
 
     context.on('close', () => {
       this.sessions.delete(profileId);
-      this.releaseLease(leasedProxyId);
+      this.proxyLeases.release(leasedProxyId);
       if (proxyRelayUrl) void closeAnonymizedProxy(proxyRelayUrl, true);
       // Một cửa sổ đóng → dồn các cửa sổ còn lại cho đều.
       scheduleTile();
@@ -438,7 +411,7 @@ export class BrowserManager {
         }
         throw new Error(emptyPoolMessage(this.store, rotation));
       }
-      const free = matching.filter((p) => !this.leasedProxyIds.has(p.id));
+      const free = matching.filter((p) => !this.proxyLeases.isLeased(p.id));
 
       if (!free.length) {
         // Every matching proxy is in use by another concurrent session. Wait for
@@ -450,14 +423,14 @@ export class BrowserManager {
           );
         }
         this.log.info(`chờ proxy rảnh (${matching.length} proxy đều đang bận)`);
-        await this.waitForLease(Math.min(5_000, remaining));
+        await this.proxyLeases.waitForRelease(Math.min(5_000, remaining));
         continue;
       }
 
       // Pick + lease synchronously — no await between these two lines, so a
       // second open running concurrently can never observe this id as free.
       const chosen = free[randomInt(0, free.length)];
-      this.leasedProxyIds.add(chosen.id);
+      if (!this.proxyLeases.tryAcquire(chosen.id)) continue;
 
       // Proxy dạng API (mktproxy xoay): mỗi lần rút → LẤY IP MỚI qua rotate-ip
       // (resolveApiProxy lo whitelist + rotate + protocol). Nhờ vậy mỗi profile
@@ -486,7 +459,7 @@ export class BrowserManager {
         if (!check.alive) {
           this.log.warn(`proxy ${chosen.host}:${chosen.port} dead, redrawing`);
           failedThisOpen.add(chosen.id);
-          this.releaseLease(chosen.id);
+          this.proxyLeases.release(chosen.id);
           continue;
         }
       }
@@ -573,7 +546,7 @@ export class BrowserManager {
     // Nhả proxy đã thuê để profile kế tiếp dùng lại — nếu không, mỗi lần chạy rò
     // rỉ 1 proxy khỏi pool, tới khi cạn thì open kế tiếp đứng chờ LEASE_WAIT_MS
     // rồi mới lỗi (triệu chứng "chạy 10 kẹt ở con gần cuối").
-    this.releaseLease(session.leasedProxyId);
+    this.proxyLeases.release(session.leasedProxyId);
     this.log.info(`closed ${profileId}`);
   }
 

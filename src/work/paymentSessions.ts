@@ -105,6 +105,7 @@ export interface PaymentBrowserCreateInput {
   id: string;
   checkoutUrl: string;
   proxy?: ProxyConfig;
+  expectedProxyIp?: string;
   expiresAt: string;
   onStatus: (status: 'paid' | 'failed', error?: string) => Promise<void>;
 }
@@ -116,6 +117,15 @@ export interface PaymentBrowser {
   frame(sessionId: string): Promise<Buffer>;
   input(sessionId: string, input: PaymentBrowserInput): Promise<void>;
   capacity?(): number;
+}
+
+export interface PaymentProxyProvider {
+  acquire(sourceProxyId?: string): Promise<{
+    leaseId: string;
+    proxy: ProxyConfig;
+    egressIp: string;
+  }>;
+  release(leaseId: string): void;
 }
 
 function normalizeHttpUrl(raw: string, field: string): string {
@@ -147,6 +157,7 @@ export class PaymentSessionService {
     private readonly store: TelegramWorkStore,
     private readonly settings: SettingsStore,
     private readonly browser: PaymentBrowser,
+    private readonly proxyProvider?: PaymentProxyProvider,
   ) {}
 
   async init(): Promise<void> {
@@ -159,6 +170,10 @@ export class PaymentSessionService {
   async close(): Promise<void> {
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.cleanupTimer = undefined;
+    const active = this.store.snapshot().paymentSessions
+      .filter((session) => session.browserSessionId || session.paymentProxyLeaseId)
+      .map((session) => session.id);
+    await Promise.all(active.map((id) => this.closeBrowser(id)));
     await this.browser.closeAll();
   }
 
@@ -179,6 +194,7 @@ export class PaymentSessionService {
     email: string;
     checkoutUrl: string;
     proxy?: ProxyConfig;
+    proxyRecordId?: string;
   }): Promise<{ id: string; accessUrl: string } | undefined> {
     if (!this.configured()) return undefined;
     const publicUrl = normalizeHttpUrl(this.settings.getPaymentPublicUrl()!, 'URL công khai');
@@ -195,6 +211,7 @@ export class PaymentSessionService {
       email: input.email,
       checkoutUrl: input.checkoutUrl,
       proxy: input.proxy,
+      proxyRecordId: input.proxyRecordId,
       status: 'pending',
       createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + SESSION_LIFETIME_MS).toISOString(),
@@ -359,10 +376,23 @@ export class PaymentSessionService {
     });
 
     try {
+      const paymentProxy = this.proxyProvider
+        ? await this.proxyProvider.acquire(session.proxyRecordId)
+        : undefined;
+      if (paymentProxy) {
+        await this.store.mutate((state) => {
+          const found = state.paymentSessions.find((item) => item.id === id)!;
+          found.proxy = paymentProxy.proxy;
+          found.paymentProxyLeaseId = paymentProxy.leaseId;
+          found.paymentProxyIp = paymentProxy.egressIp;
+          found.updatedAt = new Date().toISOString();
+        });
+      }
       const created = await this.browser.create({
         id: session.id,
         checkoutUrl: session.checkoutUrl,
-        proxy: session.proxy,
+        proxy: paymentProxy?.proxy ?? session.proxy,
+        expectedProxyIp: paymentProxy?.egressIp,
         expiresAt: session.expiresAt,
         onStatus: (status, error) => this.updateFromBrowser(session.id, status, error),
       });
@@ -392,19 +422,23 @@ export class PaymentSessionService {
         return found;
       });
       log.warn(`khởi động phiên ${id} lỗi: ${failed.error}`);
+      await this.closeBrowser(id);
       throw error;
     }
   }
 
   private async closeBrowser(id: string): Promise<void> {
-    const browserSessionId = await this.store.mutate((state) => {
+    const runtime = await this.store.mutate((state) => {
       const session = state.paymentSessions.find((item) => item.id === id);
-      if (!session) return undefined;
-      const current = session.browserSessionId;
+      if (!session) return {};
+      const browserSessionId = session.browserSessionId;
+      const paymentProxyLeaseId = session.paymentProxyLeaseId;
       session.browserSessionId = undefined;
-      return current;
+      session.paymentProxyLeaseId = undefined;
+      return { browserSessionId, paymentProxyLeaseId };
     });
-    if (browserSessionId) await this.browser.close(browserSessionId).catch(() => {});
+    if (runtime.browserSessionId) await this.browser.close(runtime.browserSessionId).catch(() => {});
+    if (runtime.paymentProxyLeaseId) this.proxyProvider?.release(runtime.paymentProxyLeaseId);
   }
 
   private async useBrowser<T>(
@@ -419,7 +453,6 @@ export class PaymentSessionService {
         if (!found || found.status !== 'ready' || found.browserSessionId !== session.browserSessionId) return;
         found.status = 'failed';
         found.error = (error as Error).message || 'Trình duyệt thanh toán đã đóng';
-        found.browserSessionId = undefined;
         found.updatedAt = new Date().toISOString();
         const task = state.tasks.find((item) => item.id === found.taskId);
         if (task && task.paymentStatus !== 'paid') {
@@ -427,6 +460,7 @@ export class PaymentSessionService {
           task.updatedAt = found.updatedAt;
         }
       });
+      await this.closeBrowser(session.id);
       throw error;
     }
   }
@@ -458,6 +492,7 @@ export class PaymentSessionService {
       for (const session of state.paymentSessions) {
         // Browser processes only live in memory, so their IDs cannot survive an app restart.
         session.browserSessionId = undefined;
+        session.paymentProxyLeaseId = undefined;
         if (!['starting', 'ready'].includes(session.status)) continue;
         session.status = 'pending';
         session.error = undefined;

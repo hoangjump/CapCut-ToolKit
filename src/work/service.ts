@@ -148,13 +148,17 @@ function taskMessageOptions(task: WorkTask): { parseMode?: 'HTML'; disableLinkPr
 
 function taskDto(task: WorkTask): WorkTask {
   const result = structuredClone(task);
-  if (result.capcutCredentials) delete result.capcutCredentials.proxy;
+  if (result.capcutCredentials) {
+    delete result.capcutCredentials.proxy;
+    delete result.capcutCredentials.proxyRecordId;
+  }
   return result;
 }
 
 function distributionItemDto(item: DistributionItem): DistributionItem {
   const result = structuredClone(item);
   delete result.proxy;
+  delete result.proxyRecordId;
   return result;
 }
 
@@ -373,6 +377,7 @@ export class TelegramWorkService {
     mailLine: string;
     checkoutUrl: string;
     proxy?: ProxyConfig;
+    proxyRecordId?: string;
   }): Promise<DistributionItem | undefined> {
     const item = await this.store.mutate((state) => {
       const run = state.distributionRuns.find((entry) => entry.id === runId);
@@ -401,6 +406,7 @@ export class TelegramWorkService {
         mailLine: row.mailLine,
         checkoutUrl: row.checkoutUrl,
         proxy: row.proxy,
+        proxyRecordId: row.proxyRecordId,
         status: 'queued' as const,
         createdAt: now,
         updatedAt: now,
@@ -543,6 +549,7 @@ export class TelegramWorkService {
               mailLine: item.mailLine,
               checkoutUrl: item.checkoutUrl,
               proxy: item.proxy,
+              proxyRecordId: item.proxyRecordId,
             },
           });
           await this.store.mutate((state) => {
@@ -742,6 +749,7 @@ export class TelegramWorkService {
           email: task.capcutCredentials.email,
           checkoutUrl: task.capcutCredentials.checkoutUrl,
           proxy: task.capcutCredentials.proxy,
+          proxyRecordId: task.capcutCredentials.proxyRecordId,
         });
         if (!payment) throw new Error('Link nhân viên chưa bật');
         await this.payments.prepareForTask(task.id);

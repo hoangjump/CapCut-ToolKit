@@ -15,6 +15,7 @@ import {
 import { checkProxy } from '../proxyChecker.js';
 import { ProfileManager } from '../profileManager.js';
 import { BrowserManager } from '../browserManager.js';
+import { ProxyLeaseRegistry } from '../proxyLeaseRegistry.js';
 import { MailStore, parseMailLine, providerFromEmail } from '../mailStore.js';
 import { UsedIpStore } from '../usedIpStore.js';
 import { SettingsStore, maskKey } from '../settingsStore.js';
@@ -50,6 +51,7 @@ import { PaymentSessionService } from '../work/paymentSessions.js';
 import { LocalPaymentBrowser } from '../work/localPaymentBrowser.js';
 import { paymentHostGuard } from './paymentHostGuard.js';
 import { TunnelManager } from './tunnelManager.js';
+import { PaymentProxyAllocator, type RotatedPaymentProxy } from './paymentProxyAllocator.js';
 
 const log = createLogger('server');
 
@@ -169,6 +171,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   // IP đã dùng reg CapCut — để mỗi IP chỉ reg 1 lần.
   const usedIps = new UsedIpStore(storeRoot);
   await usedIps.init();
+  const proxyLeases = new ProxyLeaseRegistry();
 
   // resolveApiProxy: mỗi lần pool rút proxy dạng API (mktproxy) cho một profile
   // đăng ký → XOAY tới khi ra egress IP CHƯA dùng reg rồi mới trả config gateway.
@@ -176,6 +179,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   // hợp lệ dù khai báo bên dưới.
   const browsers = new BrowserManager(profiles, store, { headless }, {
     resolveApiProxy: (rec) => resolveFreshApiProxy(rec),
+    proxyLeases,
   });
 
   const mails = new MailStore(storeRoot);
@@ -186,7 +190,16 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   const tunnel = new TunnelManager(settings);
 
   const telegramStore = new TelegramWorkStore(storeRoot);
-  const paymentSessions = new PaymentSessionService(telegramStore, settings, new LocalPaymentBrowser());
+  const paymentProxyAllocator = new PaymentProxyAllocator(store, usedIps, proxyLeases, {
+    rotate: (record) => rotatePaymentProxy(record),
+    verify: (proxy, rotated, record) => verifyPaymentProxy(proxy, rotated, record),
+  });
+  const paymentSessions = new PaymentSessionService(
+    telegramStore,
+    settings,
+    new LocalPaymentBrowser(),
+    paymentProxyAllocator,
+  );
   const telegramClient = new TelegramClient();
   const telegramWork = new TelegramWorkService(telegramStore, settings, telegramClient, paymentSessions);
   await telegramWork.init();
@@ -413,6 +426,53 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     }
     void store.update(record.id, { type: proto, host, port, username, password }).catch(() => {});
     return { server: `${proto}://${host}:${port}`, username, password };
+  }
+
+  async function rotatePaymentProxy(record: ProxyRecord): Promise<RotatedPaymentProxy> {
+    if (record.apiProvider !== 'mktproxy' || !record.apiKey) {
+      throw new Error('Payment strict chỉ sử dụng proxy xoay MKTProxy');
+    }
+    await ensureWhitelist(record.apiKey);
+    let rotated = await mktproxy.rotateIp(record.apiKey).catch(() => null);
+    if (!rotated?.value) rotated = await mktproxy.getCurrentProxy(record.apiKey).catch(() => null);
+    if (!rotated?.value) throw new Error(`MKTProxy không trả proxy cho đơn ${record.apiKey.slice(0, 6)}…`);
+    const proxy = buildApiConfig(record, rotated);
+    if (!proxy) throw new Error(`MKTProxy trả cấu hình proxy không hợp lệ cho ${record.apiKey.slice(0, 6)}…`);
+    return {
+      proxy,
+      egressIp: rotated.realIp || rotated.ip,
+      retryAfterMs: Math.max(1_000, Number(rotated.second || 5) * 1_000),
+    };
+  }
+
+  async function verifyPaymentProxy(
+    proxy: ProxyConfig,
+    rotated: RotatedPaymentProxy,
+    record: ProxyRecord,
+  ): Promise<string | undefined> {
+    const parsed = new URL(proxy.server);
+    const protocol = parsed.protocol.replace(':', '');
+    const type: ProxyType = protocol === 'socks5' ? 'socks5' : protocol === 'https' ? 'https' : 'http';
+    const checked = await checkProxy({
+      ...record,
+      type,
+      host: parsed.hostname,
+      port: Number(parsed.port),
+      username: proxy.username,
+      password: proxy.password,
+    }, 10_000);
+    await store.update(record.id, {
+      alive: checked.alive,
+      latencyMs: checked.latencyMs,
+      checkedAt: new Date().toISOString(),
+    });
+    if (!checked.alive) throw new Error(`Proxy payment không hoạt động: ${checked.error || 'không kết nối được'}`);
+    if (!checked.ip) throw new Error('Proxy payment không trả IP thực tế');
+    if (rotated.egressIp && rotated.egressIp !== checked.ip) {
+      log.warn(`mktproxy: API báo IP ${rotated.egressIp} nhưng kiểm tra thực tế là ${checked.ip}`);
+    }
+    log.info(`mktproxy: dành IP payment mới ${checked.ip} từ đơn ${record.apiKey?.slice(0, 6)}…`);
+    return checked.ip;
   }
 
   /**
@@ -1592,6 +1652,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
                   mailLine: row.mailLine,
                   checkoutUrl: row.checkoutUrl!,
                   proxy: source.proxy,
+                  proxyRecordId: source.proxyRecordId,
                 });
               }
             : undefined,

@@ -43,7 +43,11 @@ export interface RunProjectDeps {
   notify?: (row: SheetRow) => Promise<void>;
   /** Queue a successful flow result for downstream employee distribution. The
    *  runner never lets a queue failure change the profile's flow result. */
-  onResult?: (row: SheetRow, source: { profileId: string; proxy?: ProxyConfig }) => Promise<void>;
+  onResult?: (row: SheetRow, source: {
+    profileId: string;
+    proxy?: ProxyConfig;
+    proxyRecordId?: string;
+  }) => Promise<void>;
 }
 
 export interface RunProjectInput {
@@ -274,7 +278,11 @@ export async function runProject(
         }
         if (deps.onResult && !flowError && row.checkoutUrl && row.email) {
           try {
-            await deps.onResult(row, { profileId: session.profile.id, proxy: session.profile.proxy });
+            await deps.onResult(row, {
+              profileId: session.profile.id,
+              proxy: session.profile.proxy,
+              proxyRecordId: session.profile.assignedProxyId,
+            });
             flowLog.info(`đã xếp hàng phân phối: ${row.email}`);
           } catch (e) {
             flowLog.warn(`xếp hàng phân phối lỗi: ${(e as Error).message}`);

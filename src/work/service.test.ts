@@ -209,6 +209,7 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
         mailLine: `mail${index}@example.com|pass${index}|refresh${index}|client${index}`,
         checkoutUrl: `https://capcut.example/checkout/${index}?token=abc&locale=vi`,
         proxy: { server: `http://proxy${index}.example:8080`, username: 'user', password: 'secret' },
+        proxyRecordId: `proxy-record-${index}`,
       });
     }
     let current = service.listDistributions('project-1')[0];
@@ -231,9 +232,12 @@ test('CapCut distribution respects round-robin quotas and only pays after heart'
 
     const firstItem = current.items.find((item) => item.employeeId === duy.id)!;
     assert.equal(firstItem.proxy, undefined);
+    assert.equal(firstItem.proxyRecordId, undefined);
     const task = service.listTasks().find((item) => item.distributionItemId === firstItem.id)!;
     assert.equal(task.capcutCredentials?.proxy, undefined);
+    assert.equal(task.capcutCredentials?.proxyRecordId, undefined);
     assert.equal(store.snapshot().paymentSessions[0].proxy?.password, 'secret');
+    assert.equal(store.snapshot().paymentSessions[0].proxyRecordId, 'proxy-record-1');
     assert.equal(task.capcutCredentials?.password, firstItem.password);
     const sentMessage = fake.sent.find((message) => message.text.includes(firstItem.email))!;
     const sentText = sentMessage.text;
