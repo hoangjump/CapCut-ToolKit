@@ -352,13 +352,17 @@ export class LocalPaymentBrowser implements PaymentBrowser {
   ): Promise<void> {
     if (session.reported) return;
     session.reported = true;
-    clearInterval(session.monitor);
     await input.onStatus('verifying').catch((reason) => {
       log.warn(`cập nhật trạng thái xác minh ${session.id} lỗi: ${(reason as Error).message}`);
     });
-    await input.onStatus('paid', undefined, { vipEndTime }).catch((reason) => {
+    try {
+      await input.onStatus('paid', undefined, { vipEndTime });
+      clearInterval(session.monitor);
+    } catch (reason) {
+      session.reported = false;
+      session.nextVipCheckAt = Date.now() + CAPCUT_VIP_POLL_MS;
       log.warn(`cập nhật VIP ${session.id} lỗi: ${(reason as Error).message}`);
-    });
+    }
   }
 
   private async report(

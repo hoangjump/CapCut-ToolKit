@@ -49,6 +49,18 @@ class FakeTelegram implements TelegramBotApi {
   async deleteWebhook(): Promise<void> {}
 }
 
+class FlakyCompletionTelegram extends FakeTelegram {
+  completionAttempts = 0;
+
+  override async sendMessage(token: string, input: Parameters<FakeTelegram['sendMessage']>[1]): Promise<{ message_id: number }> {
+    if (/CapCut đã lên VIP/i.test(input.text)) {
+      this.completionAttempts += 1;
+      if (this.completionAttempts === 1) throw new Error('Telegram 429 Too Many Requests');
+    }
+    return super.sendMessage(token, input);
+  }
+}
+
 class PrewarmBrowser implements PaymentBrowser {
   readonly created: PaymentBrowserCreateInput[] = [];
 
@@ -157,6 +169,60 @@ test('assigned employee reaction credits once and removing it reverses payroll',
     assert.equal(payroll.allQuantity, 0);
     assert.equal(payroll.allAmount, 0);
     assert.equal(service.listTasks()[0].status, 'pending');
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('failed CapCut completion notifications stay pending and retry without double credit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'telegram-work-notification-retry-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setWorkTelegramBotToken('test-token');
+    await settings.setWorkTelegramChatId('-100123');
+    const fake = new FlakyCompletionTelegram();
+    const store = new TelegramWorkStore(root);
+    const service = new TelegramWorkService(store, settings, fake);
+    await service.init();
+    const now = new Date().toISOString();
+    await store.mutate((state) => {
+      state.employees.push({
+        id: 'employee-1', fullName: 'Nhân viên 1', defaultUnitRate: 5_000,
+        salaryVisibility: 'topic', status: 'active', bindCode: 'BIND-1',
+        telegramUserId: '555', telegramChatId: '-100123', telegramTopicId: 45,
+        createdAt: now, updatedAt: now,
+      });
+      state.tasks.push({
+        id: 'task-1', employeeId: 'employee-1', description: 'Thanh toán CapCut',
+        quantity: 1, unitRate: 5_000, amount: 5_000, status: 'pending', deliveryStatus: 'sent',
+        telegramChatId: '-100123', telegramTopicId: 45, telegramMessageId: 999,
+        source: 'capcut-distribution',
+        capcutCredentials: {
+          email: 'worker@example.com', mailLine: 'worker@example.com|pass|refresh|client',
+          checkoutUrl: 'https://cashier.example/checkout',
+        },
+        createdAt: now, updatedAt: now,
+      });
+    });
+
+    await (service as any).completeCapcutVip('task-1', 1_900_000_000);
+    await waitFor(
+      () => fake.completionAttempts === 1 && (service as any).queuedNotificationTasks.size === 0,
+      'first Telegram completion attempt did not finish',
+    );
+    assert.equal(store.snapshot().tasks[0].completionNotificationStatus, 'pending');
+    assert.equal(store.snapshot().earnings.length, 1);
+
+    (service as any).retryPendingCapcutNotifications();
+    await waitFor(
+      () => store.snapshot().tasks[0].completionNotificationStatus === 'sent',
+      'pending Telegram completion was not retried',
+    );
+    assert.equal(fake.completionAttempts, 2);
+    assert.equal(fake.sent.filter((message) => /CapCut đã lên VIP/i.test(message.text)).length, 1);
+    assert.equal(store.snapshot().earnings.length, 1);
     await service.close();
   } finally {
     await rm(root, { recursive: true, force: true });

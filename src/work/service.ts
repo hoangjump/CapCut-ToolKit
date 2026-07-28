@@ -180,6 +180,9 @@ export class TelegramWorkService {
   private pollingActive = false;
   private pollAbort?: AbortController;
   private readonly flushingRuns = new Set<string>();
+  private notificationTail: Promise<void> = Promise.resolve();
+  private notificationRetryTimer?: NodeJS.Timeout;
+  private readonly queuedNotificationTasks = new Set<string>();
 
   constructor(
     private readonly store: TelegramWorkStore,
@@ -208,12 +211,17 @@ export class TelegramWorkService {
     });
     await this.payments?.init();
     await this.refreshPolling();
+    this.retryPendingCapcutNotifications();
+    this.notificationRetryTimer = setInterval(() => this.retryPendingCapcutNotifications(), 10_000);
+    this.notificationRetryTimer.unref?.();
     for (const run of this.store.snapshot().distributionRuns) {
       if (run.status === 'running') void this.flushDistribution(run.id);
     }
   }
 
   async close(): Promise<void> {
+    if (this.notificationRetryTimer) clearInterval(this.notificationRetryTimer);
+    this.notificationRetryTimer = undefined;
     this.pollGeneration += 1;
     this.pollAbort?.abort();
     this.pollAbort = undefined;
@@ -1058,11 +1066,16 @@ export class TelegramWorkService {
       if (!task || task.source !== 'capcut-distribution' || !task.capcutCredentials) {
         throw new Error('Không tìm thấy task CapCut để cộng sản lượng');
       }
-      if (task.status === 'completed') return { kind: 'duplicate' };
-      if (task.status !== 'pending') throw new Error(`Task CapCut đang ở trạng thái ${task.status}`);
       const employee = state.employees.find((item) => item.id === task.employeeId);
       if (!employee) throw new Error('Không tìm thấy nhân viên của task CapCut');
+      if (task.status === 'completed') {
+        return task.completionNotificationStatus === 'pending'
+          ? { kind: 'completed', task: structuredClone(task), employee: structuredClone(employee), totals: employeeTotals(state, employee.id) }
+          : { kind: 'duplicate' };
+      }
+      if (task.status !== 'pending') throw new Error(`Task CapCut đang ở trạng thái ${task.status}`);
       this.completeTaskInState(state, task, 'capcut-vip');
+      task.completionNotificationStatus = 'pending';
       task.capcutCredentials.vipVerifiedAt = new Date().toISOString();
       task.capcutCredentials.vipEndTime = vipEndTime;
       task.capcutCredentials.capcutCookies = undefined;
@@ -1075,7 +1088,7 @@ export class TelegramWorkService {
         totals: employeeTotals(state, employee.id),
       };
     });
-    await this.notifyReaction(action);
+    this.enqueueReactionNotification(action);
   }
 
   private reopenTaskInState(state: TelegramWorkState, task: WorkTask): void {
@@ -1092,11 +1105,38 @@ export class TelegramWorkService {
     }
   }
 
-  private async notifyReaction(action: ReactionAction): Promise<void> {
-    if (!action.task || !action.employee || !action.totals || !['completed', 'reopened'].includes(action.kind)) return;
+  private enqueueReactionNotification(action: ReactionAction): void {
+    const taskId = action.task?.id;
+    if (!taskId || this.queuedNotificationTasks.has(taskId)) return;
+    this.queuedNotificationTasks.add(taskId);
+    const run = this.notificationTail.then(() => this.notifyReaction(action));
+    this.notificationTail = run.then(() => undefined).catch((err) => {
+      log.warn(`xử lý hàng đợi thông báo ${taskId} lỗi: ${(err as Error).message}`);
+    }).finally(() => {
+      this.queuedNotificationTasks.delete(taskId);
+    });
+  }
+
+  private retryPendingCapcutNotifications(): void {
+    const state = this.store.snapshot();
+    for (const task of state.tasks) {
+      if (task.source !== 'capcut-distribution' || task.status !== 'completed' || task.completionNotificationStatus !== 'pending') continue;
+      const employee = state.employees.find((item) => item.id === task.employeeId);
+      if (!employee) continue;
+      this.enqueueReactionNotification({
+        kind: 'completed',
+        task,
+        employee,
+        totals: employeeTotals(state, employee.id),
+      });
+    }
+  }
+
+  private async notifyReaction(action: ReactionAction): Promise<boolean> {
+    if (!action.task || !action.employee || !action.totals || !['completed', 'reopened'].includes(action.kind)) return false;
     const token = this.settings.getWorkTelegramBotToken();
     const task = action.task;
-    if (!token || !task.telegramChatId || !task.telegramMessageId) return;
+    if (!token || !task.telegramChatId || !task.telegramMessageId) return false;
 
     const completed = action.kind === 'completed';
     const reactionApplied = await this.telegram.setMessageReaction(token, {
@@ -1131,17 +1171,34 @@ export class TelegramWorkService {
         : `✅ Đã cộng ${task.quantity} con cho ${action.employee.fullName}.`
       : `↩️ Đã trừ lại ${task.quantity} con của ${action.employee.fullName}.`;
     const topicText = action.employee.salaryVisibility === 'topic' ? fullText : shortText;
-    await this.telegram.sendMessage(token, {
-      chatId: task.telegramChatId,
-      threadId: task.telegramTopicId,
-      replyToMessageId: task.telegramMessageId,
-      text: topicText,
-    }).catch((err) => log.warn(`gửi kết quả reaction lỗi: ${(err as Error).message}`));
+    let topicSent = false;
+    try {
+      await this.telegram.sendMessage(token, {
+        chatId: task.telegramChatId,
+        threadId: task.telegramTopicId,
+        replyToMessageId: task.telegramMessageId,
+        text: topicText,
+      });
+      topicSent = true;
+    } catch (err) {
+      log.warn(`gửi kết quả reaction lỗi: ${(err as Error).message}`);
+    }
+
+    if (autoCapcut && topicSent) {
+      await this.store.mutate((state) => {
+        const saved = state.tasks.find((item) => item.id === task.id);
+        if (!saved || saved.completionNotificationStatus !== 'pending') return;
+        saved.completionNotificationStatus = 'sent';
+        saved.completionNotifiedAt = new Date().toISOString();
+        saved.updatedAt = saved.completionNotifiedAt;
+      });
+    }
 
     if (action.employee.salaryVisibility === 'private' && action.employee.telegramUserId) {
       await this.telegram.sendMessage(token, { chatId: action.employee.telegramUserId, text: fullText })
         .catch((err) => log.warn(`gửi lương riêng lỗi (nhân viên cần /start bot): ${(err as Error).message}`));
     }
+    return topicSent;
   }
 
   private requireToken(): string {

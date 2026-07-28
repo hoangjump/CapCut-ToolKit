@@ -132,3 +132,48 @@ test('payment browser throttles background VIP checks to every three seconds', a
   assert.equal(requests, 1);
   assert.ok(session.nextVipCheckAt >= startedAt + 3_000);
 });
+
+test('payment browser keeps polling when the paid callback fails once', async () => {
+  const browser = new LocalPaymentBrowser(null);
+  let paidAttempts = 0;
+  const monitor = setInterval(() => {}, 10_000);
+  monitor.unref?.();
+  const session = {
+    id: 'payment-session-3',
+    context: {
+      pages: () => [],
+      request: {
+        post: async () => ({
+          ok: () => true,
+          status: () => 200,
+          json: async () => ({
+            data: { subscription_user_infos: { vip: { vip_infos: [{ is_vip: true, vip_end_time: 1_900_000_000 }] } } },
+          }),
+        }),
+      },
+    },
+    checking: false,
+    reported: false,
+    nextVipCheckAt: 0,
+    monitor,
+  };
+  const input = {
+    capcutCookies: [{
+      name: 'sessionid', value: 'secret', domain: '.capcut.com', path: '/', expires: -1,
+      httpOnly: true, secure: true, sameSite: 'Lax',
+    }],
+    onStatus: async (status: string) => {
+      if (status !== 'paid') return;
+      paidAttempts += 1;
+      if (paidAttempts === 1) throw new Error('temporary store error');
+    },
+  };
+
+  await (browser as any).checkPayment(session, input);
+  assert.equal(session.reported, false);
+  session.nextVipCheckAt = 0;
+  await (browser as any).checkPayment(session, input);
+
+  assert.equal(paidAttempts, 2);
+  assert.equal(session.reported, true);
+});

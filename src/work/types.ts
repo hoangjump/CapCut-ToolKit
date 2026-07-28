@@ -42,6 +42,8 @@ export interface WorkTask {
   paymentSessionId?: string;
   paymentStatus?: PaymentSessionStatus;
   paidAt?: string;
+  completionNotificationStatus?: 'pending' | 'sent';
+  completionNotifiedAt?: string;
   capcutCredentials?: {
     email: string;
     password?: string;
