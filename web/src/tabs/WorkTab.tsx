@@ -71,19 +71,13 @@ function statusVariant(status: string): 'success' | 'danger' | 'muted' | 'outlin
 export function WorkTab() {
   return (
     <Tabs defaultValue="employees">
-      <div className="flex flex-col items-start justify-between gap-3 border-b pb-3 md:flex-row md:items-center">
-        <div>
-          <h2 className="text-lg font-semibold">Công việc nhân viên</h2>
-          <p className="text-sm text-muted-foreground">Giao việc theo Telegram topic; task CapCut tự cộng công sau khi xác minh VIP.</p>
-        </div>
-        <TabsList className="max-w-full overflow-x-auto">
-          <TabsTrigger value="employees"><Users className="h-4 w-4" /> Nhân viên</TabsTrigger>
-          <TabsTrigger value="tasks"><Send className="h-4 w-4" /> Giao việc</TabsTrigger>
-          <TabsTrigger value="payroll"><WalletCards className="h-4 w-4" /> Bảng công</TabsTrigger>
-          <TabsTrigger value="payments"><Monitor className="h-4 w-4" /> Thanh toán</TabsTrigger>
-          <TabsTrigger value="config"><Settings className="h-4 w-4" /> Telegram</TabsTrigger>
-        </TabsList>
-      </div>
+      <TabsList className="w-full max-w-full justify-start overflow-x-auto">
+        <TabsTrigger value="employees"><Users className="h-4 w-4" /> Nhân viên</TabsTrigger>
+        <TabsTrigger value="tasks"><Send className="h-4 w-4" /> Giao việc</TabsTrigger>
+        <TabsTrigger value="payroll"><WalletCards className="h-4 w-4" /> Bảng công</TabsTrigger>
+        <TabsTrigger value="payments"><Monitor className="h-4 w-4" /> Thanh toán</TabsTrigger>
+        <TabsTrigger value="config"><Settings className="h-4 w-4" /> Telegram</TabsTrigger>
+      </TabsList>
       <TabsContent value="employees"><EmployeesPanel /></TabsContent>
       <TabsContent value="tasks"><TasksPanel /></TabsContent>
       <TabsContent value="payroll"><PayrollPanel /></TabsContent>
@@ -120,7 +114,7 @@ function EmployeesPanel() {
         <div className="flex gap-2"><Button variant="outline" onClick={load}><RefreshCw /> Làm mới</Button><Button onClick={() => setEditing(null)}><Plus /> Thêm nhân viên</Button></div>
       </CardHeader>
       <CardContent>
-        <Table>
+        <div className="overflow-x-auto"><Table>
           <TableHeader><TableRow>
             <TableHead>Nhân viên</TableHead><TableHead>Telegram topic</TableHead><TableHead>Đơn giá</TableHead>
             <TableHead>Hôm nay</TableHead><TableHead>Tháng này</TableHead><TableHead>Trạng thái</TableHead><TableHead className="text-right">Thao tác</TableHead>
@@ -155,7 +149,7 @@ function EmployeesPanel() {
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+        </Table></div>
       </CardContent>
       {editing !== undefined && <EmployeeDialog employee={editing} onClose={() => setEditing(undefined)} onSaved={load} />}
     </Card>
@@ -257,16 +251,16 @@ function TasksPanel() {
 
       <Card>
         <CardHeader><CardTitle className="text-base">Lịch sử công việc</CardTitle></CardHeader>
-        <CardContent><Table>
+        <CardContent><div className="overflow-x-auto"><Table>
           <TableHeader><TableRow><TableHead>Nhân viên</TableHead><TableHead>Nội dung</TableHead><TableHead>Sản lượng</TableHead><TableHead>Tiền công</TableHead><TableHead>Trạng thái</TableHead><TableHead className="text-right">Thao tác</TableHead></TableRow></TableHeader>
           <TableBody>
             {!tasks.length && <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">Chưa giao công việc nào.</TableCell></TableRow>}
             {tasks.map((task) => <TableRow key={task.id}>
               <TableCell className="font-medium">{names.get(task.employeeId) || task.employeeId.slice(0, 8)}</TableCell>
-              <TableCell className="max-w-[360px]"><div className="truncate">{task.description}</div><div className="text-xs text-muted-foreground">{new Date(task.createdAt).toLocaleString('vi-VN')}{task.deadline ? ` · Hạn ${new Date(task.deadline).toLocaleString('vi-VN')}` : ''}{task.source === 'capcut-distribution' ? ' · Chỉ tính khi đúng nhân viên thả ❤️' : ''}</div>{task.deliveryError && <div className="text-xs text-destructive">{task.deliveryError}</div>}</TableCell>
+              <TableCell className="max-w-[360px]"><div className="truncate">{task.description}</div><div className="text-xs text-muted-foreground">{new Date(task.createdAt).toLocaleString('vi-VN')}{task.deadline ? ` · Hạn ${new Date(task.deadline).toLocaleString('vi-VN')}` : ''}{task.source === 'capcut-distribution' ? ' · Tự cộng sau khi xác minh VIP' : ''}</div>{task.deliveryError && <div className="text-xs text-destructive">{task.deliveryError}</div>}</TableCell>
               <TableCell>{task.quantity} con<div className="text-xs text-muted-foreground">{formatMoney(task.unitRate)}/con</div></TableCell>
               <TableCell>{formatMoney(task.amount)}{task.source === 'capcut-distribution' && task.status === 'pending' && <div className="text-xs text-muted-foreground">Chưa cộng</div>}</TableCell>
-              <TableCell><Badge variant={statusVariant(task.status)}>{task.source === 'capcut-distribution' && task.status === 'pending' ? 'Chờ ❤️' : taskStatus[task.status]}</Badge></TableCell>
+              <TableCell><Badge variant={statusVariant(task.status)}>{task.source === 'capcut-distribution' && task.status === 'pending' ? 'Chờ xác minh VIP' : taskStatus[task.status]}</Badge></TableCell>
               <TableCell><div className="flex justify-end gap-1">
                 {task.status === 'pending' && task.source !== 'capcut-distribution' && <><Button size="icon" variant="ghost" title="Sửa" onClick={() => setEditing(task)}><Pencil /></Button><Button size="icon" variant="ghost" title="Hoàn thành thủ công" onClick={() => taskAction(() => workApi.completeTask(task.id), 'Đã hoàn thành')}><Check /></Button><Button size="icon" variant="ghost" title="Hủy" onClick={() => taskAction(() => workApi.cancelTask(task.id), 'Đã hủy')}><X /></Button></>}
                 {task.status === 'completed' && task.source !== 'capcut-distribution' && <Button size="icon" variant="ghost" title="Mở lại" onClick={() => taskAction(() => workApi.reopenTask(task.id), 'Đã mở lại công việc')}><RotateCcw /></Button>}
@@ -274,7 +268,7 @@ function TasksPanel() {
               </div></TableCell>
             </TableRow>)}
           </TableBody>
-        </Table></CardContent>
+        </Table></div></CardContent>
       </Card>
       {editing && <TaskEditDialog task={editing} onClose={() => setEditing(null)} onSaved={load} />}
     </div>
@@ -306,7 +300,7 @@ function PayrollPanel() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { const timer = window.setInterval(load, 10_000); return () => window.clearInterval(timer); }, [load]);
   const total = rows.reduce((sum, row) => sum + row.totals.monthAmount, 0);
-  return <Card><CardHeader className="flex-row items-center justify-between space-y-0"><CardTitle className="text-base">Sản lượng và tiền công</CardTitle><div className="text-sm">Tổng tháng này: <strong>{formatMoney(total)}</strong></div></CardHeader><CardContent><Table>
+  return <Card><CardHeader className="flex-row items-center justify-between space-y-0"><CardTitle className="text-base">Sản lượng và tiền công</CardTitle><div className="text-sm">Tổng tháng này: <strong>{formatMoney(total)}</strong></div></CardHeader><CardContent><div className="overflow-x-auto"><Table>
     <TableHeader><TableRow><TableHead>Nhân viên</TableHead><TableHead>Đơn giá mặc định</TableHead><TableHead>Hôm nay</TableHead><TableHead>Tháng này</TableHead><TableHead>Lũy kế</TableHead><TableHead>Đang chờ</TableHead></TableRow></TableHeader>
     <TableBody>{!rows.length && <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">Chưa có dữ liệu.</TableCell></TableRow>}{rows.map((row) => <TableRow key={row.employeeId}>
       <TableCell className="font-medium">{row.fullName}</TableCell><TableCell>{formatMoney(row.defaultUnitRate)}/con</TableCell>
@@ -314,7 +308,7 @@ function PayrollPanel() {
       <TableCell>{row.totals.monthQuantity} con<div className="text-xs text-muted-foreground">{formatMoney(row.totals.monthAmount)}</div></TableCell>
       <TableCell>{row.totals.allQuantity} con<div className="text-xs text-muted-foreground">{formatMoney(row.totals.allAmount)}</div></TableCell><TableCell>{row.totals.pendingTasks} task</TableCell>
     </TableRow>)}</TableBody>
-  </Table></CardContent></Card>;
+  </Table></div></CardContent></Card>;
 }
 
 function PaymentControlPanel() {

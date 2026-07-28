@@ -100,20 +100,18 @@ export function ProxyTab() {
   }
 
   return (
-    <div className="space-y-5">
-      <MktProxyPanel onImported={load} />
-
+    <div className="space-y-4">
       <Card>
-        <CardHeader className="flex-row items-center gap-3 space-y-0">
+        <CardHeader className="flex-row flex-wrap items-center gap-2 space-y-0 border-b">
           <CardTitle className="mr-auto">Thư viện proxy</CardTitle>
-          <Button onClick={openAdd}><Plus className="h-4 w-4" /> Thêm mới</Button>
           <Input placeholder="Tìm kiếm..." value={q} onChange={(e) => setQ(e.target.value)} className="max-w-56" />
           <Button variant="outline" onClick={checkAll} disabled={refreshing}>
             <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} /> Làm mới
           </Button>
+          <Button onClick={openAdd}><Plus className="h-4 w-4" /> Thêm mới</Button>
         </CardHeader>
         <CardContent>
-          <Table>
+          <div className="overflow-x-auto"><Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Loại</TableHead>
@@ -147,10 +145,12 @@ export function ProxyTab() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </Table></div>
           {!list.length && <div className="py-10 text-center text-muted-foreground">Chưa có proxy nào. Bấm "Thêm mới" để thêm proxy thường hoặc proxy API (mktproxy).</div>}
         </CardContent>
       </Card>
+
+      <MktProxyPanel onImported={load} />
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent>
@@ -271,9 +271,15 @@ function MktProxyPanel({ onImported }: { onImported: () => void }) {
   }
 
   return (
-    <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><ShoppingCart className="h-4 w-4" /> Mua proxy từ mktproxy.com</CardTitle></CardHeader>
-      <CardContent className="space-y-4">
+    <details className="group overflow-hidden rounded-lg border bg-card">
+      <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+        <span className="text-sm font-semibold">Mua proxy từ mktproxy.com</span>
+        <span className="text-xs text-muted-foreground">Mở khi cần mua và nạp proxy mới vào kho</span>
+        <span className="ml-auto text-xs text-muted-foreground group-open:hidden">Mở cấu hình</span>
+        <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">Thu gọn</span>
+      </summary>
+      <div className="space-y-4 border-t p-4">
         <div className="space-y-1.5">
           <Label>API key tài khoản <span className="text-muted-foreground font-normal">({keyState}) — để mua &amp; xem số dư</span></Label>
           <div className="flex gap-2">
@@ -334,7 +340,7 @@ function MktProxyPanel({ onImported }: { onImported: () => void }) {
 
         <div className="space-y-1.5"><Label>Tags (gán cho proxy nạp vào kho)</Label><Input value={tags} onChange={(e) => setTags(e.target.value)} /></div>
         <Button onClick={buy} disabled={buying}>{buying ? 'Đang mua & chờ giao...' : 'Mua & nạp vào kho (tốn tiền)'}</Button>
-      </CardContent>
-    </Card>
+      </div>
+    </details>
   );
 }

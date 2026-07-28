@@ -32,28 +32,45 @@ export function ProjectTab() {
   const selected = projects.find((p) => p.id === selectedId) || null;
 
   return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[320px_1fr]">
-      <Card className="h-fit">
-        <CardHeader><Button onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4" /> Tạo project</Button></CardHeader>
-        <CardContent className="space-y-1.5">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">Danh sách project</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Chọn một project để cấu hình và chạy flow.</p>
+        </div>
+        <Button onClick={() => setCreateOpen(true)}><Plus /> Tạo project</Button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
+        <div className="h-fit overflow-hidden rounded-lg border bg-card">
+          <div className="border-b px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {projects.length} project
+          </div>
+          <div className="p-1.5">
           {!projects.length && <div className="text-sm text-muted-foreground">Chưa có project nào.</div>}
           {projects.map((p) => {
             const flowLbl = flows.find((f) => f.name === p.flowName)?.label || p.flowName;
             return (
-              <div key={p.id} onClick={() => setSelectedId(p.id)} className={cn('rounded-lg border p-3 cursor-pointer transition-colors', p.id === selectedId ? 'border-primary bg-accent' : 'hover:bg-accent/50')}>
-                <div className="font-medium">{p.name}</div>
-                <div className="text-xs text-muted-foreground">{flowLbl} · {p.profileIds.length} profile</div>
-              </div>
+              <button
+                type="button"
+                key={p.id}
+                onClick={() => setSelectedId(p.id)}
+                className={cn('w-full rounded-md px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', p.id === selectedId ? 'bg-accent text-accent-foreground' : 'hover:bg-muted')}
+              >
+                <span className="block truncate text-sm font-medium">{p.name}</span>
+                <span className="mt-0.5 block truncate text-xs text-muted-foreground">{flowLbl} · {p.profileIds.length} profile</span>
+              </button>
             );
           })}
-        </CardContent>
-      </Card>
+          </div>
+        </div>
 
-      {selected ? (
-        <ProjectConfig key={selected.id} project={selected} flows={flows} onChanged={load} onDeleted={() => { setSelectedId(null); load(); }} />
-      ) : (
-        <Card><CardContent className="py-16 text-center text-muted-foreground">Chọn một project bên trái để cấu hình, hoặc tạo project mới.</CardContent></Card>
-      )}
+        {selected ? (
+          <ProjectConfig key={selected.id} project={selected} flows={flows} onChanged={load} onDeleted={() => { setSelectedId(null); load(); }} />
+        ) : (
+          <Card><CardContent className="py-20 text-center text-sm text-muted-foreground">Chọn một project bên trái để cấu hình, hoặc tạo project mới.</CardContent></Card>
+        )}
+      </div>
 
       <CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} flows={flows} onCreated={(id) => { setSelectedId(id); load(); }} />
     </div>
@@ -199,17 +216,21 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
     : sellProducts;
 
   return (
-    <Card>
-      <CardContent className="pt-5 space-y-5">
-        <div className="flex items-center gap-3">
-          <Input value={name} onChange={(e) => setName(e.target.value)} onBlur={doSave} className="max-w-xs font-semibold" />
-          {saved && <span className="text-xs text-green-600">✓ Đã lưu</span>}
-          <div className="ml-auto flex gap-2">
-            <Button onClick={run} disabled={running}><Play className="h-4 w-4" /> {running ? 'Đang chạy...' : 'Chạy'}</Button>
-            <Button variant="outline" onClick={del}><Trash2 className="h-4 w-4 text-destructive" /> Xóa</Button>
+    <div className="min-w-0 space-y-4">
+      <Card>
+        <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center">
+          <div className="min-w-0 flex-1">
+            <Input value={name} onChange={(e) => setName(e.target.value)} onBlur={doSave} className="max-w-md font-semibold" aria-label="Tên project" />
+            <div className="mt-1 h-4 text-xs text-muted-foreground">{saved ? 'Đã lưu thay đổi' : 'Tự động lưu khi thay đổi cấu hình'}</div>
           </div>
-        </div>
+          <div className="flex gap-2">
+            <Button onClick={run} disabled={running}><Play /> {running ? 'Đang chạy...' : 'Chạy project'}</Button>
+            <Button variant="outline" onClick={del}><Trash2 className="text-destructive" /> Xóa</Button>
+          </div>
+        </CardContent>
+      </Card>
 
+      <ConfigSection title="Cấu hình chính" description="Chọn flow và nguồn hồ sơ dùng cho lần chạy này.">
         <div className="space-y-1.5">
           <Label>Flow</Label>
           <Select value={flowName} onValueChange={(value) => { setFlowName(value); if (value !== 'capcut-signin') setDistributionEnabled(false); }}>
@@ -221,146 +242,134 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
 
         {flowName === 'chatgpt-signup' && (
           <div className="space-y-1.5">
-            <Label>Mã service SmsBower <span className="text-muted-foreground font-normal">(flow ChatGPT thuê gmail nhận OTP)</span></Label>
+            <Label>Mã service SmsBower <span className="font-normal text-muted-foreground">(flow ChatGPT thuê gmail nhận OTP)</span></Label>
             <Input value={smsService} onChange={(e) => setSmsService(e.target.value)} placeholder="vd: dr" />
             <p className="text-xs text-muted-foreground">Lấy mã còn kho ở tab Mail → "Xem tồn kho gmail". Cần API key SmsBower đã lưu.</p>
           </div>
         )}
 
         {!distributionEnabled && <div className="space-y-1.5">
-          <Label>Chọn profile chạy <span className="text-muted-foreground font-normal">(bỏ trống nếu dùng profile tạm)</span></Label>
-          <div className="flex flex-wrap gap-3 rounded-lg border p-3 max-h-40 overflow-auto">
+          <Label>Chọn profile chạy <span className="font-normal text-muted-foreground">(bỏ trống nếu dùng profile tạm)</span></Label>
+          <div className="flex max-h-40 flex-wrap gap-3 overflow-auto rounded-md border p-3">
             {allProfiles.length ? allProfiles.map((pr) => (
-              <label key={pr.id} className="flex items-center gap-2 text-sm cursor-pointer">
+              <label key={pr.id} className="flex cursor-pointer items-center gap-2 text-sm">
                 <Checkbox checked={profileIds.includes(pr.id)} onCheckedChange={() => toggleProfile(pr.id)} /> {pr.name}
               </label>
             )) : <span className="text-sm text-muted-foreground">Chưa có hồ sơ nào.</span>}
           </div>
         </div>}
+      </ConfigSection>
 
-        {flowName === 'capcut-signin' && (
-          <div className="border-t pt-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div><h3 className="font-semibold text-sm">Tự phân phối link CapCut</h3><p className="text-xs text-muted-foreground">Mỗi link thành một task, gửi email + password và nút thanh toán; chỉ thả ❤️ mới tính 1 con.</p></div>
-              <Switch checked={distributionEnabled} onCheckedChange={(value) => { setDistributionEnabled(value); if (value) setProfileIds([]); }} />
+      {flowName === 'capcut-signin' && (
+        <ConfigSection title="Phân phối nhân viên" description="Gửi link CapCut theo quota và tự động ghi nhận khi tài khoản lên VIP.">
+          <div className="flex items-center justify-between gap-4 rounded-md border bg-muted/30 p-3">
+            <div>
+              <div className="text-sm font-medium">Tự phân phối link CapCut</div>
+              <p className="mt-0.5 text-xs text-muted-foreground">Telegram chỉ hiển thị email và nút thanh toán. Khi xác minh VIP thành công, bot tự thả tim, cộng công và thông báo kết quả.</p>
             </div>
-            {distributionEnabled && <>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {workEmployees.filter((employee) => employee.status !== 'archived').map((employee) => (
-                  <div key={employee.id} className="flex items-center gap-3 border p-3">
-                    <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{employee.fullName}</div><div className="text-xs text-muted-foreground">{employee.status === 'active' ? `${employee.defaultUnitRate.toLocaleString('vi-VN')}đ/con` : 'Chưa active/bind'}</div></div>
-                    <Input className="w-24" type="number" min="0" value={quotaByEmployee[employee.id] ?? '0'} onChange={(e) => setQuotaByEmployee((current) => ({ ...current, [employee.id]: e.target.value }))} />
-                    <span className="text-xs text-muted-foreground">con</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-between border-t pt-3 text-sm"><span>Tổng profile sẽ tạo</span><strong>{distributionTotal} con</strong></div>
-              <p className="text-xs text-muted-foreground">Quota chạy round-robin theo thứ tự nhân viên. Nhân viên chưa bind sẽ làm run bị từ chối trước khi mở browser.</p>
-            </>}
+            <Switch checked={distributionEnabled} onCheckedChange={(value) => { setDistributionEnabled(value); if (value) setProfileIds([]); }} />
           </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5"><Label>Số lượng cần tạo <span className="text-muted-foreground font-normal">(account — tạo profile tạm rồi tự xóa)</span></Label><Input disabled={distributionEnabled} type="number" min={0} value={ephemeral} onChange={(e) => setEphemeral(e.target.value)} />{distributionEnabled && <p className="text-xs text-muted-foreground">Tự lấy từ tổng quota nhân viên.</p>}</div>
-          <div className="space-y-1.5"><Label>Số proxy chạy song song <span className="text-muted-foreground font-normal">(= số luồng)</span></Label><Input type="number" min={1} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} /></div>
-        </div>
-        {Number(ephemeral) > 0 && Number(concurrency) > 0 && (
-          <p className="-mt-2 text-xs text-muted-foreground">
-            ≈ {Math.ceil(Number(ephemeral) / Number(concurrency))} account mỗi proxy · mỗi account tự xoay ra IP egress <b>chưa từng reg</b>.
-          </p>
-        )}
-
-        {flowName !== 'chatgpt-signup' && (
-        <>
-        <div className="space-y-1.5">
-          <Label>Mail (tùy chọn, cho bước OTP)</Label>
-          <Select value={mailId || 'none'} onValueChange={(v) => setMailId(v === 'none' ? '' : v)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="none">— Không gán —</SelectItem>{allMails.map((m) => <SelectItem key={m.id} value={m.id}>{m.email}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label>Mua mail — nhà cung cấp <span className="text-muted-foreground font-normal">(khi flow tự mua)</span></Label>
-          <Select value={mailProvider} onValueChange={(v) => setMailProvider(v as 'dongvanfb' | 'selltaikhoan')}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="dongvanfb">dongvanfb</SelectItem>
-              <SelectItem value="selltaikhoan">selltaikhoan (rẻ hơn)</SelectItem>
-            </SelectContent>
-          </Select>
-          {mailProvider === 'dongvanfb' ? (
-            <div className="flex gap-2">
-              <Select value={buyType || 'none'} onValueChange={(v) => { if (v === 'none') { setBuyType(''); setBuyQuality(''); return; } setBuyType(v); const at = accountTypes.find((t) => String(t.id) === v); setBuyQuality(at ? String(at.quality) : ''); }}>
-                <SelectTrigger><SelectValue placeholder={buyType ? `Đã lưu: id ${buyType} (q${buyQuality || '0'})` : '— Không mua tự động —'} /></SelectTrigger>
-                <SelectContent><SelectItem value="none">— Không mua tự động —</SelectItem>{accountTypes.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name} — {t.price}đ (q{t.quality})</SelectItem>)}</SelectContent>
-              </Select>
-              <Button variant="outline" onClick={loadTypes}>Tải danh sách {typeState}</Button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <Input placeholder="Lọc (vd outlook)" value={sellSearch} onChange={(e) => setSellSearch(e.target.value)} />
-                <Button variant="outline" onClick={loadSellProducts}>Tải danh sách {sellProductState}</Button>
-              </div>
-              <Select value={buyProductId || 'none'} onValueChange={(v) => setBuyProductId(v === 'none' ? '' : v)}>
-                <SelectTrigger><SelectValue placeholder={buyProductId ? `Đã lưu: id ${buyProductId}` : '— Không mua tự động —'} /></SelectTrigger>
-                <SelectContent><SelectItem value="none">— Không mua tự động —</SelectItem>{sellFiltered.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {p.price}đ{p.amount != null ? ` (kho ${p.amount})` : ''}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-          )}
-        </div>
-        </>
-        )}
-
-        <div className="border-t pt-4 space-y-3">
-          <h3 className="font-semibold text-sm">Nguồn IP (proxy)</h3>
-          <p className="text-xs text-muted-foreground">
-            Dùng proxy <b>có sẵn trong kho</b> (không mua tự động). Với proxy dạng <b>API (mktproxy xoay)</b>: mỗi account tự
-            <b> xoay tới IP egress chưa từng reg</b> (lưu ở <code>used-ips.json</code>), tôn trọng cooldown ~60s.
-          </p>
-          <label className="flex items-center gap-3 cursor-pointer"><Switch checked={usePool} onCheckedChange={setUsePool} /><span className="text-sm">Rút proxy từ kho theo tag <span className="text-muted-foreground">(chỉ proxy Live)</span></span></label>
-          <Input disabled={!usePool} value={poolTags} onChange={(e) => setPoolTags(e.target.value)} placeholder="tag proxy, cách nhau dấu phẩy (trống = mọi proxy Live)" />
-          <label className="flex items-center gap-3 cursor-pointer"><Switch disabled={!usePool} checked={poolLive} onCheckedChange={setPoolLive} /><span className="text-sm">Chỉ dùng proxy Live</span></label>
-        </div>
-
-        <div className="border-t pt-4 space-y-3">
-          <h3 className="font-semibold text-sm">Hiệu năng</h3>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <Switch checked={headless} onCheckedChange={setHeadless} />
-            <span className="text-sm">Chạy ẩn (Headless) <span className="text-muted-foreground">(không mở cửa sổ Camoufox)</span></span>
-          </label>
-          <p className="text-xs text-muted-foreground">Tắt để dùng chế độ mặc định: app desktop hiện cửa sổ, Docker tiếp tục dùng màn hình ảo.</p>
-          <label className="flex items-center gap-3 cursor-pointer"><Switch checked={blockImages} onCheckedChange={setBlockImages} /><span className="text-sm">Chặn tải hình ảnh <span className="text-muted-foreground">(chạy nhanh hơn, tiết kiệm băng thông proxy)</span></span></label>
-        </div>
-
-        <div className="space-y-1.5"><Label>Ghi chú</Label><Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="(tùy chọn)" /></div>
-
-        {(results || runError) && (
-          <div className="border-t pt-4">
-            {runError && <div className="text-destructive text-sm">Lỗi: {runError}</div>}
-            {results && (
-              <>
-                <h3 className="font-semibold text-sm mb-2">Kết quả — {results.filter((r) => r.ok).length}/{results.length} thành công</h3>
-                <div className="space-y-1">
-                  {results.map((r, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm">
-                      {r.ok ? <Badge variant="success">✓</Badge> : <Badge variant="danger">✗</Badge>}
-                      <span className="font-medium">{nameById(r.profileId)}</span>
-                      <span className={r.ok ? 'text-muted-foreground' : 'text-destructive'}>{r.error || 'OK'}</span>
-                    </div>
-                  ))}
+          {distributionEnabled && <>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {workEmployees.filter((employee) => employee.status !== 'archived').map((employee) => (
+                <div key={employee.id} className="flex items-center gap-3 rounded-md border p-3">
+                  <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium">{employee.fullName}</div><div className="text-xs text-muted-foreground">{employee.status === 'active' ? `${employee.defaultUnitRate.toLocaleString('vi-VN')}đ/con` : 'Chưa active/bind'}</div></div>
+                  <Input className="w-20" type="number" min="0" value={quotaByEmployee[employee.id] ?? '0'} onChange={(e) => setQuotaByEmployee((current) => ({ ...current, [employee.id]: e.target.value }))} />
+                  <span className="text-xs text-muted-foreground">con</span>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">Mở panel Log ở dưới để xem flow dừng ở bước nào.</p>
-              </>
+              ))}
+            </div>
+            <div className="flex items-center justify-between border-t pt-3 text-sm"><span>Tổng profile sẽ tạo</span><strong>{distributionTotal} con</strong></div>
+            <p className="text-xs text-muted-foreground">Quota chạy round-robin theo thứ tự nhân viên. Nhân viên chưa bind sẽ làm run bị từ chối trước khi mở browser.</p>
+          </>}
+        </ConfigSection>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ConfigSection title="Số lượng và luồng chạy" description="Điều chỉnh quy mô của lần chạy.">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
+            <div className="space-y-1.5"><Label>Số lượng cần tạo</Label><Input disabled={distributionEnabled} type="number" min={0} value={ephemeral} onChange={(e) => setEphemeral(e.target.value)} />{distributionEnabled && <p className="text-xs text-muted-foreground">Tự lấy từ tổng quota nhân viên.</p>}</div>
+            <div className="space-y-1.5"><Label>Số proxy chạy song song</Label><Input type="number" min={1} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} /></div>
+          </div>
+          {Number(ephemeral) > 0 && Number(concurrency) > 0 && <p className="text-xs text-muted-foreground">Khoảng {Math.ceil(Number(ephemeral) / Number(concurrency))} account mỗi proxy; mỗi account tự xoay tới IP egress chưa từng đăng ký.</p>}
+        </ConfigSection>
+
+        <ConfigSection title="Hiệu năng" description="Tùy chọn hiển thị và tải tài nguyên browser.">
+          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border p-3"><span className="text-sm">Chạy ẩn (Headless)<span className="block text-xs text-muted-foreground">Không mở cửa sổ Camoufox</span></span><Switch checked={headless} onCheckedChange={setHeadless} /></label>
+          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border p-3"><span className="text-sm">Chặn tải hình ảnh<span className="block text-xs text-muted-foreground">Chạy nhanh hơn, tiết kiệm băng thông proxy</span></span><Switch checked={blockImages} onCheckedChange={setBlockImages} /></label>
+        </ConfigSection>
+      </div>
+
+      {flowName !== 'chatgpt-signup' && (
+        <ConfigSection title="Mail và OTP" description="Gán mail có sẵn hoặc chọn nguồn mua mail tự động.">
+          <div className="space-y-1.5">
+            <Label>Mail dùng cho OTP</Label>
+            <Select value={mailId || 'none'} onValueChange={(v) => setMailId(v === 'none' ? '' : v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="none">— Không gán —</SelectItem>{allMails.map((m) => <SelectItem key={m.id} value={m.id}>{m.email}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Nhà cung cấp khi flow tự mua mail</Label>
+            <Select value={mailProvider} onValueChange={(v) => setMailProvider(v as 'dongvanfb' | 'selltaikhoan')}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="dongvanfb">dongvanfb</SelectItem><SelectItem value="selltaikhoan">selltaikhoan (rẻ hơn)</SelectItem></SelectContent>
+            </Select>
+            {mailProvider === 'dongvanfb' ? (
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Select value={buyType || 'none'} onValueChange={(v) => { if (v === 'none') { setBuyType(''); setBuyQuality(''); return; } setBuyType(v); const at = accountTypes.find((t) => String(t.id) === v); setBuyQuality(at ? String(at.quality) : ''); }}>
+                  <SelectTrigger><SelectValue placeholder={buyType ? `Đã lưu: id ${buyType} (q${buyQuality || '0'})` : '— Không mua tự động —'} /></SelectTrigger>
+                  <SelectContent><SelectItem value="none">— Không mua tự động —</SelectItem>{accountTypes.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name} — {t.price}đ (q{t.quality})</SelectItem>)}</SelectContent>
+                </Select>
+                <Button className="shrink-0" variant="outline" onClick={loadTypes}>Tải danh sách {typeState}</Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-col gap-2 sm:flex-row"><Input placeholder="Lọc (vd outlook)" value={sellSearch} onChange={(e) => setSellSearch(e.target.value)} /><Button className="shrink-0" variant="outline" onClick={loadSellProducts}>Tải danh sách {sellProductState}</Button></div>
+                <Select value={buyProductId || 'none'} onValueChange={(v) => setBuyProductId(v === 'none' ? '' : v)}>
+                  <SelectTrigger><SelectValue placeholder={buyProductId ? `Đã lưu: id ${buyProductId}` : '— Không mua tự động —'} /></SelectTrigger>
+                  <SelectContent><SelectItem value="none">— Không mua tự động —</SelectItem>{sellFiltered.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} — {p.price}đ{p.amount != null ? ` (kho ${p.amount})` : ''}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
             )}
           </div>
-        )}
+        </ConfigSection>
+      )}
 
-        {distributionRuns[0] && <DistributionStatus run={distributionRuns[0]} onChanged={refreshDistribution} />}
-      </CardContent>
-    </Card>
+      <ConfigSection title="Nguồn IP" description="Chỉ dùng proxy có sẵn trong kho; proxy API tự xoay tới IP chưa từng đăng ký.">
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border p-3"><span className="text-sm">Rút proxy từ kho theo tag<span className="block text-xs text-muted-foreground">Bỏ trống tag để dùng mọi proxy phù hợp</span></span><Switch checked={usePool} onCheckedChange={setUsePool} /></label>
+        <Input disabled={!usePool} value={poolTags} onChange={(e) => setPoolTags(e.target.value)} placeholder="Các tag proxy, cách nhau bằng dấu phẩy" />
+        <label className="flex cursor-pointer items-center gap-3 text-sm"><Switch disabled={!usePool} checked={poolLive} onCheckedChange={setPoolLive} /> Chỉ dùng proxy Live</label>
+        <p className="text-xs text-muted-foreground">IP đã dùng được lưu trong <code>used-ips.json</code>; hệ thống tôn trọng cooldown khoảng 60 giây.</p>
+      </ConfigSection>
+
+      <ConfigSection title="Ghi chú" description="Thông tin nội bộ cho project.">
+        <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ghi chú tùy chọn" />
+      </ConfigSection>
+
+      {(results || runError) && (
+        <ConfigSection title="Kết quả lần chạy" description="Mở bảng Log phía dưới để xem chi tiết từng bước.">
+          {runError && <div className="text-sm text-destructive">Lỗi: {runError}</div>}
+          {results && <div className="space-y-1">
+            <div className="mb-2 text-sm font-medium">{results.filter((r) => r.ok).length}/{results.length} thành công</div>
+            {results.map((r, i) => <div key={i} className="flex items-center gap-2 text-sm"><Badge variant={r.ok ? 'success' : 'danger'}>{r.ok ? '✓' : '✗'}</Badge><span className="font-medium">{nameById(r.profileId)}</span><span className={r.ok ? 'text-muted-foreground' : 'text-destructive'}>{r.error || 'OK'}</span></div>)}
+          </div>}
+        </ConfigSection>
+      )}
+
+      {distributionRuns[0] && <DistributionStatus run={distributionRuns[0]} onChanged={refreshDistribution} />}
+    </div>
   );
+}
+
+function ConfigSection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return <Card>
+    <CardHeader className="border-b">
+      <CardTitle className="text-sm">{title}</CardTitle>
+      <p className="text-xs text-muted-foreground">{description}</p>
+    </CardHeader>
+    <CardContent className="space-y-4 pt-4">{children}</CardContent>
+  </Card>;
 }
 
 function DistributionStatus({ run, onChanged }: { run: DistributionRun; onChanged: () => void }) {
@@ -374,15 +383,18 @@ function DistributionStatus({ run, onChanged }: { run: DistributionRun; onChange
   const statusLabel = run.status === 'running' ? 'Đang gửi' : run.status === 'paused' ? 'Tạm dừng' : 'Đã kết thúc';
   const failedItems = run.items.filter((item) => item.status === 'failed');
   return (
-    <div className="border-t pt-4 space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <h3 className="text-sm font-semibold">Phân phối gần nhất</h3>
+    <Card>
+      <CardHeader className="flex-row flex-wrap items-center gap-3 space-y-0 border-b">
+        <CardTitle className="text-sm">Phân phối gần nhất</CardTitle>
         <Badge variant={run.status === 'paused' ? 'muted' : run.status === 'finished' ? 'outline' : 'success'}>{statusLabel}</Badge>
-        <Button className="ml-auto" size="sm" variant="outline" onClick={onChanged}><RefreshCw /> Làm mới</Button>
-        <Button size="sm" variant="outline" onClick={clearRun}><Trash2 className="text-destructive" /> Xóa đợt cũ</Button>
-        {run.status === 'running' && <Button size="sm" variant="outline" onClick={() => action(() => workApi.pauseDistribution(run.id), 'Đã tạm dừng gửi Telegram')}><Pause /> Tạm dừng gửi</Button>}
-        {run.status === 'paused' && <Button size="sm" onClick={() => action(() => workApi.resumeDistribution(run.id), 'Đã tiếp tục gửi Telegram')}><Play /> Tiếp tục gửi</Button>}
-      </div>
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={onChanged}><RefreshCw /> Làm mới</Button>
+          <Button size="sm" variant="outline" onClick={clearRun}><Trash2 className="text-destructive" /> Xóa đợt cũ</Button>
+          {run.status === 'running' && <Button size="sm" variant="outline" onClick={() => action(() => workApi.pauseDistribution(run.id), 'Đã tạm dừng gửi Telegram')}><Pause /> Tạm dừng gửi</Button>}
+          {run.status === 'paused' && <Button size="sm" onClick={() => action(() => workApi.resumeDistribution(run.id), 'Đã tiếp tục gửi Telegram')}><Play /> Tiếp tục gửi</Button>}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-4">
       <div className="grid grid-cols-2 gap-px overflow-hidden border bg-border text-sm sm:grid-cols-5">
         {[
           ['Đã tạo', `${run.generated}/${run.target}`], ['Đang chờ', run.queued], ['Đã gửi', run.sent], ['Đã tim', run.completed], ['Gửi lỗi', run.failed],
@@ -405,7 +417,8 @@ function DistributionStatus({ run, onChanged }: { run: DistributionRun; onChange
           <Button size="sm" variant="outline" onClick={() => action(() => workApi.retryDistributionItem(item.id), 'Đã đưa link về hàng chờ')}><RotateCcw /> Gửi lại</Button>
         </div>)}
       </div>}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -4,26 +4,28 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 40 20% 98%;
+    --foreground: 150 9% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 150 9% 14%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --popover-foreground: 150 9% 14%;
+    --primary: 153 48% 29%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 42 16% 93%;
+    --secondary-foreground: 150 9% 18%;
+    --muted: 42 14% 94%;
+    --muted-foreground: 150 5% 43%;
+    --accent: 145 17% 91%;
+    --accent-foreground: 153 35% 21%;
     --destructive: 0 72.2% 50.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.6rem;
+    --destructive-foreground: 0 0% 100%;
+    --border: 45 11% 86%;
+    --input: 45 11% 82%;
+    --ring: 153 48% 29%;
+    --sidebar: 45 17% 96%;
+    --sidebar-accent: 42 13% 90%;
+    --radius: 0.5rem;
   }
 
   * {
@@ -32,7 +34,8 @@
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: "Segoe UI Variable", "Aptos", "Segoe UI", sans-serif;
+    text-rendering: optimizeLegibility;
   }
 }
 
@@ -43,4 +46,3 @@
 .no-drag {
   -webkit-app-region: no-drag;
 }
-

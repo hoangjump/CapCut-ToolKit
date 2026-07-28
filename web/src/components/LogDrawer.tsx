@@ -68,16 +68,13 @@ export function LogDrawer({ onActivity }: { onActivity?: () => void }) {
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-white shadow-[0_-6px_24px_rgba(15,23,42,0.08)]">
+    <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background">
       {/* Thanh điều khiển */}
       <div
-        className="flex h-11 cursor-pointer select-none items-center gap-3 px-4"
+        className="flex h-10 cursor-pointer select-none items-center gap-3 px-4"
         onClick={() => setOpen((o) => !o)}
       >
-        <span className="relative flex h-2.5 w-2.5">
-          {connected && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-60" />}
-          <span className={cn('relative inline-flex h-2.5 w-2.5 rounded-full', connected ? 'bg-green-500' : 'bg-slate-400')} />
-        </span>
+        <span className={cn('h-2 w-2 rounded-full', connected ? 'bg-emerald-600' : 'bg-slate-400')} />
         <span className="text-sm font-semibold">Log</span>
         <span className="text-xs text-muted-foreground">
           {visible.length ? `${visible.length} dòng` : ''}{paused ? ' · đã dừng' : ''}
