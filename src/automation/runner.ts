@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { BrowserManager } from '../browserManager.js';
-import type { BrowserCookieSnapshot, MailCredentials, MailCodeType, ProxyConfig, RunResult } from '../types.js';
+import type { BrowserCookieSnapshot, MailAcquireStrategy, MailCredentials, MailCodeType, ProxyConfig, RunResult } from '../types.js';
 import { getCode, getMessages } from '../mailClient.js';
 import { getFlow } from '../flows/index.js';
 import { PageHelper, setShotsDir } from './helper.js';
@@ -11,6 +11,7 @@ const log = createLogger('runner');
 
 /** Result of buying one mailbox for a profile — credentials for OTP + display. */
 export interface BoughtMailbox {
+  storeId: string;
   cred: MailCredentials;
   email: string;
   password?: string;
@@ -29,8 +30,14 @@ export interface RunProjectDeps {
     quality?: string;
     /** selltaikhoan: bắt buộc productId. */
     productId?: string;
+    strategy: MailAcquireStrategy;
+    stockTags?: string[];
+    profileId: string;
     profileName: string;
   }) => Promise<BoughtMailbox>;
+  /** Finalize the reserved mailbox after the profile finishes. Failed mail is
+   * quarantined and never automatically returned to stock. */
+  settleMail?: (id: string, outcome: { ok: boolean; error?: string }) => Promise<void>;
   /** Thuê một gmail dùng-một-lần từ SmsBower cho `service` (đăng ký ChatGPT…).
    *  Trả mailbox có waitCode/success/cancel. Absent khi chưa cấu hình key
    *  SmsBower → ctx.rentMail() ném lỗi rõ. */
@@ -64,6 +71,8 @@ export interface RunProjectInput {
   buyQuality?: string;
   /** ID sản phẩm selltaikhoan khi mailProvider='selltaikhoan'. */
   buyProductId?: string;
+  mailStrategy?: MailAcquireStrategy;
+  mailStockTags?: string[];
   /** Mã service SmsBower mặc định cho ctx.rentMail() (flow thuê gmail nhận OTP). */
   smsbowerService?: string;
 }
@@ -162,6 +171,7 @@ export async function runProject(
       // checkout URL / status. Exactly ONE row is written per profile in the
       // finally below — success OR failure — so a mid-flow crash still shows up.
       let boughtMail: BoughtMail | undefined;
+      let acquiredMailId: string | undefined;
       let reported: { checkoutUrl?: string; status?: string } = {};
 
       const ctx: FlowContext = {
@@ -178,18 +188,28 @@ export async function runProject(
           const profileName = session.profile.name;
           let bought: BoughtMailbox;
           if (provider === 'selltaikhoan') {
-            if (!input.buyProductId) {
-              throw new Error('buyMail (selltaikhoan): thiếu ID sản phẩm (đặt trong project)');
-            }
-            bought = await deps.buyMail({ provider, productId: input.buyProductId, profileName });
+            bought = await deps.buyMail({
+              provider,
+              productId: input.buyProductId,
+              strategy: input.mailStrategy ?? 'api-then-stock',
+              stockTags: input.mailStockTags,
+              profileId: session.profile.id,
+              profileName,
+            });
           } else {
             const accountType = buyInput?.accountType ?? input.buyAccountType;
             const quality = buyInput?.quality ?? input.buyQuality;
-            if (!accountType || !quality) {
-              throw new Error('buyMail: thiếu accountType/quality (đặt trong project hoặc truyền vào)');
-            }
-            bought = await deps.buyMail({ provider, accountType, quality, profileName });
+            bought = await deps.buyMail({
+              provider,
+              accountType,
+              quality,
+              strategy: input.mailStrategy ?? 'api-then-stock',
+              stockTags: input.mailStockTags,
+              profileId: session.profile.id,
+              profileName,
+            });
           }
+          acquiredMailId = bought.storeId;
           currentMail = bought.cred;
           ctx.mail = bought.cred;
           const full: BoughtMail = {
@@ -242,6 +262,13 @@ export async function runProject(
         await helper.screenshot(`error-${session.profile.name}`).catch(() => {});
         throw err;
       } finally {
+        if (acquiredMailId && deps.settleMail) {
+          try {
+            await deps.settleMail(acquiredMailId, { ok: !flowError, error: flowError?.message });
+          } catch (error) {
+            flowLog.warn(`cập nhật trạng thái mail lỗi: ${(error as Error).message}`);
+          }
+        }
         const mailLine = boughtMail
           ? [boughtMail.email, boughtMail.password ?? '', boughtMail.refreshToken, boughtMail.clientId].join('|')
           : '';

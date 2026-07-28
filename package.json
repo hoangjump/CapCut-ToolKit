@@ -41,7 +41,7 @@
   },
   "build": {
     "appId": "com.teamhatde.auto",
-    "productName": "TeamHatDe-Auto",
+    "productName": "TeamHatDe-Capcut-Auto",
     "asar": false,
     "directories": {
       "output": "release"

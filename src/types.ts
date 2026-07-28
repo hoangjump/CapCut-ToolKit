@@ -190,6 +190,10 @@ export interface MailCredentials {
   clientId: string;
 }
 
+export type MailStatus = 'unchecked' | 'available' | 'reserved' | 'used' | 'failed' | 'disabled';
+export type MailSource = 'manual' | 'dongvanfb' | 'selltaikhoan';
+export type MailAcquireStrategy = 'api-only' | 'api-then-stock' | 'stock-then-api' | 'stock-only';
+
 /** A mailbox in the local library — either bought via /user/buy or added by
  *  hand. `refreshToken` + `clientId` are secrets: never log or expose raw. */
 export interface MailRecord {
@@ -204,6 +208,14 @@ export interface MailRecord {
   note?: string;
   /** Order id from the buy response, when this mail came from a purchase. */
   orderCode?: string;
+  /** Lifecycle state used by the automatic stock allocator. */
+  status: MailStatus;
+  source: MailSource;
+  reservedByProfileId?: string;
+  reservedAt?: string;
+  usedAt?: string;
+  lastCheckedAt?: string;
+  lastError?: string;
   boughtAt: string;
 }
 
@@ -294,6 +306,10 @@ export interface ProjectRecord {
   /** ID sản phẩm selltaikhoan khi mailProvider='selltaikhoan' (vd 6762 = Outlook
    *  OAuth2 80đ). ctx.buyMail() mua 1 con từ sản phẩm này cho mỗi profile. */
   buyProductId?: string;
+  /** How ctx.buyMail() combines provider API purchases with the local reserve. */
+  mailStrategy?: MailAcquireStrategy;
+  /** Local reserve filter. Empty means every available mailbox. */
+  mailStockTags?: string[];
   /** Mã service SmsBower cho flow thuê gmail nhận OTP (vd flow chatgpt-signup).
    *  Lấy từ smsbower.com/api. Absent = flow dùng mặc định của nó. */
   smsbowerService?: string;

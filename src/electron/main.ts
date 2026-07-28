@@ -21,7 +21,7 @@ import type { StartedServer } from '../server/index.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('desktop');
-const appName = 'TeamHatDe-Auto';
+const appName = 'TeamHatDe-Capcut-Auto';
 const appId = 'com.teamhatde.auto';
 
 let mainWindow: BrowserWindow | null = null;
@@ -95,6 +95,8 @@ async function migrateLegacyStore(targetStore: string): Promise<void> {
   const appSupportDir = dirname(app.getPath('userData'));
   const candidates = [
     process.env.STORE_ROOT,
+    join(appSupportDir, 'TeamHatDe-Auto', 'profiles-store'),
+    join(appSupportDir, 'teamhatde-auto', 'profiles-store'),
     join(appSupportDir, 'capcut-auto', 'profiles-store'),
     join(appSupportDir, 'CapCut Auto', 'profiles-store'),
     join(process.cwd(), 'profiles-store'),

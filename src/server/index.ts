@@ -17,6 +17,7 @@ import { ProfileManager } from '../profileManager.js';
 import { BrowserManager } from '../browserManager.js';
 import { ProxyLeaseRegistry } from '../proxyLeaseRegistry.js';
 import { MailStore, parseMailLine, providerFromEmail } from '../mailStore.js';
+import { acquireMailWithFallback } from '../mailAllocation.js';
 import { UsedIpStore } from '../usedIpStore.js';
 import { SettingsStore, maskKey } from '../settingsStore.js';
 import { getBalance, getAccountTypes, buyMail, getCode, getMessages } from '../mailClient.js';
@@ -35,7 +36,9 @@ import {
   defaultProxyRotation,
   type AntiDetectConfig,
   type BrowserSettings,
+  type MailAcquireStrategy,
   type MailCodeType,
+  type MailRecord,
   type Profile,
   type ProjectRecord,
   type ProxyRotation,
@@ -55,6 +58,12 @@ import { TunnelManager } from './tunnelManager.js';
 import { PaymentProxyAllocator, type RotatedPaymentProxy } from './paymentProxyAllocator.js';
 
 const log = createLogger('server');
+const MAIL_STRATEGIES = new Set<MailAcquireStrategy>(['api-only', 'api-then-stock', 'stock-then-api', 'stock-only']);
+
+function parseMailStrategy(raw: unknown): MailAcquireStrategy | undefined {
+  const value = String(raw ?? '') as MailAcquireStrategy;
+  return MAIL_STRATEGIES.has(value) ? value : undefined;
+}
 
 export interface ServerConfig {
   host?: string;
@@ -158,6 +167,14 @@ function toDto(p: ProxyRecord) {
     isApi: Boolean(p.apiProvider),
     apiProvider: p.apiProvider,
   };
+}
+
+function mailDto(mail: ReturnType<MailStore['list']>[number]) {
+  const { password, refreshToken, clientId, ...safe } = mail;
+  void password;
+  void refreshToken;
+  void clientId;
+  return safe;
 }
 
 export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> {
@@ -1105,6 +1122,8 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
           clientId: m.clientId,
           provider: providerFromEmail(m.email),
           orderCode: result.orderCode,
+          status: 'available',
+          source: 'dongvanfb',
         })),
       );
       res.json({
@@ -1113,7 +1132,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         balance: result.balance,
         bought: result.mails.length,
         added: created.length,
-        mails: created,
+        mails: created.map(mailDto),
       });
     } catch (err) {
       res.status(502).json({ error: (err as Error).message });
@@ -1171,9 +1190,11 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
           clientId: m.clientId,
           provider: providerFromEmail(m.email),
           orderCode: result.transId,
+          status: 'available',
+          source: 'selltaikhoan',
         })),
       );
-      res.json({ transId: result.transId, bought: result.mails.length, added: created.length, mails: created });
+      res.json({ transId: result.transId, bought: result.mails.length, added: created.length, mails: created.map(mailDto) });
     } catch (err) {
       res.status(502).json({ error: (err as Error).message });
     }
@@ -1198,14 +1219,107 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   });
 
   app.get('/api/mails', (_req: Request, res: Response) => {
-    res.json(mails.list());
+    res.json(mails.list().map(mailDto));
+  });
+
+  app.post('/api/mails/import', async (req: Request, res: Response) => {
+    const lines = Array.isArray(req.body?.lines) ? req.body.lines.map(String) : [];
+    const tags: string[] = Array.isArray(req.body?.tags)
+      ? (req.body.tags as unknown[]).map(String).map((tag: string) => tag.trim()).filter(Boolean)
+      : [];
+    if (!lines.length) {
+      res.status(400).json({ error: 'Danh sách import đang trống' });
+      return;
+    }
+    const valid = [];
+    const invalid: Array<{ line: number; error: string }> = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index].trim();
+      if (!line) continue;
+      try {
+        const normalizedLine = line.includes('|') ? line : line.split(',').map((part: string) => part.trim()).join('|');
+        valid.push({ ...parseMailLine(normalizedLine), tags, status: 'unchecked' as const, source: 'manual' as const });
+      } catch (error) {
+        invalid.push({ line: index + 1, error: (error as Error).message });
+      }
+    }
+    const created = await mails.createMany(valid);
+    res.json({
+      total: lines.filter((line: string) => line.trim()).length,
+      added: created.length,
+      duplicates: valid.length - created.length,
+      invalid,
+      mails: created.map(mailDto),
+    });
+  });
+
+  app.put('/api/mails/status', async (req: Request, res: Response) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [];
+    const status = String(req.body?.status ?? '');
+    if (!ids.length) {
+      res.status(400).json({ error: 'Chưa chọn mail' });
+      return;
+    }
+    if (!['unchecked', 'available', 'used', 'failed', 'disabled'].includes(status)) {
+      res.status(400).json({ error: 'Trạng thái mail không hợp lệ' });
+      return;
+    }
+    try {
+      const updated = await mails.updateStatus(ids, status as 'unchecked' | 'available' | 'used' | 'failed' | 'disabled');
+      res.json({ updated });
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/mails/check', async (req: Request, res: Response) => {
+    const ids: string[] = Array.isArray(req.body?.ids) ? [...new Set((req.body.ids as unknown[]).map(String))] : [];
+    const targets = ids.map((id) => mails.get(id)).filter((mail): mail is MailRecord => Boolean(mail));
+    if (!targets.length) {
+      res.status(400).json({ error: 'Không tìm thấy mail cần kiểm tra' });
+      return;
+    }
+    const reserved = targets.find((mail) => mail.status === 'reserved');
+    if (reserved) {
+      res.status(409).json({ error: `Mail ${reserved.email} đang được giữ bởi một profile, chưa thể kiểm tra` });
+      return;
+    }
+    const results: Array<{ id: string; error?: string }> = [];
+    let cursor = 0;
+    const worker = async () => {
+      for (;;) {
+        const index = cursor;
+        cursor += 1;
+        const mail = targets[index];
+        if (!mail) return;
+        try {
+          await getMessages({
+            email: mail.email,
+            password: mail.password,
+            refreshToken: mail.refreshToken,
+            clientId: mail.clientId,
+          });
+          results.push({ id: mail.id });
+        } catch (error) {
+          results.push({ id: mail.id, error: (error as Error).message });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, () => worker()));
+    await mails.markCheckResults(results);
+    res.json({
+      checked: results.length,
+      available: results.filter((result) => !result.error).length,
+      failed: results.filter((result) => result.error).length,
+      results,
+    });
   });
 
   app.post('/api/mails', async (req: Request, res: Response) => {
     try {
       const body = req.body ?? {};
       if (typeof body.line === 'string' && body.line.trim()) {
-        res.status(201).json(await mails.create(parseMailLine(body.line)));
+        res.status(201).json(mailDto(await mails.create({ ...parseMailLine(body.line), status: 'unchecked', source: 'manual' })));
         return;
       }
       if (!body.email || !body.refreshToken || !body.clientId) {
@@ -1218,8 +1332,10 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         refreshToken: String(body.refreshToken).trim(),
         clientId: String(body.clientId).trim(),
         note: body.note ? String(body.note) : undefined,
+        status: 'unchecked',
+        source: 'manual',
       });
-      res.status(201).json(created);
+      res.status(201).json(mailDto(created));
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
     }
@@ -1242,7 +1358,8 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       await mails.delete(String(req.params.id));
       res.status(204).end();
     } catch (err) {
-      res.status(404).json({ error: (err as Error).message });
+      const message = (err as Error).message;
+      res.status(message.includes('đang được giữ') ? 409 : 404).json({ error: message });
     }
   });
 
@@ -1354,6 +1471,10 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         buyAccountType: body.buyAccountType ? String(body.buyAccountType) : undefined,
         buyQuality: body.buyQuality ? String(body.buyQuality) : undefined,
         buyProductId: body.buyProductId ? String(body.buyProductId) : undefined,
+        mailStrategy: parseMailStrategy(body.mailStrategy),
+        mailStockTags: Array.isArray(body.mailStockTags)
+          ? (body.mailStockTags as unknown[]).map(String).map((tag: string) => tag.trim()).filter(Boolean)
+          : undefined,
         smsbowerService: body.smsbowerService ? String(body.smsbowerService) : undefined,
         ephemeralProxyPool: parseEphemeralPool(body.ephemeralProxyPool),
         blockImages: body.blockImages === true ? true : undefined,
@@ -1386,6 +1507,10 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       if (body.buyAccountType !== undefined) patch.buyAccountType = body.buyAccountType ? String(body.buyAccountType) : undefined;
       if (body.buyQuality !== undefined) patch.buyQuality = body.buyQuality ? String(body.buyQuality) : undefined;
       if (body.buyProductId !== undefined) patch.buyProductId = body.buyProductId ? String(body.buyProductId) : undefined;
+      if (body.mailStrategy !== undefined) patch.mailStrategy = parseMailStrategy(body.mailStrategy);
+      if (body.mailStockTags !== undefined) patch.mailStockTags = Array.isArray(body.mailStockTags)
+        ? (body.mailStockTags as unknown[]).map(String).map((tag: string) => tag.trim()).filter(Boolean)
+        : undefined;
       if (body.smsbowerService !== undefined) patch.smsbowerService = body.smsbowerService ? String(body.smsbowerService) : undefined;
       if (body.ephemeralProxyPool !== undefined) patch.ephemeralProxyPool = parseEphemeralPool(body.ephemeralProxyPool);
       if (body.blockImages !== undefined) patch.blockImages = body.blockImages === true ? true : undefined;
@@ -1446,7 +1571,11 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
         res.status(400).json({ error: 'Mail đã gán không còn tồn tại' });
         return;
       }
-      mail = { email: rec.email, refreshToken: rec.refreshToken, clientId: rec.clientId };
+      if (rec.status === 'reserved' || rec.status === 'failed' || rec.status === 'disabled') {
+        res.status(409).json({ error: `Mail đã gán hiện ở trạng thái "${rec.status}", hãy chọn mail khác` });
+        return;
+      }
+      mail = { email: rec.email, password: rec.password, refreshToken: rec.refreshToken, clientId: rec.clientId };
     }
     // Build the buyMail dependency only when an API key is configured. A flow that
     // calls ctx.buyMail() without a key gets a clear error (runner handles absent dep).
@@ -1458,44 +1587,51 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
       accountType?: string;
       quality?: string;
       productId?: string;
+      strategy: MailAcquireStrategy;
+      stockTags?: string[];
+      profileId: string;
       profileName: string;
     }) => {
-      let first: { email: string; password?: string; refreshToken: string; clientId: string } | undefined;
-      let orderCode: string | undefined;
-      if (input.provider === 'selltaikhoan') {
-        const key = settings.getSelltaikhoanKey();
-        if (!key) throw new Error('Chưa cấu hình API key selltaikhoan (vào tab Mail)');
-        if (!input.productId) throw new Error('Thiếu ID sản phẩm selltaikhoan');
-        const result = await selltaikhoan.buyProduct(key, input.productId, 1);
-        first = result.mails[0];
-        orderCode = result.transId;
-      } else {
-        const key = settings.getApiKey();
-        if (!key) throw new Error('Chưa cấu hình API key dongvanfb (vào tab Mail)');
-        if (!input.accountType || !input.quality) throw new Error('Thiếu accountType/quality');
-        const result = await buyMail(key, { accountType: input.accountType, quality: input.quality });
-        first = result.mails[0];
-        orderCode = result.orderCode;
-      }
-      if (!first) throw new Error('Mua mail thành công nhưng không nhận được dữ liệu mail');
-      // Persist to the store so the mailbox is visible/reusable in the Mail tab.
-      const [saved] = await mails.createMany([
-        {
-          email: first.email,
-          password: first.password,
-          refreshToken: first.refreshToken,
-          clientId: first.clientId,
-          provider: providerFromEmail(first.email),
-          orderCode,
-          note: `auto-mua cho ${input.profileName}`,
+      const acquired = await acquireMailWithFallback(
+        mails,
+        { profileId: input.profileId, strategy: input.strategy, stockTags: input.stockTags },
+        async () => {
+          if (input.provider === 'selltaikhoan') {
+            const key = settings.getSelltaikhoanKey();
+            if (!key) throw new Error('Chưa cấu hình API key selltaikhoan (vào tab Mail)');
+            if (!input.productId) throw new Error('Thiếu ID sản phẩm selltaikhoan');
+            const result = await selltaikhoan.buyProduct(key, input.productId, 1);
+            const first = result.mails[0];
+            if (!first) throw new Error('Mua mail thành công nhưng không nhận được dữ liệu mail');
+            return {
+              ...first,
+              provider: providerFromEmail(first.email),
+              orderCode: result.transId,
+              source: 'selltaikhoan',
+              note: `auto-mua cho ${input.profileName}`,
+            };
+          }
+          const key = settings.getApiKey();
+          if (!key) throw new Error('Chưa cấu hình API key dongvanfb (vào tab Mail)');
+          if (!input.accountType || !input.quality) throw new Error('Thiếu accountType/quality');
+          const result = await buyMail(key, { accountType: input.accountType, quality: input.quality });
+          const first = result.mails[0];
+          if (!first) throw new Error('Mua mail thành công nhưng không nhận được dữ liệu mail');
+          return {
+            ...first,
+            provider: providerFromEmail(first.email),
+            orderCode: result.orderCode,
+            source: 'dongvanfb',
+            note: `auto-mua cho ${input.profileName}`,
+          };
         },
-      ]);
-      const chosen = first;
-      const rec = saved ?? mails.list().find((m) => m.email.toLowerCase() === chosen.email.toLowerCase());
+      );
+      log.info(`[${input.profileName}] cấp mail ${acquired.email} từ ${acquired.source === 'manual' ? 'kho dự phòng' : acquired.source}`);
       return {
-        cred: { email: chosen.email, refreshToken: chosen.refreshToken, clientId: chosen.clientId },
-        email: chosen.email,
-        password: chosen.password ?? rec?.password,
+        storeId: acquired.id,
+        cred: { email: acquired.email, password: acquired.password, refreshToken: acquired.refreshToken, clientId: acquired.clientId },
+        email: acquired.email,
+        password: acquired.password,
       };
     };
     // rentMail dep: thuê gmail dùng-một-lần từ SmsBower (flow đăng ký ChatGPT…).
@@ -1641,11 +1777,17 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
           buyAccountType: project.buyAccountType,
           buyQuality: project.buyQuality,
           buyProductId: project.buyProductId,
+          mailStrategy: project.mailStrategy,
+          mailStockTags: project.mailStockTags,
           smsbowerService: project.smsbowerService,
         },
         { concurrency: project.concurrency, headless: runHeadless, storeRoot },
         {
           buyMail: buyMailDep,
+          settleMail: async (id, outcome) => {
+            if (outcome.ok) await mails.markUsed(id);
+            else await mails.markFailed(id, outcome.error || 'Flow thất bại sau khi cấp mail');
+          },
           rentMail: rentMailDep,
           appendSheet: appendSheetDep,
           notify: notifyDep,

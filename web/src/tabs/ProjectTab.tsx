@@ -17,6 +17,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 
+const PROJECT_MAIL_STATUS: Record<MailRecord['status'], string> = {
+  unchecked: 'chưa kiểm tra',
+  available: 'sẵn sàng',
+  reserved: 'đang giữ',
+  used: 'đã dùng',
+  failed: 'lỗi',
+  disabled: 'tạm tắt',
+};
+
 export function ProjectTab() {
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [flows, setFlows] = useState<FlowMeta[]>([]);
@@ -88,6 +97,8 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   const [buyQuality, setBuyQuality] = useState(project.buyQuality || '');
   const [mailProvider, setMailProvider] = useState<'dongvanfb' | 'selltaikhoan'>(project.mailProvider || 'dongvanfb');
   const [buyProductId, setBuyProductId] = useState(project.buyProductId || '');
+  const [mailStrategy, setMailStrategy] = useState<'api-only' | 'api-then-stock' | 'stock-then-api' | 'stock-only'>(project.mailStrategy || 'api-then-stock');
+  const [mailStockTags, setMailStockTags] = useState((project.mailStockTags || []).join(', '));
   const [smsService, setSmsService] = useState(project.smsbowerService || (project.flowName === 'chatgpt-signup' ? 'dr' : ''));
   const [sellProducts, setSellProducts] = useState<SellProduct[]>([]);
   const [sellProductState, setSellProductState] = useState('');
@@ -124,6 +135,10 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
     workApi.employees().then((rows) => { setWorkEmployees(rows); setWorkEmployeesLoaded(true); }).catch(() => {});
     workApi.distributions(project.id).then(setDistributionRuns).catch(() => {});
   }, []);
+  useEffect(() => {
+    const timer = window.setInterval(() => void mailApi.list().then(setAllMails).catch(() => {}), 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const refreshDistribution = useCallback(() => {
     workApi.distributions(project.id).then(setDistributionRuns).catch(() => {});
@@ -146,6 +161,8 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
       mailProvider,
       buyAccountType: buyType || undefined, buyQuality: buyQuality || undefined,
       buyProductId: buyProductId || undefined,
+      mailStrategy,
+      mailStockTags: mailStockTags.split(',').map((tag) => tag.trim()).filter(Boolean),
       smsbowerService: smsService || undefined,
       ephemeralProxyPool: usePool ? { tags: poolTags.split(',').map((s) => s.trim()).filter(Boolean), liveOnly: poolLive } : null,
       blockImages,
@@ -156,7 +173,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
       note,
     });
     setSaved(true); setTimeout(() => setSaved(false), 1200); onChanged();
-  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
+  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, mailStrategy, mailStockTags, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
 
   const doSave = useCallback(() => {
     clearTimeout(saveTimer.current);
@@ -168,7 +185,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return; }
     doSave();
-  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, note, doSave]);
+  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, mailStrategy, mailStockTags, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, note, doSave]);
 
   useEffect(() => {
     if (workEmployeesLoaded && distributionEnabled && flowName === 'capcut-signin' && String(distributionTotal) !== ephemeral) {
@@ -214,6 +231,10 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   const sellFiltered = sellNeedle
     ? sellProducts.filter((p) => `${p.name} ${p.category}`.toLowerCase().includes(sellNeedle))
     : sellProducts;
+  const stockTagList = mailStockTags.split(',').map((tag) => tag.trim()).filter(Boolean);
+  const availableStock = allMails.filter((mail) => mail.status === 'available' && stockTagList.every((tag) => mail.tags.includes(tag))).length;
+  const strategyUsesApi = mailStrategy !== 'stock-only';
+  const strategyUsesStock = mailStrategy !== 'api-only';
 
   return (
     <div className="min-w-0 space-y-4">
@@ -301,15 +322,34 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
       </div>
 
       {flowName !== 'chatgpt-signup' && (
-        <ConfigSection title="Mail và OTP" description="Gán mail có sẵn hoặc chọn nguồn mua mail tự động.">
-          <div className="space-y-1.5">
-            <Label>Mail dùng cho OTP</Label>
-            <Select value={mailId || 'none'} onValueChange={(v) => setMailId(v === 'none' ? '' : v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="none">— Không gán —</SelectItem>{allMails.map((m) => <SelectItem key={m.id} value={m.id}>{m.email}</SelectItem>)}</SelectContent>
-            </Select>
+        <ConfigSection title="Mail và OTP" description="Chọn cách mua mail mới và cách dùng kho dự phòng khi nhà cung cấp lỗi hoặc hết hàng.">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Chiến lược cấp mail</Label>
+              <Select value={mailStrategy} onValueChange={(value) => setMailStrategy(value as typeof mailStrategy)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="api-then-stock">API trước, kho dự phòng sau</SelectItem>
+                  <SelectItem value="stock-then-api">Kho trước, API dự phòng</SelectItem>
+                  <SelectItem value="stock-only">Chỉ dùng kho mail</SelectItem>
+                  <SelectItem value="api-only">Chỉ mua qua API</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {strategyUsesStock && <div className="space-y-1.5">
+              <Label>Tag kho dự phòng</Label>
+              <Input value={mailStockTags} onChange={(event) => setMailStockTags(event.target.value)} placeholder="Bỏ trống để dùng mọi mail sẵn sàng" />
+              <p className="text-xs text-muted-foreground">Có {availableStock} mail phù hợp đang sẵn sàng.</p>
+            </div>}
           </div>
           <div className="space-y-1.5">
+            <Label>Mail cố định <span className="font-normal text-muted-foreground">(chỉ dùng cho flow không tự cấp mail)</span></Label>
+            <Select value={mailId || 'none'} onValueChange={(v) => setMailId(v === 'none' ? '' : v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="none">— Không gán —</SelectItem>{allMails.map((m) => <SelectItem key={m.id} value={m.id} disabled={m.status === 'reserved' || m.status === 'failed' || m.status === 'disabled'}>{m.email} · {PROJECT_MAIL_STATUS[m.status]}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          {strategyUsesApi && <div className="space-y-1.5">
             <Label>Nhà cung cấp khi flow tự mua mail</Label>
             <Select value={mailProvider} onValueChange={(v) => setMailProvider(v as 'dongvanfb' | 'selltaikhoan')}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -332,7 +372,8 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
                 </Select>
               </div>
             )}
-          </div>
+          </div>}
+          <p className="text-xs text-muted-foreground">Mail được khóa riêng cho từng profile. Thành công chuyển sang “Đã dùng”; flow lỗi chuyển sang “Lỗi” và không tự cấp lại.</p>
         </ConfigSection>
       )}
 

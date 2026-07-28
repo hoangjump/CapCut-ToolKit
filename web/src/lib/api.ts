@@ -72,9 +72,15 @@ export interface Profile {
 export interface MailRecord {
   id: string;
   email: string;
-  password?: string;
   provider?: string;
   tags: string[];
+  status: 'unchecked' | 'available' | 'reserved' | 'used' | 'failed' | 'disabled';
+  source: 'manual' | 'dongvanfb' | 'selltaikhoan';
+  reservedByProfileId?: string;
+  reservedAt?: string;
+  usedAt?: string;
+  lastCheckedAt?: string;
+  lastError?: string;
   boughtAt: string;
 }
 export interface AccountType { id: number; name: string; quality: number; price: number }
@@ -98,6 +104,8 @@ export interface ProjectRecord {
   buyAccountType?: string;
   buyQuality?: string;
   buyProductId?: string;
+  mailStrategy?: 'api-only' | 'api-then-stock' | 'stock-then-api' | 'stock-only';
+  mailStockTags?: string[];
   smsbowerService?: string;
   ephemeralProxyPool?: { tags?: string[]; liveOnly?: boolean } | null;
   concurrency?: number;
@@ -332,7 +340,16 @@ export const mailApi = {
   buy: (body: any) => post('/api/mail/buy', body).then((r) => parse<any>(r)),
   list: () => fetch('/api/mails').then((r) => parse<MailRecord[]>(r)),
   add: (body: any) => post('/api/mails', body).then((r) => parse<MailRecord>(r)),
-  remove: (id: string) => fetch('/api/mails/' + id, { method: 'DELETE' }),
+  import: (lines: string[], tags: string[]) => post('/api/mails/import', { lines, tags }).then((r) => parse<{
+    total: number;
+    added: number;
+    duplicates: number;
+    invalid: Array<{ line: number; error: string }>;
+    mails: MailRecord[];
+  }>(r)),
+  check: (ids: string[]) => post('/api/mails/check', { ids }).then((r) => parse<{ checked: number; available: number; failed: number }>(r)),
+  setStatus: (ids: string[], status: MailRecord['status']) => put('/api/mails/status', { ids, status }).then((r) => parse<{ updated: number }>(r)),
+  remove: (id: string) => fetch('/api/mails/' + id, { method: 'DELETE' }).then(noContent),
   // Xóa hàng loạt: truyền ids để xóa các mail đó; bỏ trống = xóa sạch kho.
   removeMany: (ids?: string[]) =>
     fetch('/api/mails', { method: 'DELETE', headers: jsonHeaders, body: JSON.stringify(ids ? { ids } : {}) }).then((r) => parse<{ removed: number }>(r)),

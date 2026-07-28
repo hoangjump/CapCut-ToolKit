@@ -38,7 +38,7 @@ export default function App() {
         className="drag sticky top-0 z-30 flex h-10 shrink-0 items-center border-b bg-background"
         style={{ paddingLeft: isMac ? 84 : 18, paddingRight: 18 }}
       >
-        <span className="text-[13px] font-semibold tracking-tight">TeamHatDe Auto</span>
+        <span className="text-[13px] font-semibold tracking-tight">TeamHatDe-Capcut-Auto</span>
         <span className="ml-2 text-xs text-muted-foreground">Trung tâm vận hành</span>
       </header>
 

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ProjectRecord, ProxyPoolFilter } from './types.js';
+import type { MailAcquireStrategy, ProjectRecord, ProxyPoolFilter } from './types.js';
 
 export interface CreateProjectInput {
   name: string;
@@ -13,6 +13,8 @@ export interface CreateProjectInput {
   buyAccountType?: string;
   buyQuality?: string;
   buyProductId?: string;
+  mailStrategy?: MailAcquireStrategy;
+  mailStockTags?: string[];
   smsbowerService?: string;
   concurrency?: number;
   ephemeralCount?: number;
@@ -61,6 +63,8 @@ export class ProjectStore {
       buyAccountType: input.buyAccountType,
       buyQuality: input.buyQuality,
       buyProductId: input.buyProductId,
+      mailStrategy: input.mailStrategy,
+      mailStockTags: input.mailStockTags,
       smsbowerService: input.smsbowerService,
       concurrency: input.concurrency,
       ephemeralCount: input.ephemeralCount,

@@ -1,4 +1,4 @@
-# TeamHatDe-Auto — Multi-profile browser manager
+# TeamHatDe-Capcut-Auto — Multi-profile browser manager
 
 Hệ thống quản lý nhiều profile trình duyệt với anti-detect fingerprint, lưu
 session theo từng profile và gán proxy riêng cho mỗi profile. Engine là

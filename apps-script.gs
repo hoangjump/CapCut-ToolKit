@@ -1,5 +1,5 @@
 // ============================================================
-// Apps Script Web App cho tool TeamHatDe-Auto
+// Apps Script Web App cho tool TeamHatDe-Capcut-Auto
 // Ghi mỗi profile 1 dòng vào Google Sheet.
 //
 // Layout cột (theo sheet của bạn):

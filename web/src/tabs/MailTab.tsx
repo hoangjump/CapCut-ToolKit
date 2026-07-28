@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { RefreshCw, Mail as MailIcon, Inbox, Trash2 } from 'lucide-react';
+import { Ban, CheckCircle2, RefreshCw, Mail as MailIcon, Inbox, Trash2, Upload } from 'lucide-react';
 import {
   settingsApi, mailApi, sellApi, smsbowerApi, CODE_TYPES,
   type MailRecord, type AccountType, type MailMessage, type SellProduct, type SmsbowerRest,
@@ -13,6 +13,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DialogFooter } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 
 // Bảng tên gợi ý cho mã service SmsBower (chuẩn sms-activate). Chỉ để HIỂN THỊ
 // cho dễ nhận diện — mã thô luôn hiện kèm nên không sợ nhầm. OpenAI/ChatGPT là
@@ -35,6 +38,29 @@ const SMS_SERVICE_NAMES: Record<string, string> = {
   ot: 'Khác (bất kỳ)',
 };
 
+const MAIL_STATUS_LABEL: Record<MailRecord['status'], string> = {
+  unchecked: 'Chưa kiểm tra',
+  available: 'Sẵn sàng',
+  reserved: 'Đang giữ',
+  used: 'Đã dùng',
+  failed: 'Lỗi',
+  disabled: 'Tạm tắt',
+};
+
+const MAIL_SOURCE_LABEL: Record<MailRecord['source'], string> = {
+  manual: 'Nhập kho',
+  dongvanfb: 'dongvanfb',
+  selltaikhoan: 'selltaikhoan',
+};
+
+function mailStatusVariant(status: MailRecord['status']): 'success' | 'danger' | 'muted' | 'outline' | 'secondary' {
+  if (status === 'available') return 'success';
+  if (status === 'failed') return 'danger';
+  if (status === 'used') return 'secondary';
+  if (status === 'disabled') return 'muted';
+  return 'outline';
+}
+
 export function MailTab() {
   const [keyState, setKeyState] = useState('(chưa có)');
   const [apiKey, setApiKey] = useState('');
@@ -47,7 +73,7 @@ export function MailTab() {
   const [accountTypes, setAccountTypes] = useState<AccountType[]>([]);
   const [typeState, setTypeState] = useState('');
   const [buyType, setBuyType] = useState('');
-  const [manual, setManual] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
   // selltaikhoan (nhà cung cấp mail thứ 2)
   const [buyProvider, setBuyProvider] = useState<'dongvanfb' | 'selltaikhoan'>('dongvanfb');
   const [sellKey, setSellKey] = useState('');
@@ -64,6 +90,9 @@ export function MailTab() {
   const [smsRestState, setSmsRestState] = useState('');
   const [mails, setMails] = useState<MailRecord[]>([]);
   const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | MailRecord['status']>('all');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [checking, setChecking] = useState(false);
   const [page, setPage] = useState(1);
   const [codeType, setCodeType] = useState<Record<string, string>>({});
   const [codeResult, setCodeResult] = useState<Record<string, string>>({});
@@ -81,10 +110,18 @@ export function MailTab() {
       setSmsKeyState(s.hasSmsbowerKey ? `(đã lưu: ${s.smsbowerMasked})` : '(chưa có)');
     } catch {}
   }
-  async function loadMails() {
-    try { setMails(await mailApi.list()); } catch (e) { toast.error((e as Error).message); }
-  }
+  const loadMails = useCallback(async () => {
+    try {
+      const rows = await mailApi.list();
+      setMails(rows);
+      setSelected((current) => new Set([...current].filter((id) => rows.some((mail) => mail.id === id && mail.status !== 'reserved'))));
+    } catch (e) { toast.error((e as Error).message); }
+  }, []);
   useEffect(() => { loadSettings(); loadMails(); }, []);
+  useEffect(() => {
+    const timer = window.setInterval(() => void loadMails(), 5_000);
+    return () => window.clearInterval(timer);
+  }, [loadMails]);
 
   async function saveKey() {
     if (!apiKey.trim()) { toast.error('Nhập API key'); return; }
@@ -158,12 +195,26 @@ export function MailTab() {
       setSmsRestState(`(${sorted.length} service)`);
     } catch (e) { setSmsRestState(''); toast.error((e as Error).message); }
   }
-  async function addManual() {
-    const lines = manual.split('\n').map((s) => s.trim()).filter(Boolean);
-    if (!lines.length) { toast.error('Nhập ít nhất một mail'); return; }
-    let ok = 0;
-    for (const line of lines) { try { await mailApi.add({ line }); ok++; } catch (e) { toast.error((e as Error).message); } }
-    if (ok) { setManual(''); toast.success(`Đã thêm ${ok} mail`); loadMails(); }
+  async function checkMails(ids: string[]) {
+    if (!ids.length) return toast.error('Chọn ít nhất một mail');
+    setChecking(true);
+    try {
+      const result = await mailApi.check(ids);
+      toast.success(`Đã kiểm tra ${result.checked}: ${result.available} dùng được, ${result.failed} lỗi`);
+      await loadMails();
+    } catch (error) { toast.error((error as Error).message); }
+    finally { setChecking(false); }
+  }
+
+  async function setMailStatus(status: MailRecord['status']) {
+    const ids = [...selected];
+    if (!ids.length) return toast.error('Chọn ít nhất một mail');
+    try {
+      const result = await mailApi.setStatus(ids, status);
+      toast.success(`Đã cập nhật ${result.updated} mail`);
+      setSelected(new Set());
+      await loadMails();
+    } catch (error) { toast.error((error as Error).message); }
   }
   async function getCode(id: string) {
     const type = codeType[id] || 'all';
@@ -174,12 +225,13 @@ export function MailTab() {
     } catch (e) { setCodeResult((s) => ({ ...s, [id]: '' })); toast.error((e as Error).message); }
   }
   async function del(id: string) {
-    try { await mailApi.remove(id); toast.success('Đã xóa mail'); loadMails(); } catch (e) { toast.error((e as Error).message); }
+    try { await mailApi.remove(id); setSelected((current) => { const next = new Set(current); next.delete(id); return next; }); toast.success('Đã xóa mail'); loadMails(); } catch (e) { toast.error((e as Error).message); }
   }
-  async function delAll() {
-    if (!confirm(`Xóa sạch ${mails.length} mail trong kho? Không thể hoàn tác.`)) return;
-    try { const r = await mailApi.removeMany(); toast.success(`Đã xóa ${r.removed} mail`); setPage(1); loadMails(); }
-    catch (e) { toast.error((e as Error).message); }
+  async function delSelected() {
+    const ids = [...selected];
+    if (!ids.length || !confirm(`Xóa ${ids.length} mail đã chọn?`)) return;
+    try { const result = await mailApi.removeMany(ids); toast.success(`Đã xóa ${result.removed} mail`); setSelected(new Set()); loadMails(); }
+    catch (error) { toast.error((error as Error).message); }
   }
   async function openInbox(m: MailRecord) {
     setInbox({ open: true, email: m.email, loading: true, msgs: [] });
@@ -189,12 +241,17 @@ export function MailTab() {
 
   const PAGE_SIZE = 50;
   const needle = q.trim().toLowerCase();
-  const filtered = needle
-    ? mails.filter((m) => `${m.email} ${m.provider ?? ''}`.toLowerCase().includes(needle))
-    : mails;
+  const filtered = mails.filter((mail) => {
+    if (statusFilter !== 'all' && mail.status !== statusFilter) return false;
+    return !needle || `${mail.email} ${mail.provider ?? ''} ${mail.source} ${mail.tags.join(' ')}`.toLowerCase().includes(needle);
+  });
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const curPage = Math.min(page, pageCount);
   const pageMails = filtered.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+  const selectablePageMails = pageMails.filter((mail) => mail.status !== 'reserved');
+  const pageSelected = selectablePageMails.length > 0 && selectablePageMails.every((mail) => selected.has(mail.id));
+  const availableCount = mails.filter((mail) => mail.status === 'available').length;
+  const failedCount = mails.filter((mail) => mail.status === 'failed').length;
 
   const sellNeedle = sellSearch.trim().toLowerCase();
   const sellFiltered = sellNeedle
@@ -202,8 +259,8 @@ export function MailTab() {
     : sellProducts;
 
   return (
-    <div className="grid grid-cols-[360px_1fr] gap-5">
-      <div className="space-y-5">
+    <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="space-y-4">
         <Card>
           <CardHeader><CardTitle>Cài đặt &amp; số dư</CardTitle></CardHeader>
           <CardContent className="space-y-4">
@@ -252,7 +309,7 @@ export function MailTab() {
               <Label>Telegram báo thành công <span className="text-muted-foreground font-normal">{tgState}</span></Label>
               <Input type="password" placeholder="Bot token (123456:ABC...)" value={tgToken} onChange={(e) => setTgToken(e.target.value)} />
               <div className="flex gap-2"><Input placeholder="Chat ID (-100... hoặc id cá nhân)" value={tgChatId} onChange={(e) => setTgChatId(e.target.value)} /><Button onClick={saveTelegram}>Lưu</Button></div>
-              <p className="text-xs text-muted-foreground">Mỗi account đăng ký thành công gửi 1 tin nhắn (mail + dòng credential + link thanh toán).</p>
+              <p className="text-xs text-muted-foreground">Mỗi account đăng ký thành công gửi 1 tin nhắn gồm email và link thanh toán.</p>
             </div>
           </CardContent>
         </Card>
@@ -295,37 +352,49 @@ export function MailTab() {
             )}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader><CardTitle>Thêm mail thủ công</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <Textarea placeholder="email|pass|refresh|client (mỗi dòng 1 mail)" value={manual} onChange={(e) => setManual(e.target.value)} />
-            <Button variant="outline" onClick={addManual}>Thêm vào kho</Button>
-          </CardContent>
-        </Card>
       </div>
 
       <Card>
-        <CardHeader className="flex-row items-center gap-3 space-y-0">
-          <CardTitle className="mr-auto">Kho mail {mails.length ? `(${mails.length})` : ''}</CardTitle>
+        <CardHeader className="flex-row flex-wrap items-center gap-2 space-y-0 border-b">
+          <div className="mr-auto">
+            <CardTitle>Kho mail {mails.length ? `(${mails.length})` : ''}</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">{availableCount} sẵn sàng · {failedCount} lỗi · tự cập nhật mỗi 5 giây</p>
+          </div>
           <Input
             placeholder="Tìm email / provider..."
             value={q}
             onChange={(e) => { setQ(e.target.value); setPage(1); }}
             className="max-w-56"
           />
-          <Button variant="outline" onClick={loadMails}><RefreshCw className="h-4 w-4" /> Tải lại</Button>
-          <Button variant="outline" onClick={delAll} disabled={!mails.length} className="text-destructive">
-            <Trash2 className="h-4 w-4" /> Xóa hết
-          </Button>
+          <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value as typeof statusFilter); setPage(1); }}>
+            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="all">Mọi trạng thái</SelectItem>{Object.entries(MAIL_STATUS_LABEL).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+          </Select>
+          <Button variant="outline" onClick={() => void loadMails()}><RefreshCw /> Tải lại</Button>
+          <Button onClick={() => setImportOpen(true)}><Upload /> Import mail</Button>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader><TableRow><TableHead>Email</TableHead><TableHead>Provider</TableHead><TableHead className="w-72">Lấy code</TableHead><TableHead className="w-28 text-right">Thao tác</TableHead></TableRow></TableHeader>
+          {selected.size > 0 && <div className="mb-3 flex flex-wrap items-center gap-2 border-b pb-3">
+            <span className="mr-1 text-sm font-medium">Đã chọn {selected.size}</span>
+            <Button size="sm" variant="outline" disabled={checking} onClick={() => void checkMails([...selected])}><RefreshCw className={checking ? 'animate-spin' : ''} /> Kiểm tra</Button>
+            <Button size="sm" variant="outline" onClick={() => void setMailStatus('available')}><CheckCircle2 /> Đưa vào kho</Button>
+            <Button size="sm" variant="outline" onClick={() => void setMailStatus('disabled')}><Ban /> Tạm tắt</Button>
+            <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void delSelected()}><Trash2 /> Xóa</Button>
+            <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelected(new Set())}>Bỏ chọn</Button>
+          </div>}
+          <div className="overflow-x-auto"><Table>
+            <TableHeader><TableRow>
+              <TableHead className="w-10"><Checkbox disabled={!selectablePageMails.length} checked={pageSelected} onCheckedChange={(checked) => setSelected((current) => { const next = new Set(current); for (const mail of selectablePageMails) checked ? next.add(mail.id) : next.delete(mail.id); return next; })} aria-label="Chọn trang hiện tại" /></TableHead>
+              <TableHead>Email</TableHead><TableHead>Trạng thái</TableHead><TableHead>Nguồn</TableHead><TableHead>Kiểm tra gần nhất</TableHead><TableHead className="w-48">Lấy code</TableHead><TableHead className="w-32 text-right">Thao tác</TableHead>
+            </TableRow></TableHeader>
             <TableBody>
               {pageMails.map((m) => (
                 <TableRow key={m.id}>
-                  <TableCell><div className="font-medium">{m.email}</div>{codeResult[m.id] && <div className="text-xs text-muted-foreground">{codeResult[m.id]}</div>}</TableCell>
-                  <TableCell className="text-muted-foreground">{m.provider || '—'}</TableCell>
+                  <TableCell><Checkbox disabled={m.status === 'reserved'} checked={selected.has(m.id)} onCheckedChange={(checked) => setSelected((current) => { const next = new Set(current); checked ? next.add(m.id) : next.delete(m.id); return next; })} aria-label={`Chọn ${m.email}`} /></TableCell>
+                  <TableCell><div className="font-medium">{m.email}</div><div className="text-xs text-muted-foreground">{m.tags.length ? m.tags.join(', ') : m.provider || '—'}</div>{m.lastError && <div className="max-w-80 truncate text-xs text-destructive" title={m.lastError}>{m.lastError}</div>}{codeResult[m.id] && <div className="text-xs text-muted-foreground">{codeResult[m.id]}</div>}</TableCell>
+                  <TableCell><Badge variant={mailStatusVariant(m.status)}>{MAIL_STATUS_LABEL[m.status]}</Badge>{m.reservedByProfileId && <div className="mt-1 max-w-28 truncate text-xs text-muted-foreground" title={m.reservedByProfileId}>{m.reservedByProfileId}</div>}</TableCell>
+                  <TableCell><div className="text-sm">{MAIL_SOURCE_LABEL[m.source]}</div><div className="text-xs text-muted-foreground">{m.provider || '—'}</div></TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{m.lastCheckedAt ? new Date(m.lastCheckedAt).toLocaleString('vi-VN') : 'Chưa kiểm tra'}</TableCell>
                   <TableCell>
                     <div className="flex gap-2">
                       <Select value={codeType[m.id] || 'all'} onValueChange={(v) => setCodeType((s) => ({ ...s, [m.id]: v }))}>
@@ -336,13 +405,14 @@ export function MailTab() {
                     </div>
                   </TableCell>
                   <TableCell className="text-right">
+                    <Button variant="ghost" size="icon" title="Kiểm tra mail" disabled={checking || m.status === 'reserved'} onClick={() => void checkMails([m.id])}><RefreshCw className="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" title="Hộp thư" onClick={() => openInbox(m)}><Inbox className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="icon" title="Xóa" onClick={() => del(m.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                    <Button variant="ghost" size="icon" title={m.status === 'reserved' ? 'Mail đang được profile sử dụng' : 'Xóa'} disabled={m.status === 'reserved'} onClick={() => del(m.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
+          </Table></div>
           {!mails.length && <div className="py-10 text-center text-muted-foreground">Chưa có mail nào.</div>}
           {mails.length > 0 && !filtered.length && <div className="py-10 text-center text-muted-foreground">Không có mail khớp "{q}".</div>}
           {pageCount > 1 && (
@@ -354,6 +424,8 @@ export function MailTab() {
           )}
         </CardContent>
       </Card>
+
+      <MailImportDialog open={importOpen} onOpenChange={setImportOpen} onImported={loadMails} />
 
       <Dialog open={inbox.open} onOpenChange={(o) => setInbox((s) => ({ ...s, open: o }))}>
         <DialogContent className="max-w-3xl">
@@ -374,4 +446,72 @@ export function MailTab() {
       </Dialog>
     </div>
   );
+}
+
+function MailImportDialog({
+  open,
+  onOpenChange,
+  onImported,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onImported: () => Promise<void>;
+}) {
+  const [content, setContent] = useState('');
+  const [tags, setTags] = useState('backup');
+  const [checkAfterImport, setCheckAfterImport] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [invalid, setInvalid] = useState<Array<{ line: number; error: string }>>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    setInvalid([]);
+  }, [open]);
+
+  async function importMails() {
+    const lines = content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) return toast.error('Dán danh sách hoặc chọn file mail');
+    setBusy(true);
+    try {
+      const result = await mailApi.import(lines, tags.split(',').map((tag) => tag.trim()).filter(Boolean));
+      setInvalid(result.invalid);
+      let checkedText = '';
+      if (checkAfterImport && result.mails.length) {
+        const checked = await mailApi.check(result.mails.map((mail) => mail.id));
+        checkedText = ` · kiểm tra: ${checked.available} tốt, ${checked.failed} lỗi`;
+      }
+      toast.success(`Import ${result.added}/${result.total} mail · trùng ${result.duplicates} · sai ${result.invalid.length}${checkedText}`);
+      await onImported();
+      if (!result.invalid.length) {
+        setContent('');
+        onOpenChange(false);
+      }
+    } catch (error) { toast.error((error as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function readFile(file?: File) {
+    if (!file) return;
+    try { setContent(await file.text()); }
+    catch { toast.error('Không đọc được file mail'); }
+  }
+
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="max-w-2xl">
+      <DialogHeader><DialogTitle>Import kho mail dự phòng</DialogTitle></DialogHeader>
+      <div className="space-y-4">
+        <div className="space-y-1.5">
+          <Label>Danh sách mail</Label>
+          <Textarea rows={9} value={content} onChange={(event) => setContent(event.target.value)} placeholder="email|password|refresh_token|client_id&#10;Mỗi dòng một mail; file CSV 4 cột cũng được hỗ trợ." />
+          <input className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border file:bg-background file:px-3 file:py-1.5 file:text-sm" type="file" accept=".txt,.csv,text/plain,text/csv" onChange={(event) => void readFile(event.target.files?.[0])} />
+        </div>
+        <div className="space-y-1.5"><Label>Tags</Label><Input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="backup, outlook" /></div>
+        <label className="flex cursor-pointer items-center gap-2 text-sm"><Checkbox checked={checkAfterImport} onCheckedChange={(value) => setCheckAfterImport(value === true)} /> Kiểm tra khả năng đọc inbox ngay sau khi import</label>
+        {invalid.length > 0 && <div className="max-h-32 overflow-auto rounded-md border p-3 text-xs text-destructive">
+          {invalid.map((item) => <div key={`${item.line}-${item.error}`}>Dòng {item.line}: {item.error}</div>)}
+        </div>}
+      </div>
+      <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Hủy</Button><Button disabled={busy} onClick={() => void importMails()}>{busy ? 'Đang import...' : 'Import vào kho'}</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>;
 }
