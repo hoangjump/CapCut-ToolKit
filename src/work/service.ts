@@ -24,8 +24,16 @@ const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 const MAX_PROCESSED_UPDATES = 5_000;
 const CAPCUT_LINK_LIFETIME_MS = 15 * 60_000;
 
+/** Kết quả "Ghi thử": xác nhận file dùng được và cho biết sẽ ghi vào đâu. */
+export interface SheetProbeResult {
+  spreadsheetName?: string;
+  sheetName: string;
+  nextRow: number;
+}
+
 export type SheetWebhookWriter = (webhookUrl: string, payload: Record<string, unknown>) => Promise<void>;
 export type SheetWebhookVerifier = (webhookUrl: string) => Promise<void>;
+export type SheetWebhookProbe = (webhookUrl: string, spreadsheetId: string) => Promise<SheetProbeResult>;
 
 const postSheetWebhook: SheetWebhookWriter = async (webhookUrl, payload) => {
   const response = await fetch(webhookUrl, {
@@ -40,10 +48,38 @@ const verifySheetWebhook: SheetWebhookVerifier = async (webhookUrl) => {
   try {
     const response = await fetch(webhookUrl);
     const version = await response.text();
-    if (!response.ok || version.trim() !== 'teamhatde-sheet-v2') throw new Error('version mismatch');
+    if (!response.ok || version.trim() !== 'teamhatde-sheet-v3') throw new Error('version mismatch');
   } catch {
-    throw new Error('Apps Script Sheet đang là bản cũ. Hãy cập nhật apps-script.gs và Deploy phiên bản mới');
+    throw new Error('Apps Script Sheet đang là bản cũ. Hãy dán lại apps-script.gs rồi Deploy → Manage deployments → New version');
   }
+};
+
+/** Ghi thử vào một Spreadsheet ID: Apps Script mở file, xác nhận quyền ghi rồi
+ *  trả về tab/dòng sẽ dùng — KHÔNG thêm dòng dữ liệu nào. */
+const postSheetProbe: SheetWebhookProbe = async (webhookUrl, spreadsheetId) => {
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ probe: true, targetSpreadsheetId: spreadsheetId }),
+  });
+  const body = await response.text();
+  let parsed: { ok?: boolean; error?: string; spreadsheetName?: string; sheetName?: string; nextRow?: number };
+  try {
+    parsed = JSON.parse(body) as typeof parsed;
+  } catch {
+    // Không parse được = script cũ (chưa có nhánh probe) hoặc trang HTML lỗi của
+    // Apps Script. Cả hai đều quy về "chưa deploy đúng bản".
+    throw new Error(`Apps Script không trả lời đúng định dạng (HTTP ${response.status}). Hãy Deploy → Manage deployments → New version`);
+  }
+  // probeResult tự bắt lỗi và gói vào JSON nên lý do thật (thiếu quyền, sai ID…)
+  // nằm ở đây chứ không ở HTTP status.
+  if (parsed.error) throw new Error(`Apps Script không mở/ghi được file này: ${parsed.error}`);
+  if (!parsed.ok || !parsed.sheetName) throw new Error('Apps Script không xác nhận được quyền ghi vào file này');
+  return {
+    spreadsheetName: parsed.spreadsheetName,
+    sheetName: parsed.sheetName,
+    nextRow: Number(parsed.nextRow) || 3,
+  };
 };
 
 const dayFormatter = new Intl.DateTimeFormat('en-CA', {
@@ -93,6 +129,16 @@ function unitRate(value: unknown): number {
 
 function makeBindCode(): string {
   return randomBytes(4).toString('hex').toUpperCase();
+}
+
+/** Hai nhân viên dùng chung một file thì dòng của họ trộn vào nhau — mất sạch ý
+ *  nghĩa "mỗi người một sheet". Chặn ngay lúc lưu hồ sơ. */
+function assertSheetNotShared(state: TelegramWorkState, sheetId: string | undefined, selfId?: string): void {
+  if (!sheetId) return;
+  const owner = state.employees.find((item) => (
+    item.id !== selfId && item.status !== 'archived' && item.sheetSpreadsheetId === sheetId
+  ));
+  if (owner) throw new Error(`Google Sheet riêng này đang dùng cho nhân viên ${owner.fullName}`);
 }
 
 function spreadsheetId(value: unknown): string | undefined {
@@ -223,6 +269,7 @@ export class TelegramWorkService {
     private readonly payments?: PaymentSessionService,
     private readonly sheetWriter: SheetWebhookWriter = postSheetWebhook,
     private readonly sheetVerifier: SheetWebhookVerifier = verifySheetWebhook,
+    private readonly sheetProbe: SheetWebhookProbe = postSheetProbe,
   ) {
     this.payments?.setVipVerifiedHandler((taskId, vipEndTime) => this.completeCapcutVip(taskId, vipEndTime));
   }
@@ -649,6 +696,8 @@ export class TelegramWorkService {
     if (!fullName) throw new Error('Tên nhân viên là bắt buộc');
     const now = new Date().toISOString();
     const employee = await this.store.mutate((state) => {
+      const sheetId = spreadsheetId(input.sheetUrl);
+      assertSheetNotShared(state, sheetId);
       const created: WorkEmployee = {
         id: randomUUID(),
         fullName,
@@ -656,7 +705,7 @@ export class TelegramWorkService {
         salaryVisibility: input.salaryVisibility ?? 'topic',
         status: 'unbound',
         bindCode: makeBindCode(),
-        sheetSpreadsheetId: spreadsheetId(input.sheetUrl),
+        sheetSpreadsheetId: sheetId,
         createdAt: now,
         updatedAt: now,
       };
@@ -685,7 +734,11 @@ export class TelegramWorkService {
       }
       if (input.defaultUnitRate !== undefined) employee.defaultUnitRate = unitRate(input.defaultUnitRate);
       if (input.salaryVisibility !== undefined) employee.salaryVisibility = input.salaryVisibility;
-      if (input.sheetUrl !== undefined) employee.sheetSpreadsheetId = spreadsheetId(input.sheetUrl);
+      if (input.sheetUrl !== undefined) {
+        const sheetId = spreadsheetId(input.sheetUrl);
+        assertSheetNotShared(state, sheetId, employee.id);
+        employee.sheetSpreadsheetId = sheetId;
+      }
       if (input.status !== undefined) {
         if (input.status === 'active' && (!employee.telegramUserId || !employee.telegramChatId || !employee.telegramTopicId)) {
           throw new Error('Chưa thể bật hoạt động: nhân viên chưa bind đủ Telegram user/topic');
@@ -807,6 +860,18 @@ export class TelegramWorkService {
       threadId: employee.telegramTopicId,
       text: `✅ Kết nối thành công với ${employee.fullName}.\nMã bind hiện tại: /bind ${employee.bindCode}`,
     });
+  }
+
+  /** Xác nhận Sheet riêng của nhân viên dùng được NGAY LÚC SETUP, thay vì để lỗi
+   *  quyền/tab lộ ra giữa đợt phân phối. Không ghi dòng dữ liệu nào. */
+  async testEmployeeSheet(id: string): Promise<SheetProbeResult> {
+    const employee = this.store.snapshot().employees.find((item) => item.id === id);
+    if (!employee) throw new Error('Không tìm thấy nhân viên');
+    if (!employee.sheetSpreadsheetId) throw new Error('Nhân viên chưa cấu hình Google Sheet riêng');
+    const webhookUrl = this.settings.getSheetWebhookUrl();
+    if (!webhookUrl) throw new Error('Chưa cấu hình Google Sheet URL tổng trong tab Mail');
+    await this.sheetVerifier(webhookUrl);
+    return this.sheetProbe(webhookUrl, employee.sheetSpreadsheetId);
   }
 
   async createTask(input: {

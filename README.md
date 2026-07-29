@@ -82,20 +82,44 @@ Mỗi tài khoản CapCut được ghi hai nơi trước khi bot gửi link Tele
 - **Sheet nhân viên:** chỉ lưu tên nhân viên, email và link thanh toán; không ghi
   password, refresh token hoặc client ID.
 
+**Chỉ có MỘT Apps Script và MỘT URL** — nó nằm trên Sheet tổng và tự mở file của
+nhân viên bằng `openById()` khi payload có `targetSpreadsheetId`. Sheet nhân viên
+**không cần Apps Script, không cần deploy, không có URL riêng**.
+
 Cấu hình một lần như sau:
 
 1. Mở Apps Script đang gắn với Sheet tổng, thay toàn bộ mã bằng
    [`apps-script.gs`](apps-script.gs), sau đó chọn **Deploy -> Manage deployments**
-   và tạo version mới.
+   và tạo version mới. Deploy để **Execute as: Me** và **Who has access: Anyone**.
 2. Giữ URL Web App kết thúc bằng `/exec` trong `Mail -> Google Sheet URL`.
 3. Tạo một file Google Sheet riêng cho mỗi nhân viên với cùng layout cột, rồi chỉ
-   share file đó cho đúng nhân viên.
+   share file đó cho đúng nhân viên (quyền Editor để họ tự tick cột `DONE?`).
 4. Trong `Công việc -> Nhân viên -> Sửa`, dán URL hoặc Spreadsheet ID của file
    riêng vào `Google Sheet riêng`.
+5. Bấm nút **Ghi thử** (biểu tượng bảng tính) ở dòng nhân viên đó. Nút báo về tab
+   và dòng sẽ được ghi, hoặc báo lỗi nếu thiếu quyền — làm bước này cho từng nhân
+   viên **trước** đợt phân phối đầu tiên, vì nếu không thì lỗi quyền chỉ lộ ra khi
+   đợt đã chạy giữa chừng. Ghi thử không để lại dòng dữ liệu nào.
 
-Apps Script Web App phải chạy bằng tài khoản chủ sở hữu có quyền mở cả Sheet tổng
-và các Sheet riêng. App sẽ chặn bắt đầu phân phối nếu Apps Script chưa được deploy
-lại hoặc nhân viên có quota chưa được cấu hình Sheet riêng.
+Layout mà cả hai loại sheet phải theo:
+
+| Vị trí | Nội dung |
+| --- | --- |
+| Tab được ghi | **tab đầu tiên** (trái nhất) của file |
+| Dòng bắt đầu | **dòng 3** (dòng 1-2 dành cho tiêu đề) |
+| A / B / C | Nhân viên / Date / mail full (Sheet tổng) hoặc email (Sheet nhân viên) |
+| H / I | CheckOut (link) / Còn lại (script tự đặt công thức đếm ngược) |
+| L / M | `DONE?` — nhân viên tự tick, tool không đụng / lý do lỗi |
+| **Y, Z1, Z2** | **ô dành riêng của script, không được dùng cho dữ liệu** (nên ẩn cột Y và Z) |
+
+`Y` giữ `entryId` của từng dòng. Script tìm `entryId` trước khi ghi, nên retry một
+link đang lỗi không bao giờ sinh dòng trùng — kể cả khi lần ghi trước đã vào sheet
+nhưng response rơi mất trên đường về.
+
+Apps Script Web App phải chạy bằng tài khoản chủ sở hữu có quyền **Editor** trên cả
+Sheet tổng và mọi Sheet riêng. Một file Google Sheet chỉ được gán cho một nhân viên;
+app từ chối nếu bạn dán trùng ID của người khác. App cũng chặn bắt đầu phân phối nếu
+Apps Script chưa được deploy lại hoặc nhân viên có quota chưa được cấu hình Sheet riêng.
 
 [Dockerfile](Dockerfile) dùng base image `mcr.microsoft.com/playwright:vX.Y-noble`
 **chỉ để lấy system lib** (Xvfb, fonts, thư viện đồ họa mà Firefox cần) — engine

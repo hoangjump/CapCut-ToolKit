@@ -177,6 +177,11 @@ export interface WorkEmployee {
   updatedAt: string;
   totals: EmployeeTotals;
 }
+export interface SheetProbeResult {
+  spreadsheetName?: string;
+  sheetName: string;
+  nextRow: number;
+}
 export interface WorkTask {
   id: string;
   employeeId: string;
@@ -415,6 +420,7 @@ export const workApi = {
   regenerateBind: (id: string) => post(`/api/work/employees/${id}/regenerate-bind`).then((r) => parse<WorkEmployee>(r)),
   createTopic: (id: string) => post(`/api/work/employees/${id}/create-topic`).then((r) => parse<WorkEmployee>(r)),
   testTopic: (id: string) => post(`/api/work/employees/${id}/test`).then((r) => parse<{ ok: boolean }>(r)),
+  testSheet: (id: string) => post(`/api/work/employees/${id}/test-sheet`).then((r) => parse<SheetProbeResult>(r)),
   tasks: () => fetch('/api/work/tasks').then((r) => parse<WorkTask[]>(r)),
   createTask: (body: { employeeId: string; description: string; deadline?: string; quantity: number; unitRate?: number }) =>
     post('/api/work/tasks', body).then((r) => parse<WorkTask>(r)),

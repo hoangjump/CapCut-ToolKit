@@ -4,6 +4,7 @@ import {
   Check,
   ClipboardCopy,
   Eye,
+  FileSpreadsheet,
   Monitor,
   Pencil,
   Plus,
@@ -107,6 +108,13 @@ function EmployeesPanel() {
     try { await run(); toast.success(success); await load(); } catch (err) { toast.error((err as Error).message); }
   }
 
+  async function testSheet(employee: WorkEmployee) {
+    try {
+      const probe = await workApi.testSheet(employee.id);
+      toast.success(`Sheet OK — tab "${probe.sheetName}", ghi từ dòng ${probe.nextRow}`);
+    } catch (err) { toast.error((err as Error).message); }
+  }
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -140,6 +148,7 @@ function EmployeesPanel() {
                     <Button size="icon" variant="ghost" title="Copy lệnh bind" onClick={() => copyBind(employee)}><ClipboardCopy /></Button>
                     {!employee.telegramTopicId && <Button size="icon" variant="ghost" title="Tạo topic" onClick={() => action(() => workApi.createTopic(employee.id), 'Đã tạo topic')}><Plus /></Button>}
                     {employee.telegramTopicId && <Button size="icon" variant="ghost" title="Gửi thử" onClick={() => action(() => workApi.testTopic(employee.id), 'Đã gửi tin thử')}><Send /></Button>}
+                    {employee.sheetSpreadsheetId && <Button size="icon" variant="ghost" title="Ghi thử sheet riêng" onClick={() => testSheet(employee)}><FileSpreadsheet /></Button>}
                     <Button size="icon" variant="ghost" title="Tạo mã bind mới" onClick={() => action(() => workApi.regenerateBind(employee.id), 'Đã tạo mã bind mới')}><RefreshCw /></Button>
                     <Button size="icon" variant="ghost" title="Sửa" onClick={() => setEditing(employee)}><Pencil /></Button>
                     <Button size="icon" variant="ghost" title="Lưu trữ" onClick={() => {

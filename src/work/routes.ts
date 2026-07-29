@@ -117,6 +117,9 @@ export function registerTelegramWorkRoutes(
   app.post('/api/work/employees/:id/test', async (req, res) => {
     try { await service.testEmployeeTopic(String(req.params.id)); res.json({ ok: true }); } catch (err) { error(res, err); }
   });
+  app.post('/api/work/employees/:id/test-sheet', async (req, res) => {
+    try { res.json(await service.testEmployeeSheet(String(req.params.id))); } catch (err) { error(res, err); }
+  });
 
   app.get('/api/work/tasks', (_req, res) => res.json(service.listTasks()));
   app.post('/api/work/tasks', async (req, res) => {

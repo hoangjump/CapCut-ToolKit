@@ -11,14 +11,16 @@
 //   M  = lý do lỗi  (chỉ ghi khi profile đó lỗi)
 //   L  = DONE?      -> tool KHÔNG đụng, nhân viên tự tick
 //
-// Dùng con trỏ ở ô Z1 để biết dòng kế tiếp -> ghi O(1), không quét cả cột,
-// nên 1000+ dòng vẫn nhanh như dòng đầu.
+// Ô DÀNH RIÊNG — đừng dùng cho dữ liệu (nên ẩn cột Y và Z):
+//   Y  = entryId của dòng, dùng để chống ghi trùng khi retry
+//   Z1 = con trỏ "dòng kế tiếp" -> ghi O(1), không quét cả cột
+//   Z2 = ô nháp (dò locale của công thức, kiểm tra quyền ghi)
 // ============================================================
 
 function doGet() {
   // App kiểm tra version này trước khi chạy để tránh script cũ ghi nhầm dòng
   // dành cho nhân viên vào Sheet tổng.
-  return ContentService.createTextOutput('teamhatde-sheet-v2');
+  return ContentService.createTextOutput('teamhatde-sheet-v3');
 }
 
 function doPost(e) {
@@ -26,6 +28,13 @@ function doPost(e) {
   lock.waitLock(30000); // 10 luồng ghi song song -> xếp hàng để không đè dòng nhau
   try {
     var d = JSON.parse(e.postData.contents);
+
+    // Nút "Ghi thử" trong app: chỉ xác nhận cấu hình, KHÔNG thêm dòng dữ liệu.
+    // Chạy TRƯỚC khi mở file, vì chính openById là chỗ hay ném lỗi thiếu quyền —
+    // để lỗi thoát ra ngoài thì Apps Script trả HTTP 500 kèm HTML, app chỉ đọc
+    // được "HTTP 500" thay vì lý do thật. probeResult tự bắt và trả lỗi dạng JSON.
+    if (d.probe) return probeResult(d);
+
     // Không truyền targetSpreadsheetId -> ghi Sheet tổng đang gắn Apps Script.
     // Có targetSpreadsheetId -> ghi file riêng của nhân viên. Web App phải chạy
     // dưới tài khoản chủ sở hữu có quyền mở các file đó.
@@ -35,6 +44,18 @@ function doPost(e) {
     var sheet = spreadsheet.getSheets()[0];
 
     var START = 3; // dữ liệu bắt đầu dòng 3 (dòng 1-2 là tiêu đề)
+
+    // Chống ghi trùng: Apps Script ghi xong nhưng response rơi trên đường về thì
+    // app coi là lỗi và cho retry — không có bước này là ra 2 dòng giống hệt nhau.
+    // Tìm trên cả cột Y (native, nhanh kể cả sheet vài chục nghìn dòng) chứ không
+    // quét N dòng cuối: retry là thao tác tay nên có thể xảy ra rất lâu sau đó.
+    if (d.entryId) {
+      var existing = sheet.getRange('Y:Y')
+        .createTextFinder(String(d.entryId))
+        .matchEntireCell(true)
+        .findNext();
+      if (existing) return ContentService.createTextOutput('ok');
+    }
 
     // Con trỏ "dòng kế tiếp" lưu ở ô Z1 — đọc/ghi O(1), KHÔNG quét cả cột.
     var ptrCell = sheet.getRange('Z1');
@@ -52,6 +73,7 @@ function doPost(e) {
     sheet.getRange(row, 3).setValue(d.mailLine || d.email || ''); // C = FullAcess/email
     sheet.getRange(row, 8).setValue(d.checkoutUrl || '');    // H = CheckOut
     sheet.getRange(row, 13).setValue(d.errorMessage || '');  // M = lý do lỗi
+    if (d.entryId) sheet.getRange(row, 25).setValue(String(d.entryId)); // Y = entryId
 
     // I = đếm ngược 15p kể từ B. Hết giờ -> "HET HAN". Chỉ ghi khi có link.
     // QUAN TRỌNG: dấu ngăn tham số của công thức phụ thuộc LOCALE của sheet —
@@ -72,6 +94,44 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Xác nhận file này dùng được TRƯỚC khi chạy đợt phân phối, không để lại rác.
+// openById() vẫn mở được file chỉ-xem, nên phải GHI THỬ thật (Z2) mới kết luận
+// được là có quyền Edit — chạy trong lock nên không đụng argSeparator().
+// LUÔN trả HTTP 200 kèm JSON, kể cả khi hỏng: có vậy app mới đọc được lý do thật
+// thay vì trang HTML lỗi mặc định của Apps Script.
+function probeResult(d) {
+  var START = 3;
+  try {
+    var spreadsheet = d.targetSpreadsheetId
+      ? SpreadsheetApp.openById(String(d.targetSpreadsheetId))
+      : SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = spreadsheet.getSheets()[0];
+
+    var probe = sheet.getRange('Z2');
+    probe.setValue('probe');
+    SpreadsheetApp.flush();
+    probe.clearContent();
+
+    var row = Number(sheet.getRange('Z1').getValue()) || START;
+    if (row < START) row = START;
+
+    return probeJson({
+      ok: true,
+      spreadsheetName: spreadsheet.getName(),
+      sheetName: sheet.getName(),
+      nextRow: row,
+    });
+  } catch (err) {
+    return probeJson({ ok: false, error: String(err && err.message ? err.message : err) });
+  }
+}
+
+function probeJson(payload) {
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 // Dò dấu ngăn tham số công thức theo LOCALE của sheet bằng cách GHI THỬ =SUM(1,1)

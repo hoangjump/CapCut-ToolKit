@@ -347,6 +347,11 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
       ],
     );
     assert.equal(employeeSheetRows.every((entry) => entry.payload.mailLine === entry.payload.email), true);
+    // Apps Script chống ghi trùng bằng entryId (cột Y). Mọi payload phải mang nó,
+    // và nó phải duy nhất cho từng (dòng, sheet đích) — kể cả lần retry.
+    const entryIds = sheetWriter.attempts.map((entry) => entry.payload.entryId);
+    assert.equal(entryIds.every((id) => typeof id === 'string' && id.length > 0), true);
+    assert.equal(new Set(entryIds).size, 6);
     assert.doesNotMatch(JSON.stringify(employeeSheetRows), /pass\d|refresh\d|client\d/);
     assert.equal(store.snapshot().paymentSessions.every((session) => session.status === 'ready'), true);
     await service.finishDistribution(run.id);
@@ -451,6 +456,123 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     });
     assert.equal(replacement.status, 'running');
     await service.clearDistribution(replacement.id);
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('sheet probe reports the target tab and refuses an unconfigured employee', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'telegram-work-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    const store = new TelegramWorkStore(root);
+    const calls: Array<{ webhookUrl: string; spreadsheetId: string }> = [];
+    const order: string[] = [];
+    const service = new TelegramWorkService(
+      store,
+      settings,
+      new FakeTelegram(),
+      undefined,
+      async () => {},
+      async () => { order.push('verify'); },
+      async (webhookUrl, spreadsheetId) => {
+        order.push('probe');
+        calls.push({ webhookUrl, spreadsheetId });
+        return { spreadsheetName: 'Sheet cua Duy', sheetName: 'Trang tinh 1', nextRow: 7 };
+      },
+    );
+    await service.init();
+
+    const duy = await service.createEmployee({ fullName: 'Duy', defaultUnitRate: 5_000 });
+    await assert.rejects(service.testEmployeeSheet(duy.id), /chưa cấu hình Google Sheet riêng/);
+
+    const sheetId = 'A'.repeat(30);
+    await service.updateEmployee(duy.id, { sheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit` });
+    await assert.rejects(service.testEmployeeSheet(duy.id), /Google Sheet URL tổng/);
+
+    await settings.setSheetWebhookUrl('https://script.google.com/exec');
+    const probe = await service.testEmployeeSheet(duy.id);
+    assert.deepEqual(probe, { spreadsheetName: 'Sheet cua Duy', sheetName: 'Trang tinh 1', nextRow: 7 });
+    assert.deepEqual(calls, [{ webhookUrl: 'https://script.google.com/exec', spreadsheetId: sheetId }]);
+    // Script cũ phải bị chặn TRƯỚC khi probe, nếu không lỗi báo ra sẽ khó hiểu.
+    assert.deepEqual(order, ['verify', 'probe']);
+
+    await assert.rejects(service.testEmployeeSheet('khong-ton-tai'), /Không tìm thấy nhân viên/);
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('one Google Sheet cannot be shared by two employees', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'telegram-work-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    const store = new TelegramWorkStore(root);
+    const service = new TelegramWorkService(store, settings, new FakeTelegram());
+    await service.init();
+
+    const sheetId = 'B'.repeat(30);
+    const duy = await service.createEmployee({ fullName: 'Duy', defaultUnitRate: 5_000, sheetUrl: sheetId });
+    await assert.rejects(
+      service.createEmployee({ fullName: 'Hoa', defaultUnitRate: 5_000, sheetUrl: sheetId }),
+      /đang dùng cho nhân viên Duy/,
+    );
+
+    const hoa = await service.createEmployee({ fullName: 'Hoa', defaultUnitRate: 5_000 });
+    await assert.rejects(service.updateEmployee(hoa.id, { sheetUrl: sheetId }), /đang dùng cho nhân viên Duy/);
+
+    // Lưu lại chính ID của mình thì không được coi là trùng.
+    const again = await service.updateEmployee(duy.id, { sheetUrl: sheetId });
+    assert.equal(again.sheetSpreadsheetId, sheetId);
+
+    await service.archiveEmployee(duy.id);
+    const reused = await service.updateEmployee(hoa.id, { sheetUrl: sheetId });
+    assert.equal(reused.sheetSpreadsheetId, sheetId);
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('sheet probe surfaces the reason Apps Script gave instead of a bare HTTP code', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'telegram-work-test-'));
+  try {
+    const settings = new SettingsStore(root);
+    await settings.init();
+    await settings.setSheetWebhookUrl('https://script.google.com/exec');
+    const store = new TelegramWorkStore(root);
+    let body = '';
+    let status = 200;
+    const service = new TelegramWorkService(
+      store, settings, new FakeTelegram(), undefined,
+      async () => {}, async () => {},
+      // Bản sao logic parse của postSheetProbe, chạy trên response giả.
+      async () => {
+        let parsed: { ok?: boolean; error?: string; sheetName?: string; nextRow?: number };
+        try { parsed = JSON.parse(body) as typeof parsed; }
+        catch { throw new Error(`Apps Script không trả lời đúng định dạng (HTTP ${status}). Hãy Deploy → Manage deployments → New version`); }
+        if (parsed.error) throw new Error(`Apps Script không mở/ghi được file này: ${parsed.error}`);
+        if (!parsed.ok || !parsed.sheetName) throw new Error('Apps Script không xác nhận được quyền ghi vào file này');
+        return { sheetName: parsed.sheetName, nextRow: Number(parsed.nextRow) || 3 };
+      },
+    );
+    await service.init();
+    const duy = await service.createEmployee({ fullName: 'Duy', defaultUnitRate: 5_000, sheetUrl: 'C'.repeat(30) });
+
+    body = JSON.stringify({ ok: false, error: 'You do not have permission to access the requested document.' });
+    await assert.rejects(service.testEmployeeSheet(duy.id), /do not have permission/);
+
+    status = 500;
+    body = '<html>Script error</html>';
+    await assert.rejects(service.testEmployeeSheet(duy.id), /Manage deployments/);
+
+    status = 200;
+    body = JSON.stringify({ ok: true, sheetName: 'Trang tinh 1', nextRow: 3 });
+    assert.deepEqual(await service.testEmployeeSheet(duy.id), { sheetName: 'Trang tinh 1', nextRow: 3 });
     await service.close();
   } finally {
     await rm(root, { recursive: true, force: true });
