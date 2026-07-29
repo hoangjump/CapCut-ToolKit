@@ -48,7 +48,7 @@ const verifySheetWebhook: SheetWebhookVerifier = async (webhookUrl) => {
   try {
     const response = await fetch(webhookUrl);
     const version = await response.text();
-    if (!response.ok || version.trim() !== 'teamhatde-sheet-v3') throw new Error('version mismatch');
+    if (!response.ok || version.trim() !== 'teamhatde-sheet-v4') throw new Error('version mismatch');
   } catch {
     throw new Error('Apps Script Sheet đang là bản cũ. Hãy dán lại apps-script.gs rồi Deploy → Manage deployments → New version');
   }

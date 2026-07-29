@@ -101,20 +101,32 @@ Cấu hình một lần như sau:
    viên **trước** đợt phân phối đầu tiên, vì nếu không thì lỗi quyền chỉ lộ ra khi
    đợt đã chạy giữa chừng. Ghi thử không để lại dòng dữ liệu nào.
 
-Layout mà cả hai loại sheet phải theo:
+Cả hai loại sheet đều ghi vào **tab đầu tiên** (trái nhất), **từ dòng 3** (dòng 1-2
+dành cho tiêu đề). Cột nào chứa gì thì khai trong bảng `LAYOUT` ở đầu
+[`apps-script.gs`](apps-script.gs) — đổi layout sheet thì sửa đúng chỗ đó, không
+phải đọc hết script.
 
-| Vị trí | Nội dung |
-| --- | --- |
-| Tab được ghi | **tab đầu tiên** (trái nhất) của file |
-| Dòng bắt đầu | **dòng 3** (dòng 1-2 dành cho tiêu đề) |
-| A / B / C | Nhân viên / Date / mail full (Sheet tổng) hoặc email (Sheet nhân viên) |
-| H / I | CheckOut (link) / Còn lại (script tự đặt công thức đếm ngược) |
-| L / M | `DONE?` — nhân viên tự tick, tool không đụng / lý do lỗi |
-| **Y, Z1, Z2** | **ô dành riêng của script, không được dùng cho dữ liệu** (nên ẩn cột Y và Z) |
+Mặc định:
 
-`Y` giữ `entryId` của từng dòng. Script tìm `entryId` trước khi ghi, nên retry một
-link đang lỗi không bao giờ sinh dòng trùng — kể cả khi lần ghi trước đã vào sheet
-nhưng response rơi mất trên đường về.
+| Trường | Sheet tổng | Sheet nhân viên |
+| --- | --- | --- |
+| Nhân viên | Q | A |
+| Date | B | B |
+| Mail | C — `email\|pass\|refresh\|client` | C — chỉ email |
+| CheckOut | H | D |
+| Đếm ngược | I | E |
+| Lý do lỗi | R | F |
+
+Script **không đụng** các cột còn lại của Sheet tổng: `A` (STT), `D-G` (công thức
+tách mail), `J-L` (Worker), `M` (DONE?), `N` (ERROR?), `O`, `P`. Trên Sheet nhân
+viên, cột `G` trở đi để nhân viên tự tick `DONE?`.
+
+**Ô dành riêng của script — không dùng cho dữ liệu, nên ẩn cột Y và Z:** `Y` giữ
+`entryId` từng dòng, `Z1` là con trỏ dòng kế tiếp, `Z2` là ô nháp.
+
+Script tìm `entryId` ở cột Y trước khi ghi, nên retry một link đang lỗi không bao
+giờ sinh dòng trùng — kể cả khi lần ghi trước đã vào sheet nhưng response rơi mất
+trên đường về.
 
 Apps Script Web App phải chạy bằng tài khoản chủ sở hữu có quyền **Editor** trên cả
 Sheet tổng và mọi Sheet riêng. Một file Google Sheet chỉ được gán cho một nhân viên;
