@@ -36,7 +36,7 @@ export const templateFlow: RegisteredFlow = {
     label: 'Khuôn mẫu (copy để làm flow mới)',
     description: 'File mẫu — không chạy thực tế. Copy thành flow riêng rồi điền các bước.',
   },
-  run: async ({ helper, getOtp, profile, log }) => {
+  run: async ({ profile, log }) => {
     // ----- Ví dụ các bước (xóa/sửa theo nhu cầu) -----
 
     // 1) Mở trang

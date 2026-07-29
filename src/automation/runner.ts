@@ -309,6 +309,9 @@ export async function runProject(
             const capcutCookies = (await session.context.cookies())
               .filter((cookie) => /(^|\.)capcut\.com$/i.test(cookie.domain));
             if (!capcutCookies.some((cookie) => ['sessionid', 'sid_guard'].includes(cookie.name))) {
+              // throw này nằm trong try/catch ngay bên dưới nên được bắt tại chỗ,
+              // không thoát ra khỏi finally bao ngoài — ESLint không nhìn thấy điều đó.
+              // eslint-disable-next-line no-unsafe-finally
               throw new Error('Không lưu được cookie đăng nhập CapCut; không phân phối link để tránh mất tự động xác minh VIP');
             }
             await deps.onResult(row, {

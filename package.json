@@ -17,7 +17,9 @@
     "dist:win": "npm run prepare:cloudflared:win && npm run build && npm run build:web && electron-builder --win",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/*.test.ts src/work/*.test.ts src/server/*.test.ts",
-    "build:web": "npm --prefix web install && npm --prefix web run build"
+    "build:web": "npm --prefix web install && npm --prefix web run build",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
   },
   "dependencies": {
     "camoufox-js": "^0.11.1",
@@ -31,13 +33,17 @@
     "playwright-core": "1.53.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.18.1",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3",
+    "eslint": "^9.39.5",
+    "globals": "^17.8.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.65.0"
   },
   "build": {
     "appId": "com.teamhatde.auto",
