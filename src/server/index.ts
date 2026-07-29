@@ -229,7 +229,9 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
 
   const app = express();
   app.use(paymentHostGuard(() => settings.getPaymentPublicUrl()));
-  app.use(express.json());
+  // Danh sách mail OAuth2 có refresh token dài; vài nghìn dòng dễ vượt mức
+  // 100 KB mặc định của Express dù dữ liệu hợp lệ.
+  app.use(express.json({ limit: '10mb' }));
   app.use(express.static(publicDir));
 
   // Employee/topic task management. This module has its own bot credentials so
