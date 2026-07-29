@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Play, Pencil, Trash2, ShoppingCart, Wifi } from 'lucide-react';
+import { Plus, RefreshCw, Play, Pencil, Trash2, ShoppingCart } from 'lucide-react';
 import {
   proxyApi, mktApi, settingsApi,
   type ProxyDto, type ProxyType, type MktProduct,
@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -29,6 +30,7 @@ export function ProxyTab() {
   const [list, setList] = useState<ProxyDto[]>([]);
   const [q, setQ] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProxyDto | null>(null);
@@ -93,6 +95,38 @@ export function ProxyTab() {
     catch (e) { toast.error((e as Error).message); }
     finally { setRefreshing(false); }
   }
+  function toggle(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+  async function delSelected() {
+    const ids = [...selected];
+    if (!ids.length || !confirm(`Xoá ${ids.length} proxy đã chọn?`)) return;
+    try {
+      const result = await proxyApi.removeMany(ids);
+      toast.success(`Đã xoá ${result.removed} proxy`);
+      setSelected(new Set());
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+  }
+  /** Xoá SẠCH kho proxy. Bắt gõ lại số lượng — confirm thường quá dễ bấm nhầm
+   *  cho một thao tác không hoàn tác được. */
+  async function delAll() {
+    const total = list.length;
+    if (!total) return toast.error('Kho proxy đang trống');
+    const answer = prompt(`Xoá SẠCH ${total} proxy trong kho? Không hoàn tác được.\nGõ ${total} để xác nhận:`);
+    if (answer === null) return;
+    if (answer.trim() !== String(total)) return toast.error('Số không khớp, đã huỷ');
+    try {
+      const result = await proxyApi.removeMany();
+      toast.success(`Đã xoá ${result.removed} proxy`);
+      setSelected(new Set());
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+  }
   async function del(p: ProxyDto) {
     if (!confirm('Xóa proxy này?')) return;
     try { await proxyApi.remove(p.id); toast.success('Đã xóa proxy'); load(); }
@@ -109,11 +143,30 @@ export function ProxyTab() {
             <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} /> Làm mới
           </Button>
           <Button onClick={openAdd}><Plus className="h-4 w-4" /> Thêm mới</Button>
+          <Button variant="ghost" className="text-destructive" onClick={() => void delAll()}>
+            <Trash2 className="h-4 w-4" /> Xoá tất cả
+          </Button>
         </CardHeader>
         <CardContent>
+          {selected.size > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2">
+              <span className="text-sm font-medium">Đã chọn {selected.size}</span>
+              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => void delSelected()}>
+                <Trash2 className="h-4 w-4" /> Xoá đã chọn
+              </Button>
+              <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelected(new Set())}>Bỏ chọn</Button>
+            </div>
+          )}
           <div className="overflow-x-auto"><Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={list.length > 0 && list.every((p) => selected.has(p.id))}
+                    onCheckedChange={(checked) => setSelected(checked ? new Set(list.map((p) => p.id)) : new Set())}
+                    aria-label="Chọn tất cả proxy đang hiện"
+                  />
+                </TableHead>
                 <TableHead>Loại</TableHead>
                 <TableHead>Thông tin</TableHead>
                 <TableHead>Tags</TableHead>
@@ -125,6 +178,9 @@ export function ProxyTab() {
             <TableBody>
               {list.map((p) => (
                 <TableRow key={p.id}>
+                  <TableCell>
+                    <Checkbox checked={selected.has(p.id)} onCheckedChange={() => toggle(p.id)} aria-label={`Chọn ${p.display}`} />
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       {typeLabel(p.type)}
@@ -213,8 +269,6 @@ export function ProxyTab() {
 
 function MktProxyPanel({ onImported }: { onImported: () => void }) {
   const [keyState, setKeyState] = useState('(chưa có)');
-  const [apiKey, setApiKey] = useState('');
-  const [balance, setBalance] = useState('');
   const [products, setProducts] = useState<MktProduct[]>([]);
   const [productState, setProductState] = useState('');
   const [idx, setIdx] = useState<string>('');
@@ -243,15 +297,6 @@ function MktProxyPanel({ onImported }: { onImported: () => void }) {
     setCustomFields(cf);
   }, [idx]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function saveKey() {
-    if (!apiKey.trim()) { toast.error('Nhập API key tài khoản mktproxy'); return; }
-    try { const s = await settingsApi.save({ mktproxyApiKey: apiKey.trim() }); setApiKey(''); setKeyState(s.hasMktproxyKey ? `đã lưu: ${s.mktproxyMasked}` : 'chưa có'); toast.success('Đã lưu API key'); }
-    catch (e) { toast.error((e as Error).message); }
-  }
-  async function loadBalance() {
-    try { const r = await mktApi.balance(); setBalance(`${r.balance}đ`); toast.success(`Số dư ${r.balance}đ`); }
-    catch (e) { toast.error((e as Error).message); }
-  }
   async function loadProducts() {
     setProductState('(đang tải...)');
     try { const r = await mktApi.products(); setProducts(r.products); setProductState(`(${r.products.length} sản phẩm)`); }
@@ -280,14 +325,9 @@ function MktProxyPanel({ onImported }: { onImported: () => void }) {
         <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">Thu gọn</span>
       </summary>
       <div className="space-y-4 border-t p-4">
-        <div className="space-y-1.5">
-          <Label>API key tài khoản <span className="text-muted-foreground font-normal">({keyState}) — để mua &amp; xem số dư</span></Label>
-          <div className="flex gap-2">
-            <Input type="password" placeholder="Dán API key tài khoản mktproxy..." value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-            <Button onClick={saveKey}>Lưu</Button>
-            <Button variant="outline" onClick={loadBalance}><Wifi className="h-4 w-4" /> Số dư</Button>
-            {balance && <span className="self-center text-sm font-semibold text-primary whitespace-nowrap">{balance}</span>}
-          </div>
+        <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+          API key tài khoản mktproxy: <span className="font-medium text-foreground">{keyState}</span>
+          {' — '}đổi key và xem số dư ở tab <span className="font-medium text-foreground">Cài đặt</span>.
         </div>
 
         <div className="space-y-1.5">

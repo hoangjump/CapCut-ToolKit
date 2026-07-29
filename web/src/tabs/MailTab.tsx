@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Ban, CheckCircle2, RefreshCw, Mail as MailIcon, Inbox, Trash2, Upload } from 'lucide-react';
 import {
-  settingsApi, mailApi, sellApi, smsbowerApi, CODE_TYPES,
-  type MailRecord, type AccountType, type MailMessage, type SellProduct, type SmsbowerRest,
+  mailApi, sellApi, CODE_TYPES,
+  type MailRecord, type AccountType, type MailMessage, type SellProduct,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,27 +16,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { DialogFooter } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-
-// Bảng tên gợi ý cho mã service SmsBower (chuẩn sms-activate). Chỉ để HIỂN THỊ
-// cho dễ nhận diện — mã thô luôn hiện kèm nên không sợ nhầm. OpenAI/ChatGPT là
-// 'dr'. Mã nào không có trong bảng thì chỉ hiện mã thô.
-const SMS_SERVICE_NAMES: Record<string, string> = {
-  dr: 'OpenAI / ChatGPT',
-  go: 'Google / Gmail / YouTube',
-  tg: 'Telegram',
-  wa: 'WhatsApp',
-  ig: 'Instagram',
-  fb: 'Facebook',
-  tw: 'Twitter / X',
-  mm: 'Microsoft / Outlook',
-  mb: 'Yahoo',
-  am: 'Amazon',
-  ds: 'Discord',
-  vi: 'Viber',
-  ub: 'Uber',
-  ts: 'PayPal',
-  ot: 'Khác (bất kỳ)',
-};
 
 const MAIL_STATUS_LABEL: Record<MailRecord['status'], string> = {
   unchecked: 'Chưa kiểm tra',
@@ -62,32 +41,17 @@ function mailStatusVariant(status: MailRecord['status']): 'success' | 'danger' |
 }
 
 export function MailTab() {
-  const [keyState, setKeyState] = useState('(chưa có)');
-  const [apiKey, setApiKey] = useState('');
-  const [sheetUrl, setSheetUrl] = useState('');
-  const [sheetState, setSheetState] = useState('(chưa có)');
-  const [tgToken, setTgToken] = useState('');
-  const [tgChatId, setTgChatId] = useState('');
-  const [tgState, setTgState] = useState('(chưa có)');
-  const [balance, setBalance] = useState('');
   const [accountTypes, setAccountTypes] = useState<AccountType[]>([]);
   const [typeState, setTypeState] = useState('');
   const [buyType, setBuyType] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   // selltaikhoan (nhà cung cấp mail thứ 2)
   const [buyProvider, setBuyProvider] = useState<'dongvanfb' | 'selltaikhoan'>('dongvanfb');
-  const [sellKey, setSellKey] = useState('');
-  const [sellKeyState, setSellKeyState] = useState('(chưa có)');
-  const [sellBalance, setSellBalance] = useState('');
   const [sellProducts, setSellProducts] = useState<SellProduct[]>([]);
   const [sellProductState, setSellProductState] = useState('');
   const [sellSearch, setSellSearch] = useState('outlook');
   const [buyProductId, setBuyProductId] = useState('');
   // smsbower (thuê gmail nhận OTP theo service — cho flow chatgpt)
-  const [smsKey, setSmsKey] = useState('');
-  const [smsKeyState, setSmsKeyState] = useState('(chưa có)');
-  const [smsRests, setSmsRests] = useState<SmsbowerRest[]>([]);
-  const [smsRestState, setSmsRestState] = useState('');
   const [mails, setMails] = useState<MailRecord[]>([]);
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | MailRecord['status']>('all');
@@ -98,18 +62,6 @@ export function MailTab() {
   const [codeResult, setCodeResult] = useState<Record<string, string>>({});
   const [inbox, setInbox] = useState<{ open: boolean; email: string; loading: boolean; msgs: MailMessage[]; error?: string }>({ open: false, email: '', loading: false, msgs: [] });
 
-  async function loadSettings() {
-    try {
-      const s = await settingsApi.get();
-      setKeyState(s.hasKey ? `(đã lưu: ${s.masked})` : '(chưa có)');
-      setSheetUrl(s.sheetWebhookUrl || '');
-      setSheetState(s.sheetWebhookUrl ? '(đã lưu)' : '(chưa có)');
-      setTgChatId(s.telegramChatId || '');
-      setTgState(s.hasTelegram ? `(đã lưu: ${s.telegramMasked})` : '(chưa có)');
-      setSellKeyState(s.hasSelltaikhoanKey ? `(đã lưu: ${s.selltaikhoanMasked})` : '(chưa có)');
-      setSmsKeyState(s.hasSmsbowerKey ? `(đã lưu: ${s.smsbowerMasked})` : '(chưa có)');
-    } catch {}
-  }
   const loadMails = useCallback(async () => {
     try {
       const rows = await mailApi.list();
@@ -117,32 +69,12 @@ export function MailTab() {
       setSelected((current) => new Set([...current].filter((id) => rows.some((mail) => mail.id === id && mail.status !== 'reserved'))));
     } catch (e) { toast.error((e as Error).message); }
   }, []);
-  useEffect(() => { loadSettings(); loadMails(); }, []);
+  useEffect(() => { void loadMails(); }, []);
   useEffect(() => {
     const timer = window.setInterval(() => void loadMails(), 5_000);
     return () => window.clearInterval(timer);
   }, [loadMails]);
 
-  async function saveKey() {
-    if (!apiKey.trim()) { toast.error('Nhập API key'); return; }
-    try { const s = await settingsApi.save({ dongvanfbApiKey: apiKey.trim() }); setApiKey(''); setKeyState(s.hasKey ? `(đã lưu: ${s.masked})` : '(chưa có)'); toast.success('Đã lưu API key'); }
-    catch (e) { toast.error((e as Error).message); }
-  }
-  async function saveSheet() {
-    try { const s = await settingsApi.save({ sheetWebhookUrl: sheetUrl.trim() }); setSheetState(s.sheetWebhookUrl ? '(đã lưu)' : '(chưa có)'); toast.success(sheetUrl ? 'Đã lưu Sheet URL' : 'Đã xóa Sheet URL'); }
-    catch (e) { toast.error((e as Error).message); }
-  }
-  async function saveTelegram() {
-    try {
-      const s = await settingsApi.save({ telegramBotToken: tgToken.trim(), telegramChatId: tgChatId.trim() });
-      setTgToken('');
-      setTgState(s.hasTelegram ? `(đã lưu: ${s.telegramMasked})` : '(chưa có)');
-      toast.success('Đã lưu Telegram');
-    } catch (e) { toast.error((e as Error).message); }
-  }
-  async function loadBalance() {
-    try { const r = await mailApi.balance(); setBalance(`Số dư: ${r.balance}`); } catch (e) { toast.error((e as Error).message); }
-  }
   async function loadTypes() {
     setTypeState('(đang tải...)');
     try { const r = await mailApi.accountTypes(); setAccountTypes(r.accountTypes); setTypeState(`(${r.accountTypes.length} loại)`); }
@@ -158,14 +90,6 @@ export function MailTab() {
       loadMails();
     } catch (e) { toast.error((e as Error).message); }
   }
-  async function saveSellKey() {
-    if (!sellKey.trim()) { toast.error('Nhập API key selltaikhoan'); return; }
-    try { const s = await settingsApi.save({ selltaikhoanApiKey: sellKey.trim() }); setSellKey(''); setSellKeyState(s.hasSelltaikhoanKey ? `(đã lưu: ${s.selltaikhoanMasked})` : '(chưa có)'); toast.success('Đã lưu API key selltaikhoan'); }
-    catch (e) { toast.error((e as Error).message); }
-  }
-  async function loadSellBalance() {
-    try { const r = await sellApi.balance(); setSellBalance(`Số dư: ${r.balance}`); } catch (e) { toast.error((e as Error).message); }
-  }
   async function loadSellProducts() {
     setSellProductState('(đang tải...)');
     try { const r = await sellApi.products(); setSellProducts(r.products); setSellProductState(`(${r.products.length} sản phẩm)`); }
@@ -180,20 +104,6 @@ export function MailTab() {
       toast.success(`Mua ok: ${r.bought} mail, thêm ${r.added}.`);
       loadMails();
     } catch (e) { toast.error((e as Error).message); }
-  }
-  async function saveSmsKey() {
-    if (!smsKey.trim()) { toast.error('Nhập API key SmsBower'); return; }
-    try { const s = await settingsApi.save({ smsbowerApiKey: smsKey.trim() }); setSmsKey(''); setSmsKeyState(s.hasSmsbowerKey ? `(đã lưu: ${s.smsbowerMasked})` : '(chưa có)'); toast.success('Đã lưu API key SmsBower'); }
-    catch (e) { toast.error((e as Error).message); }
-  }
-  async function loadSmsRests() {
-    setSmsRestState('(đang tải...)');
-    try {
-      const r = await smsbowerApi.rests('gmail.com');
-      const sorted = [...r.rests].sort((a, b) => b.count - a.count);
-      setSmsRests(sorted);
-      setSmsRestState(`(${sorted.length} service)`);
-    } catch (e) { setSmsRestState(''); toast.error((e as Error).message); }
   }
   async function checkMails(ids: string[]) {
     if (!ids.length) return toast.error('Chọn ít nhất một mail');
@@ -227,6 +137,22 @@ export function MailTab() {
   async function del(id: string) {
     try { await mailApi.remove(id); setSelected((current) => { const next = new Set(current); next.delete(id); return next; }); toast.success('Đã xóa mail'); loadMails(); } catch (e) { toast.error((e as Error).message); }
   }
+  /** Xoá SẠCH kho mail. Gõ lại số lượng để xác nhận — hộp confirm thường quá dễ
+   *  bấm nhầm cho một thao tác không hoàn tác được. */
+  async function delAll() {
+    const total = mails.length;
+    if (!total) return toast.error('Kho mail đang trống');
+    const answer = prompt(`Xoá SẠCH ${total} mail trong kho? Không hoàn tác được.\nGõ ${total} để xác nhận:`);
+    if (answer === null) return;
+    if (answer.trim() !== String(total)) return toast.error('Số không khớp, đã huỷ');
+    try {
+      const result = await mailApi.removeMany();
+      toast.success(`Đã xoá ${result.removed} mail`);
+      setSelected(new Set());
+      void loadMails();
+    } catch (e) { toast.error((e as Error).message); }
+  }
+
   async function delSelected() {
     const ids = [...selected];
     if (!ids.length || !confirm(`Xóa ${ids.length} mail đã chọn?`)) return;
@@ -261,58 +187,6 @@ export function MailTab() {
   return (
     <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[360px_minmax(0,1fr)]">
       <div className="space-y-4">
-        <Card>
-          <CardHeader><CardTitle>Cài đặt &amp; số dư</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>API key dongvanfb <span className="text-muted-foreground font-normal">{keyState}</span></Label>
-              <div className="flex gap-2"><Input type="password" placeholder="Dán API key..." value={apiKey} onChange={(e) => setApiKey(e.target.value)} /><Button onClick={saveKey}>Lưu</Button></div>
-            </div>
-            <div className="flex items-center gap-2"><Button variant="outline" onClick={loadBalance}>Xem số dư</Button><span className="text-sm font-semibold text-primary">{balance}</span></div>
-            <div className="space-y-1.5">
-              <Label>API key selltaikhoan <span className="text-muted-foreground font-normal">{sellKeyState}</span></Label>
-              <div className="flex gap-2"><Input type="password" placeholder="Dán API key selltaikhoan..." value={sellKey} onChange={(e) => setSellKey(e.target.value)} /><Button onClick={saveSellKey}>Lưu</Button></div>
-              <p className="text-xs text-muted-foreground">Nhà cung cấp mail thứ 2 (Outlook rẻ hơn). Mail cùng định dạng nên đọc OTP dùng chung.</p>
-            </div>
-            <div className="flex items-center gap-2"><Button variant="outline" onClick={loadSellBalance}>Xem số dư selltaikhoan</Button><span className="text-sm font-semibold text-primary">{sellBalance}</span></div>
-            <div className="space-y-1.5">
-              <Label>API key SmsBower <span className="text-muted-foreground font-normal">{smsKeyState}</span></Label>
-              <div className="flex gap-2"><Input type="password" placeholder="Dán API key SmsBower..." value={smsKey} onChange={(e) => setSmsKey(e.target.value)} /><Button onClick={saveSmsKey}>Lưu</Button></div>
-              <p className="text-xs text-muted-foreground">Thuê gmail nhận OTP theo service (dùng cho flow ChatGPT). Đặt "Mã service" trong tab Project.</p>
-            </div>
-            <div className="space-y-1.5">
-              <Button variant="outline" onClick={loadSmsRests}>Xem tồn kho gmail <span className="text-muted-foreground font-normal">{smsRestState}</span></Button>
-              {smsRests.length > 0 && (
-                <div className="max-h-48 overflow-auto rounded-lg border p-2 text-xs">
-                  {smsRests.map((r) => (
-                    <div key={`${r.service}-${r.domain}`} className="flex justify-between gap-2 py-0.5">
-                      <span className="truncate">
-                        <span className="font-mono font-medium">{r.service}</span>
-                        {SMS_SERVICE_NAMES[r.service] && <span className="text-muted-foreground"> · {SMS_SERVICE_NAMES[r.service]}</span>}
-                      </span>
-                      <span className="shrink-0 text-muted-foreground">{r.price}đ · kho {r.count}</span>
-                    </div>
-                  ))}
-                  <p className="mt-1 text-muted-foreground">Cột trái (mã) là "Mã service" điền ở tab Project. ChatGPT = <b>dr</b> (nếu có trong danh sách này). Nếu không thấy <b>dr</b> nghĩa là SmsBower chưa bán mail gmail cho OpenAI.</p>
-                </div>
-              )}
-              {smsRestState === '(0 service)' && (
-                <p className="text-xs text-destructive">SmsBower không trả service nào cho gmail.com — có thể hết hàng hoặc sai key.</p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label>Google Sheet URL <span className="text-muted-foreground font-normal">{sheetState}</span></Label>
-              <div className="flex gap-2"><Input placeholder=".../exec" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} /><Button onClick={saveSheet}>Lưu</Button></div>
-              <p className="text-xs text-muted-foreground">Mỗi lần chạy flow ghi 1 dòng (mail + link checkout) vào sheet.</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Telegram báo thành công <span className="text-muted-foreground font-normal">{tgState}</span></Label>
-              <Input type="password" placeholder="Bot token (123456:ABC...)" value={tgToken} onChange={(e) => setTgToken(e.target.value)} />
-              <div className="flex gap-2"><Input placeholder="Chat ID (-100... hoặc id cá nhân)" value={tgChatId} onChange={(e) => setTgChatId(e.target.value)} /><Button onClick={saveTelegram}>Lưu</Button></div>
-              <p className="text-xs text-muted-foreground">Mỗi account đăng ký thành công gửi 1 tin nhắn gồm email và link thanh toán.</p>
-            </div>
-          </CardContent>
-        </Card>
         <Card>
           <CardHeader><CardTitle>Mua mail</CardTitle></CardHeader>
           <CardContent className="space-y-3">
@@ -372,6 +246,7 @@ export function MailTab() {
           </Select>
           <Button variant="outline" onClick={() => void loadMails()}><RefreshCw /> Tải lại</Button>
           <Button onClick={() => setImportOpen(true)}><Upload /> Import mail</Button>
+          <Button variant="ghost" className="text-destructive" onClick={() => void delAll()}><Trash2 /> Xoá tất cả</Button>
         </CardHeader>
         <CardContent>
           {selected.size > 0 && <div className="mb-3 flex flex-wrap items-center gap-2 border-b pb-3">

@@ -360,6 +360,18 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     }
   });
 
+  // Xóa hàng loạt: body {ids: string[]} xóa các id đó; không body = xóa SẠCH kho.
+  // Đăng ký TRƯỚC '/api/proxies/:id' để "proxies" không bị bắt nhầm thành :id.
+  app.delete('/api/proxies', async (req: Request, res: Response) => {
+    try {
+      const ids = req.body?.ids;
+      const removed = Array.isArray(ids) ? await store.deleteMany(ids.map(String)) : await store.clear();
+      res.json({ removed });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
   app.delete('/api/proxies/:id', async (req: Request, res: Response) => {
     try {
       await store.delete(String(req.params.id));

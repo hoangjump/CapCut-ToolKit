@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Menu, User, Mail, Settings2, ClipboardCheck } from 'lucide-react';
+import { Menu, User, Mail, Settings2, ClipboardCheck, SlidersHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LogDrawer } from '@/components/LogDrawer';
 import { ProxyTab } from '@/tabs/ProxyTab';
@@ -7,6 +7,7 @@ import { ProfilesTab } from '@/tabs/ProfilesTab';
 import { MailTab } from '@/tabs/MailTab';
 import { ProjectTab } from '@/tabs/ProjectTab';
 import { WorkTab } from '@/tabs/WorkTab';
+import { SettingsTab } from '@/tabs/SettingsTab';
 import { PaymentViewer } from '@/PaymentViewer';
 
 // macOS: chừa lề trái cho traffic lights (hiddenInset). Nhận diện qua UA — chỉ
@@ -19,6 +20,7 @@ const navigation = [
   { id: 'mail', label: 'Mail', description: 'Kho mail và nhà cung cấp', icon: Mail },
   { id: 'project', label: 'Chạy tự động', description: 'Project và flow tự động', icon: Settings2 },
   { id: 'work', label: 'Công việc', description: 'Nhân viên, lương và thanh toán', icon: ClipboardCheck },
+  { id: 'settings', label: 'Cài đặt', description: 'API key, Google Sheet và Telegram', icon: SlidersHorizontal },
 ] as const;
 
 type NavigationId = (typeof navigation)[number]['id'];
@@ -81,6 +83,7 @@ export default function App() {
             {tab === 'mail' && <MailTab />}
             {tab === 'project' && <ProjectTab />}
             {tab === 'work' && <WorkTab />}
+            {tab === 'settings' && <SettingsTab />}
           </div>
         </main>
       </div>

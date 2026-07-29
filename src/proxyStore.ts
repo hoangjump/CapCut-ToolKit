@@ -122,6 +122,23 @@ export class ProxyStore {
     await this.persist();
   }
 
+  /** Xóa nhiều proxy theo id (bỏ qua id không tồn tại). Trả số đã xóa. */
+  async deleteMany(ids: string[]): Promise<number> {
+    let removed = 0;
+    for (const id of new Set(ids)) if (this.proxies.delete(id)) removed += 1;
+    if (removed) await this.persist();
+    return removed;
+  }
+
+  /** Xóa sạch kho proxy. Trả số đã xóa. */
+  async clear(): Promise<number> {
+    const count = this.proxies.size;
+    if (!count) return 0;
+    this.proxies.clear();
+    await this.persist();
+    return count;
+  }
+
   private async persist(): Promise<void> {
     await writeJsonAtomic(this.file, this.list());
   }

@@ -314,6 +314,9 @@ export const proxyApi = {
   create: (body: any) => post('/api/proxies', body).then((r) => parse<ProxyDto[]>(r)),
   update: (id: string, body: any) => put('/api/proxies/' + id, body).then((r) => parse<ProxyDto>(r)),
   remove: (id: string) => fetch('/api/proxies/' + id, { method: 'DELETE' }),
+  // Xóa hàng loạt: truyền ids để xóa các proxy đó; bỏ trống = xóa sạch kho.
+  removeMany: (ids?: string[]) =>
+    fetch('/api/proxies', { method: 'DELETE', headers: jsonHeaders, body: JSON.stringify(ids ? { ids } : {}) }).then((r) => parse<{ removed: number }>(r)),
   check: (id: string) => post(`/api/proxies/${id}/check`).then((r) => parse<any>(r)),
   checkAll: () => post('/api/proxies/check-all').then((r) => parse<ProxyDto[]>(r)),
 };
