@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   Check,
+  Circle,
   ClipboardCopy,
   Eye,
   FileSpreadsheet,
@@ -29,6 +30,7 @@ import {
   type WorkTelegramConfig,
   type TunnelStatus,
 } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -125,7 +127,7 @@ function EmployeesPanel() {
         <div className="overflow-x-auto"><Table>
           <TableHeader><TableRow>
             <TableHead>Nhân viên</TableHead><TableHead>Telegram topic</TableHead><TableHead>Sheet riêng</TableHead><TableHead>Đơn giá</TableHead>
-            <TableHead>Hôm nay</TableHead><TableHead>Tháng này</TableHead><TableHead>Trạng thái</TableHead><TableHead className="text-right">Thao tác</TableHead>
+            <TableHead>Hôm nay</TableHead><TableHead>Tháng này</TableHead><TableHead>Thiết lập</TableHead><TableHead className="text-right">Thao tác</TableHead>
           </TableRow></TableHeader>
           <TableBody>
             {!visibleEmployees.length && <TableRow><TableCell colSpan={8} className="py-10 text-center text-muted-foreground">Chưa có nhân viên.</TableCell></TableRow>}
@@ -142,7 +144,23 @@ function EmployeesPanel() {
                 <TableCell>{formatMoney(employee.defaultUnitRate)}/con</TableCell>
                 <TableCell>{employee.totals.todayQuantity} con<div className="text-xs text-muted-foreground">{formatMoney(employee.totals.todayAmount)}</div></TableCell>
                 <TableCell>{employee.totals.monthQuantity} con<div className="text-xs text-muted-foreground">{formatMoney(employee.totals.monthAmount)}</div></TableCell>
-                <TableCell><Badge variant={statusVariant(employee.status)}>{employeeStatus[employee.status]}</Badge></TableCell>
+                <TableCell>
+                  <Badge variant={statusVariant(employee.status)}>{employeeStatus[employee.status]}</Badge>
+                  {(() => {
+                    const missing = setupSteps(employee).filter((step) => !step.done);
+                    if (!missing.length) return <div className="mt-1 text-[11px] text-emerald-600">Đủ 4 bước</div>;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setEditing(employee)}
+                        className="mt-1 block text-left text-[11px] text-amber-600 hover:underline"
+                        title="Bấm để mở phần thiết lập"
+                      >
+                        Còn thiếu: {missing.map((step) => step.label.toLowerCase()).join(', ')}
+                      </button>
+                    );
+                  })()}
+                </TableCell>
                 <TableCell>
                   <div className="flex justify-end gap-1">
                     <Button size="icon" variant="ghost" title="Copy lệnh bind" onClick={() => copyBind(employee)}><ClipboardCopy /></Button>
@@ -166,41 +184,171 @@ function EmployeesPanel() {
   );
 }
 
+/** Bốn bước phải xong thì nhân viên mới nhận được link phân phối. Suy ra từ
+ *  chính dữ liệu nhân viên nên không bao giờ lệch với trạng thái thật. */
+export function setupSteps(employee: WorkEmployee) {
+  return [
+    { key: 'topic', label: 'Tạo topic Telegram', done: Boolean(employee.telegramTopicId) },
+    { key: 'bind', label: 'Nhân viên gõ lệnh bind', done: Boolean(employee.telegramUserId) },
+    { key: 'sheet', label: 'Gán Google Sheet riêng', done: Boolean(employee.sheetSpreadsheetId) },
+    { key: 'active', label: 'Bật hoạt động', done: employee.status === 'active' },
+  ];
+}
+
+function StepRow({ done, label, children }: { done: boolean; label: string; children?: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border p-3">
+      <div className="flex items-center gap-2">
+        {done
+          ? <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+          : <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />}
+        <span className={cn('text-sm font-medium', !done && 'text-muted-foreground')}>{label}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function EmployeeDialog({ employee, onClose, onSaved }: { employee: WorkEmployee | null; onClose: () => void; onSaved: () => Promise<void> }) {
+  // `current` là nhân viên đang thao tác. Tạo mới xong thì gán vào đây để hộp
+  // thoại chuyển thẳng sang checklist, không bắt đóng ra rồi mở lại.
+  const [current, setCurrent] = useState<WorkEmployee | null>(employee);
   const [name, setName] = useState(employee?.fullName ?? '');
   const [rate, setRate] = useState(String(employee?.defaultUnitRate ?? 0));
   const [visibility, setVisibility] = useState<SalaryVisibility>(employee?.salaryVisibility ?? 'topic');
   const [sheetUrl, setSheetUrl] = useState(employee?.sheetSpreadsheetId ?? '');
-  const [status, setStatus] = useState<'active' | 'inactive'>(employee?.status === 'inactive' ? 'inactive' : 'active');
   const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [probe, setProbe] = useState('');
 
-  async function save() {
+  // Bước bind do NHÂN VIÊN thực hiện ở phía Telegram, app không được báo. Poll
+  // để dấu ✓ tự bật ngay khi họ gõ xong, khỏi phải đóng mở hộp thoại.
+  const refresh = useCallback(async () => {
+    if (!current) return;
+    try {
+      const fresh = (await workApi.employees()).find((item) => item.id === current.id);
+      if (fresh) setCurrent(fresh);
+    } catch { /* im lặng: chỉ là poll nền */ }
+  }, [current?.id]);
+  useEffect(() => {
+    if (!current) return;
+    const timer = window.setInterval(refresh, 4_000);
+    return () => window.clearInterval(timer);
+  }, [current?.id, refresh]);
+
+  const steps = current ? setupSteps(current) : [];
+  const doneCount = steps.filter((step) => step.done).length;
+
+  async function saveInfo() {
     if (!name.trim()) return toast.error('Nhập tên nhân viên');
     setSaving(true);
     try {
-      if (employee) await workApi.updateEmployee(employee.id, { fullName: name.trim(), defaultUnitRate: Number(rate), salaryVisibility: visibility, status, sheetUrl: sheetUrl.trim() });
-      else await workApi.createEmployee({ fullName: name.trim(), defaultUnitRate: Number(rate), salaryVisibility: visibility, sheetUrl: sheetUrl.trim() });
-      toast.success(employee ? 'Đã cập nhật nhân viên' : 'Đã tạo nhân viên');
-      await onSaved(); onClose();
+      const body = { fullName: name.trim(), defaultUnitRate: Number(rate), salaryVisibility: visibility };
+      const saved = current
+        ? await workApi.updateEmployee(current.id, body)
+        : await workApi.createEmployee(body);
+      setCurrent(saved);
+      toast.success(current ? 'Đã cập nhật' : `Đã tạo ${saved.fullName} — làm tiếp các bước bên dưới`);
+      await onSaved();
     } catch (err) { toast.error((err as Error).message); } finally { setSaving(false); }
+  }
+
+  async function step(key: string, run: () => Promise<unknown>, success: string) {
+    setBusy(key);
+    try { await run(); toast.success(success); await refresh(); await onSaved(); }
+    catch (err) { toast.error((err as Error).message); }
+    finally { setBusy(''); }
+  }
+
+  async function saveSheet() {
+    if (!current) return;
+    setBusy('sheet'); setProbe('');
+    try {
+      const saved = await workApi.updateEmployee(current.id, { sheetUrl: sheetUrl.trim() });
+      setCurrent(saved);
+      await onSaved();
+      if (!sheetUrl.trim()) { toast.success('Đã bỏ Google Sheet riêng'); return; }
+      const result = await workApi.testSheet(current.id);
+      setProbe(`Sheet OK — tab "${result.sheetName}", ghi từ dòng ${result.nextRow}`);
+      toast.success('Sheet dùng được');
+    } catch (err) { setProbe(''); toast.error((err as Error).message); }
+    finally { setBusy(''); }
+  }
+
+  async function copyBind() {
+    if (!current) return;
+    const command = `/bind ${current.bindCode}`;
+    try { await navigator.clipboard.writeText(command); toast.success(`Đã copy ${command}`); }
+    catch { toast.error(`Không copy được. Lệnh: ${command}`); }
   }
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{employee ? 'Sửa nhân viên' : 'Thêm nhân viên'}</DialogTitle></DialogHeader>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {current ? `Thiết lập ${current.fullName}` : 'Thêm nhân viên'}
+            {current && <span className="ml-2 text-sm font-normal text-muted-foreground">{doneCount}/4 bước</span>}
+          </DialogTitle>
+        </DialogHeader>
+
         <div className="space-y-4">
           <div className="space-y-1.5"><Label>Họ tên</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Đơn giá mỗi con</Label><Input type="number" min="0" value={rate} onChange={(e) => setRate(e.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Google Sheet riêng</Label><Input value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} placeholder="Dán URL hoặc Spreadsheet ID" /><p className="text-xs text-muted-foreground">File này chỉ ghi email và link thanh toán của nhân viên; Sheet tổng vẫn lưu đầy đủ như cũ.</p></div>
           <div className="space-y-1.5"><Label>Hiển thị tiền công</Label><Select value={visibility} onValueChange={(v) => setVisibility(v as SalaryVisibility)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
             <SelectItem value="topic">Hiện trong topic</SelectItem><SelectItem value="private">Nhắn riêng nhân viên</SelectItem><SelectItem value="admin-only">Chỉ hiện trên app</SelectItem>
           </SelectContent></Select></div>
-          {employee?.telegramUserId && <div className="space-y-1.5"><Label>Trạng thái</Label><Select value={status} onValueChange={(v) => setStatus(v as 'active' | 'inactive')}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
-            <SelectItem value="active">Hoạt động</SelectItem><SelectItem value="inactive">Tạm ngừng</SelectItem>
-          </SelectContent></Select></div>}
+          <Button disabled={saving} onClick={saveInfo} className="w-full">
+            {saving ? 'Đang lưu...' : current ? 'Lưu thông tin' : 'Tạo nhân viên và làm tiếp'}
+          </Button>
+
+          {current && <div className="space-y-2 border-t pt-4">
+            <StepRow done={steps[0].done} label="1. Tạo topic Telegram">
+              {steps[0].done
+                ? <p className="text-xs text-muted-foreground">Topic #{current.telegramTopicId}</p>
+                : <Button size="sm" variant="outline" disabled={busy === 'topic'}
+                    onClick={() => step('topic', () => workApi.createTopic(current.id), 'Đã tạo topic')}>
+                    {busy === 'topic' ? 'Đang tạo...' : 'Tạo topic'}
+                  </Button>}
+            </StepRow>
+
+            <StepRow done={steps[1].done} label="2. Nhân viên gõ lệnh bind">
+              {steps[1].done
+                ? <p className="text-xs text-muted-foreground">Đã liên kết — user ID {current.telegramUserId}</p>
+                : <>
+                    <p className="text-xs text-muted-foreground">Gửi lệnh này cho nhân viên, họ gõ vào ĐÚNG topic của mình:</p>
+                    <div className="flex items-center gap-2">
+                      <code className="rounded bg-muted px-2 py-1 font-mono text-xs">/bind {current.bindCode}</code>
+                      <Button size="sm" variant="ghost" onClick={copyBind}><ClipboardCopy className="h-3.5 w-3.5" /> Copy</Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Dấu ✓ tự bật khi họ gõ xong, không cần đóng hộp thoại.</p>
+                  </>}
+            </StepRow>
+
+            <StepRow done={steps[2].done} label="3. Gán Google Sheet riêng">
+              <Input value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} placeholder="Dán URL hoặc Spreadsheet ID" />
+              <Button size="sm" variant="outline" disabled={busy === 'sheet'} onClick={saveSheet}>
+                {busy === 'sheet' ? 'Đang kiểm tra...' : 'Lưu và ghi thử'}
+              </Button>
+              {probe && <p className="text-xs text-emerald-600">{probe}</p>}
+              <p className="text-xs text-muted-foreground">File riêng chỉ ghi email và link thanh toán — không có mật khẩu.</p>
+            </StepRow>
+
+            <StepRow done={steps[3].done} label="4. Bật hoạt động">
+              {steps[3].done
+                ? <Button size="sm" variant="ghost" disabled={busy === 'active'}
+                    onClick={() => step('active', () => workApi.updateEmployee(current.id, { status: 'inactive' }), 'Đã tạm ngừng')}>
+                    Tạm ngừng
+                  </Button>
+                : <Button size="sm" variant="outline" disabled={busy === 'active' || !steps[1].done}
+                    onClick={() => step('active', () => workApi.updateEmployee(current.id, { status: 'active' }), 'Đã bật hoạt động')}>
+                    {steps[1].done ? 'Bật hoạt động' : 'Chờ nhân viên bind xong'}
+                  </Button>}
+            </StepRow>
+          </div>}
         </div>
-        <DialogFooter><Button variant="outline" onClick={onClose}>Hủy</Button><Button disabled={saving} onClick={save}>{saving ? 'Đang lưu...' : 'Lưu'}</Button></DialogFooter>
+
+        <DialogFooter><Button variant="outline" onClick={onClose}>Đóng</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
