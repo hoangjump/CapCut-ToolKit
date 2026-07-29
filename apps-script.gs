@@ -39,7 +39,7 @@ var CELL_SCRATCH = 'Z2';      // ô nháp (dò locale, kiểm tra quyền ghi)
 
 function doGet() {
   // App kiểm tra version này trước khi chạy để tránh script cũ ghi nhầm cột.
-  return ContentService.createTextOutput('teamhatde-sheet-v4');
+  return ContentService.createTextOutput('teamhatde-sheet-v5');
 }
 
 function doPost(e) {
@@ -76,8 +76,7 @@ function doPost(e) {
     }
 
     var ptrCell = sheet.getRange(CELL_ROW_POINTER);
-    var row = Number(ptrCell.getValue()) || L.startRow;
-    if (row < L.startRow) row = L.startRow;
+    var row = nextRow(sheet, ptrCell, L);
 
     // Lưới an toàn: nếu con trỏ lệch (ai đó xóa/chèn dòng thủ công), nhích tới
     // ô trống thật ở cột mail. Bình thường vòng này chạy 0 lần nên vẫn O(1).
@@ -114,6 +113,27 @@ function doPost(e) {
   }
 }
 
+// Dòng sẽ ghi tiếp theo.
+//
+// Đường nhanh: đọc con trỏ ở Z1 -> O(1), không quét gì cả.
+//
+// Con trỏ TRỐNG (sheet mới, hoặc sheet đã chạy bằng script đời cũ chưa từng đặt
+// Z1) thì TUYỆT ĐỐI KHÔNG được dò từ startRow xuống tìm ô mail trống đầu tiên:
+// sheet đang chạy thật có hàng trăm dòng cũ bị trống cột mail nằm rải rác giữa
+// dữ liệu, dò kiểu đó sẽ ghi đè lên chúng. Phải lấy dòng CUỐI CÙNG có mail rồi +1.
+// Chỉ đọc cả cột đúng một lần duy nhất — sau đó Z1 tiếp quản.
+function nextRow(sheet, ptrCell, L) {
+  var ptr = Number(ptrCell.getValue());
+  if (ptr >= L.startRow) return ptr;
+
+  var values = sheet.getRange(1, L.mail, sheet.getMaxRows(), 1).getValues();
+  var last = 0;
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (values[i][0] !== '') { last = i + 1; break; }
+  }
+  return Math.max(L.startRow, last + 1);
+}
+
 // Xác nhận file này dùng được TRƯỚC khi chạy đợt phân phối, không để lại rác.
 // openById() vẫn mở được file chỉ-xem, nên phải GHI THỬ thật (Z2) mới kết luận
 // được là có quyền Edit — chạy trong lock nên không đụng argSeparator().
@@ -132,8 +152,8 @@ function probeResult(d) {
     SpreadsheetApp.flush();
     probe.clearContent();
 
-    var row = Number(sheet.getRange(CELL_ROW_POINTER).getValue()) || L.startRow;
-    if (row < L.startRow) row = L.startRow;
+    // Dùng đúng hàm của đường ghi thật, để con số báo ra là con số sẽ ghi.
+    var row = nextRow(sheet, sheet.getRange(CELL_ROW_POINTER), L);
 
     return probeJson({
       ok: true,
