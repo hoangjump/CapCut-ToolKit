@@ -422,6 +422,26 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     assert.equal(store.snapshot().distributionItems.find((item) => item.id === firstItem.id)!.capcutCookies, undefined);
     assert.equal(fake.reactions.at(-1)?.emoji, '❤');
     assert.match(fake.sent.at(-1)!.text, /\+1 con × 5\.000đ = 5\.000đ/);
+    // Lên VIP -> tick DONE ở CẢ Sheet tổng lẫn Sheet riêng, kèm SL trong ngày.
+    // Thông báo chạy qua hàng đợi bất đồng bộ nên phải chờ.
+    await waitFor(
+      () => sheetWriter.attempts.filter((entry) => entry.payload.setDone !== undefined).length >= 2,
+      'DONE flag was not pushed to both sheets',
+    );
+    const doneWrites = sheetWriter.attempts.filter((entry) => entry.payload.setDone !== undefined);
+    const totalDone = doneWrites.find((entry) => !entry.payload.targetSpreadsheetId)!;
+    const employeeDone = doneWrites.find((entry) => entry.payload.targetSpreadsheetId === duySheetId)!;
+    assert.deepEqual(
+      { id: totalDone.payload.entryId, done: totalDone.payload.setDone, count: totalDone.payload.doneCount },
+      { id: `total:${firstItem.id}`, done: true, count: 1 },
+    );
+    assert.deepEqual(
+      { id: employeeDone.payload.entryId, done: employeeDone.payload.setDone, count: employeeDone.payload.doneCount },
+      { id: `employee:${firstItem.id}`, done: true, count: 1 },
+    );
+    // Payload tick DONE không được mang theo mail full hay mật khẩu.
+    assert.doesNotMatch(JSON.stringify(doneWrites), /pass\d|refresh\d|client\d|@example\.com/);
+
     assert.match(fake.sent.at(-1)!.text, /Bot đã tự tim tin nhắn gốc/);
     assert.match(fake.sent.at(-1)!.text, /Không cần bấm lại hoặc kiểm tra thủ công/);
 

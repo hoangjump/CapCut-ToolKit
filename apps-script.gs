@@ -8,19 +8,20 @@
 // Số thứ tự cột: A=1, B=2, … Y=25, Z=26. Đặt 0 = không ghi trường đó.
 // `mail` cũng là cột dùng để dò dòng trống, nên bắt buộc phải có.
 var LAYOUT = {
-  // Sheet TỔNG — giữ đúng layout đang dùng (A=STT, M=DONE?, N=ERROR? là của bạn,
-  // script KHÔNG đụng vào). Chỉ thêm Q và R.
+  // Sheet TỔNG — A (STT), D-G (công thức tách mail), N (ERROR?), O, P là của bạn,
+  // script KHÔNG đụng vào.
   total: {
     startRow: 3,      // dòng 1-2 là tiêu đề
-    employeeName: 17, // Q = Nhân viên   <- cột THÊM MỚI
     date: 2,          // B = Date
     mail: 3,          // C = FullAcess (mail full)
     checkout: 8,      // H = CheckOut
     countdown: 9,     // I = Time
-    error: 18,        // R = Lý do lỗi  <- cột THÊM MỚI
+    employeeName: 10, // J = Nhân viên thực hiện
+    error: 11,        // K = Lý do lỗi
+    doneCount: 12,    // L = SL hôm nay (ghi lúc tick DONE)
+    done: 13,         // M = DONE?  (script tự tick khi lên VIP)
   },
   // Sheet RIÊNG của nhân viên — hẹp, chỉ những gì nhân viên cần thấy.
-  // Cột G (DONE?) để nhân viên tự tick, script không bao giờ ghi vào đó.
   employee: {
     startRow: 3,
     employeeName: 1,  // A = Nhân viên
@@ -29,6 +30,8 @@ var LAYOUT = {
     checkout: 4,      // D = CheckOut
     countdown: 5,     // E = Còn lại
     error: 6,         // F = Lý do lỗi
+    doneCount: 7,     // G = SL hôm nay
+    done: 8,          // H = DONE?
   },
 };
 
@@ -39,7 +42,7 @@ var CELL_SCRATCH = 'Z2';      // ô nháp (dò locale, kiểm tra quyền ghi)
 
 function doGet() {
   // App kiểm tra version này trước khi chạy để tránh script cũ ghi nhầm cột.
-  return ContentService.createTextOutput('teamhatde-sheet-v5');
+  return ContentService.createTextOutput('teamhatde-sheet-v6');
 }
 
 function doPost(e) {
@@ -54,6 +57,10 @@ function doPost(e) {
     // được "HTTP 500" thay vì lý do thật. probeResult tự bắt và trả lỗi dạng JSON.
     if (d.probe) return probeResult(d);
 
+    // Tick / bỏ tick ô DONE của một dòng ĐÃ ghi trước đó. App gọi khi tài khoản
+    // lên VIP (tick + ghi SL hôm nay) và khi đảo ngược (bỏ tick + xoá SL).
+    if (d.setDone !== undefined) return updateDone(d);
+
     // Không truyền targetSpreadsheetId -> ghi Sheet tổng đang gắn Apps Script.
     // Có targetSpreadsheetId -> ghi file riêng của nhân viên. Web App phải chạy
     // dưới tài khoản chủ sở hữu có quyền mở các file đó.
@@ -67,13 +74,7 @@ function doPost(e) {
     // app coi là lỗi và cho retry — không có bước này là ra 2 dòng giống hệt nhau.
     // Tìm trên cả cột Y (native, nhanh kể cả sheet vài chục nghìn dòng) chứ không
     // quét N dòng cuối: retry là thao tác tay nên có thể xảy ra rất lâu sau đó.
-    if (d.entryId) {
-      var existing = sheet.getRange(colLetter(COL_ENTRY_ID) + ':' + colLetter(COL_ENTRY_ID))
-        .createTextFinder(String(d.entryId))
-        .matchEntireCell(true)
-        .findNext();
-      if (existing) return ContentService.createTextOutput('ok');
-    }
+    if (findByEntryId(sheet, d.entryId)) return ContentService.createTextOutput('ok');
 
     var ptrCell = sheet.getRange(CELL_ROW_POINTER);
     var row = nextRow(sheet, ptrCell, L);
@@ -110,6 +111,46 @@ function doPost(e) {
     return ContentService.createTextOutput('ok');
   } finally {
     lock.releaseLock();
+  }
+}
+
+// Tìm dòng mang entryId này ở cột Y. Dùng cho cả chống ghi trùng lẫn tick DONE.
+// TextFinder chạy native nên nhanh kể cả sheet vài chục nghìn dòng.
+function findByEntryId(sheet, entryId) {
+  if (!entryId) return null;
+  var col = colLetter(COL_ENTRY_ID);
+  return sheet.getRange(col + ':' + col)
+    .createTextFinder(String(entryId))
+    .matchEntireCell(true)
+    .findNext();
+}
+
+// Tick / bỏ tick ô DONE của dòng đã ghi, kèm SL hôm nay của nhân viên.
+// Dòng không tìm thấy (ví dụ chạy từ trước khi có entryId) thì báo updated:false
+// chứ không coi là lỗi — app chỉ ghi log, không được để hỏng việc tính lương.
+function updateDone(d) {
+  var L = d.targetSpreadsheetId ? LAYOUT.employee : LAYOUT.total;
+  try {
+    var spreadsheet = d.targetSpreadsheetId
+      ? SpreadsheetApp.openById(String(d.targetSpreadsheetId))
+      : SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = spreadsheet.getSheets()[0];
+
+    var found = findByEntryId(sheet, d.entryId);
+    if (!found) return probeJson({ ok: true, updated: false });
+
+    var row = found.getRow();
+    var done = d.setDone === true;
+    if (L.done) sheet.getRange(row, L.done).setValue(done);
+    if (L.doneCount) {
+      var counter = sheet.getRange(row, L.doneCount);
+      // Bỏ tick thì xoá luôn số: dòng đó không còn được tính vào sản lượng nữa.
+      if (done && d.doneCount !== null && d.doneCount !== undefined) counter.setValue(d.doneCount);
+      else counter.clearContent();
+    }
+    return probeJson({ ok: true, updated: true, row: row });
+  } catch (err) {
+    return probeJson({ ok: false, error: String(err && err.message ? err.message : err) });
   }
 }
 

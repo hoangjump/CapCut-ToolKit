@@ -42,13 +42,25 @@ const postSheetWebhook: SheetWebhookWriter = async (webhookUrl, payload) => {
     body: JSON.stringify(payload),
   });
   if (!response.ok) throw new Error(`Sheet webhook HTTP ${response.status}`);
+  // Đường ghi dòng trả plain text 'ok'; các nhánh mới (tick DONE) trả JSON và tự
+  // gói lỗi vào body vì ContentService không đặt được HTTP status. Chỉ parse khi
+  // body trông như JSON, còn lại giữ nguyên hành vi cũ.
+  const body = (await response.text()).trim();
+  if (!body.startsWith('{')) return;
+  let parsed: { ok?: boolean; error?: string };
+  try {
+    parsed = JSON.parse(body) as typeof parsed;
+  } catch {
+    return;
+  }
+  if (parsed.error || parsed.ok === false) throw new Error(parsed.error || 'Apps Script từ chối ghi');
 };
 
 const verifySheetWebhook: SheetWebhookVerifier = async (webhookUrl) => {
   try {
     const response = await fetch(webhookUrl);
     const version = await response.text();
-    if (!response.ok || version.trim() !== 'teamhatde-sheet-v5') throw new Error('version mismatch');
+    if (!response.ok || version.trim() !== 'teamhatde-sheet-v6') throw new Error('version mismatch');
   } catch {
     throw new Error('Apps Script Sheet đang là bản cũ. Hãy dán lại apps-script.gs rồi Deploy → Manage deployments → New version');
   }
@@ -1295,8 +1307,47 @@ export class TelegramWorkService {
     }
   }
 
+  /** Tick ô DONE trên Sheet tổng lẫn Sheet riêng của nhân viên, kèm SL hôm nay.
+   *  Best-effort tuyệt đối: sheet hỏng thì chỉ ghi log, KHÔNG được làm hỏng việc
+   *  cộng/trừ tiền công đã chốt trong store. */
+  private async syncDoneToSheets(action: ReactionAction): Promise<void> {
+    const task = action.task!;
+    if (task.source !== 'capcut-distribution' || !task.distributionItemId) return;
+    const webhookUrl = this.settings.getSheetWebhookUrl();
+    if (!webhookUrl) return;
+    const state = this.store.snapshot();
+    const item = state.distributionItems.find((entry) => entry.id === task.distributionItemId);
+    if (!item) return;
+    const employee = state.employees.find((entry) => entry.id === task.employeeId);
+    const done = action.kind === 'completed';
+    // Ảnh chụp sản lượng trong ngày TẠI THỜI ĐIỂM chốt dòng này. Bỏ tick thì xoá
+    // số đi, vì dòng đó không còn được tính nữa.
+    const doneCount = done ? action.totals?.todayQuantity ?? 0 : undefined;
+
+    const targets: Array<Record<string, unknown>> = [
+      { entryId: `total:${item.id}`, setDone: done, doneCount },
+    ];
+    if (employee?.sheetSpreadsheetId) {
+      targets.push({
+        entryId: `employee:${item.id}`,
+        targetSpreadsheetId: employee.sheetSpreadsheetId,
+        setDone: done,
+        doneCount,
+      });
+    }
+    for (const payload of targets) {
+      try {
+        await this.sheetWriter(webhookUrl, payload);
+      } catch (err) {
+        log.warn(`cập nhật DONE trên sheet lỗi (${item.email}): ${(err as Error).message}`);
+      }
+    }
+  }
+
   private async notifyReaction(action: ReactionAction): Promise<boolean> {
     if (!action.task || !action.employee || !action.totals || !['completed', 'reopened'].includes(action.kind)) return false;
+    // Chạy trước phần Telegram: sheet phải được cập nhật kể cả khi bot chưa cấu hình.
+    await this.syncDoneToSheets(action);
     const token = this.settings.getWorkTelegramBotToken();
     const task = action.task;
     if (!token || !task.telegramChatId || !task.telegramMessageId) return false;

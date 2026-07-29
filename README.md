@@ -108,18 +108,22 @@ phải đọc hết script.
 
 Mặc định:
 
-| Trường | Sheet tổng | Sheet nhân viên |
-| --- | --- | --- |
-| Nhân viên | Q | A |
-| Date | B | B |
-| Mail | C — `email\|pass\|refresh\|client` | C — chỉ email |
-| CheckOut | H | D |
-| Đếm ngược | I | E |
-| Lý do lỗi | R | F |
+| Trường | Sheet tổng | Sheet nhân viên | Ghi khi nào |
+| --- | --- | --- | --- |
+| Date | B | B | lúc phân phối |
+| Mail | C — `email\|pass\|refresh\|client` | C — chỉ email | lúc phân phối |
+| CheckOut | H | D | lúc phân phối |
+| Đếm ngược | I | E | lúc phân phối |
+| Nhân viên | J | A | lúc phân phối |
+| Lý do lỗi | K | F | lúc phân phối |
+| SL hôm nay | L | G | **lúc lên VIP** |
+| DONE? | M | H | **lúc lên VIP** |
+
+`SL hôm nay` là ảnh chụp sản lượng trong ngày của nhân viên tại đúng thời điểm dòng
+đó được chốt, không tính lại về sau. Đảo ngược thì bỏ tick `DONE?` và xoá số.
 
 Script **không đụng** các cột còn lại của Sheet tổng: `A` (STT), `D-G` (công thức
-tách mail), `J-L` (Worker), `M` (DONE?), `N` (ERROR?), `O`, `P`. Trên Sheet nhân
-viên, cột `G` trở đi để nhân viên tự tick `DONE?`.
+tách mail), `N` (ERROR?), `O`, `P`.
 
 **Ô dành riêng của script — không dùng cho dữ liệu, nên ẩn cột Y và Z:** `Y` giữ
 `entryId` từng dòng, `Z1` là con trỏ dòng kế tiếp, `Z2` là ô nháp.
