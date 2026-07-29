@@ -168,7 +168,12 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   app.use(paymentHostGuard(() => settings.getPaymentPublicUrl()));
   // Danh sách mail OAuth2 có refresh token dài; vài nghìn dòng dễ vượt mức
   // 100 KB mặc định của Express dù dữ liệu hợp lệ.
-  app.use(express.json({ limit: '10mb' }));
+  // Import kho mail gửi cả danh sách trong MỘT request JSON. Mail OAuth2 có
+  // refresh token dài ~700 byte/dòng, nên 10 nghìn dòng đã ~7MB. Mức mặc định
+  // 100 KB của Express chặn ngay từ ~140 dòng — đó chính là HTTP 413 mà bản cũ
+  // gặp phải. 64mb cho thoải mái; vượt mức đó thì errorMiddleware trả câu tiếng
+  // Việt bảo chia nhỏ file, chứ không phải "413" trống không.
+  app.use(express.json({ limit: '64mb' }));
   app.use(express.static(publicDir));
 
   // Employee/topic task management. This module has its own bot credentials so
