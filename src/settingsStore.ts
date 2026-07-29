@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import { writeJsonAtomic } from './atomicJson.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AppSettings } from './types.js';
@@ -213,6 +214,6 @@ export class SettingsStore {
   }
 
   private async persist(): Promise<void> {
-    await writeFile(this.file, JSON.stringify(this.settings, null, 2), 'utf8');
+    await writeJsonAtomic(this.file, this.settings);
   }
 }

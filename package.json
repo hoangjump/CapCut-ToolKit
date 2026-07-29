@@ -16,7 +16,7 @@
     "prepare:cloudflared:win": "node scripts/download-cloudflared.mjs",
     "dist:win": "npm run prepare:cloudflared:win && npm run build && npm run build:web && electron-builder --win",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/work/*.test.ts src/server/*.test.ts",
+    "test": "node --import tsx --test src/*.test.ts src/work/*.test.ts src/server/*.test.ts",
     "build:web": "npm --prefix web install && npm --prefix web run build"
   },
   "dependencies": {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { writeJsonAtomic } from './atomicJson.js';
+import { mkdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MailRecord, MailSource, MailStatus } from './types.js';
@@ -280,8 +281,8 @@ export class MailStore {
   }
 
   private async persist(): Promise<void> {
-    const snapshot = JSON.stringify(this.list(), null, 2);
-    this.writeQueue = this.writeQueue.catch(() => {}).then(() => writeFile(this.file, snapshot, 'utf8'));
+    const snapshot = this.list();
+    this.writeQueue = this.writeQueue.catch(() => {}).then(() => writeJsonAtomic(this.file, snapshot));
     await this.writeQueue;
   }
 }

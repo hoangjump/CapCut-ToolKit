@@ -1,5 +1,6 @@
 import { randomUUID, randomInt } from 'node:crypto';
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { writeJsonAtomic } from './atomicJson.js';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Profile, ProxyConfig, ProxyRotation, AntiDetectConfig, BrowserSettings } from './types.js';
@@ -108,6 +109,6 @@ export class ProfileManager {
   }
 
   private async persist(): Promise<void> {
-    await writeFile(this.metaFile, JSON.stringify(this.list(), null, 2), 'utf8');
+    await writeJsonAtomic(this.metaFile, this.list());
   }
 }

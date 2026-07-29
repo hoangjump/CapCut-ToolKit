@@ -790,14 +790,23 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   // ở dạng thô — file export mang theo secret, giữ kín như mật khẩu.
   const STORE_FILES = ['profiles', 'projects', 'proxies', 'mails', 'settings'] as const;
 
-  app.get('/api/store/export', async (_req: Request, res: Response) => {
+  app.get('/api/store/export', async (req: Request, res: Response) => {
     try {
+      // settings.json chứa API key thô. Mặc định KHÔNG kèm vào file export: gõ
+      // nhầm URL hay bookmark cũ không được phép hút secret ra. Chuyển máy thật
+      // thì thêm ?secrets=1 — chủ ý rõ ràng, và file tải về phải giữ như mật khẩu.
+      const includeSecrets = ['1', 'true', 'yes'].includes(String(req.query.secrets ?? '').toLowerCase());
       const bundle: Record<string, unknown> = {
         _format: 'teamhatde-store',
         _version: 1,
         _exportedAt: new Date().toISOString(),
+        _secrets: includeSecrets,
       };
       for (const name of STORE_FILES) {
+        if (name === 'settings' && !includeSecrets) {
+          bundle[name] = {};
+          continue;
+        }
         const file = join(storeRoot, `${name}.json`);
         if (existsSync(file)) {
           bundle[name] = JSON.parse(await readFile(file, 'utf8'));
@@ -1847,7 +1856,10 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
 
 export async function startServer(config: ServerConfig = {}): Promise<StartedServer> {
   const created = await createApp(config);
-  const host = config.host ?? '0.0.0.0';
+  // Mặc định CHỈ nghe loopback. Toàn bộ API quản trị không có xác thực, và
+  // GET /api/store/export trả về API key thô + mail password — bind 0.0.0.0 là
+  // phơi hết ra LAN. Docker cần nghe mọi interface thì đặt HOST=0.0.0.0.
+  const host = config.host ?? process.env.HOST ?? '127.0.0.1';
   const port = config.port ?? Number(process.env.PORT ?? 3000);
 
   const server = await new Promise<Server>((resolve, reject) => {
@@ -1865,6 +1877,9 @@ export async function startServer(config: ServerConfig = {}): Promise<StartedSer
 
   log.info(`proxy manager listening on ${url}`);
   log.info(`serving UI from ${created.publicDir}`);
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+    log.warn(`đang nghe trên ${host} — API quản trị KHÔNG có xác thực, chỉ dùng trong mạng bạn tin tưởng`);
+  }
 
   return {
     ...created,

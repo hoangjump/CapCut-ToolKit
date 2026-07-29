@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { writeJsonAtomic } from './atomicJson.js';
+import { mkdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -122,6 +123,6 @@ export class ProxyStore {
   }
 
   private async persist(): Promise<void> {
-    await writeFile(this.file, JSON.stringify(this.list(), null, 2), 'utf8');
+    await writeJsonAtomic(this.file, this.list());
   }
 }

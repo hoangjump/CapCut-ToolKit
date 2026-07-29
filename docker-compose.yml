@@ -8,6 +8,9 @@ services:
     environment:
       # Endpoint dùng để xác nhận proxy thực sự định tuyến (trả JSON {ip}).
       PROXY_CHECK_URL: "${PROXY_CHECK_URL:-https://api.ipify.org?format=json}"
+      # Trong container phải nghe mọi interface thì port mapping mới tới được.
+      # Chạy ngoài Docker thì mặc định là 127.0.0.1 — xem src/server/index.ts.
+      HOST: "0.0.0.0"
     volumes:
       # Bind mount thư mục local ./profiles-store vào /data (STORE_ROOT trong
       # container). Nhờ vậy chạy npm (STORE_ROOT=./profiles-store) và chạy Docker
