@@ -16,6 +16,8 @@ export interface WorkEmployee {
   telegramUserId?: string;
   telegramChatId?: string;
   telegramTopicId?: number;
+  /** File Google Sheet riêng được share cho đúng nhân viên. */
+  sheetSpreadsheetId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -146,6 +148,8 @@ export interface DistributionItem {
   capcutCookies?: BrowserCookieSnapshot[];
   status: 'queued' | 'sending' | 'sent' | 'failed';
   taskId?: string;
+  totalSheetSyncedAt?: string;
+  employeeSheetSyncedAt?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;

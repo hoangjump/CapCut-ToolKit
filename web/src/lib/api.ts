@@ -172,6 +172,7 @@ export interface WorkEmployee {
   telegramUserId?: string;
   telegramChatId?: string;
   telegramTopicId?: number;
+  sheetSpreadsheetId?: string;
   createdAt: string;
   updatedAt: string;
   totals: EmployeeTotals;
@@ -406,9 +407,9 @@ export const workApi = {
   startTunnel: () => post('/api/work/tunnel/start').then((r) => parse<TunnelStatus>(r)),
   stopTunnel: () => post('/api/work/tunnel/stop').then((r) => parse<TunnelStatus>(r)),
   employees: () => fetch('/api/work/employees').then((r) => parse<WorkEmployee[]>(r)),
-  createEmployee: (body: { fullName: string; defaultUnitRate: number; salaryVisibility: SalaryVisibility }) =>
+  createEmployee: (body: { fullName: string; defaultUnitRate: number; salaryVisibility: SalaryVisibility; sheetUrl?: string }) =>
     post('/api/work/employees', body).then((r) => parse<WorkEmployee>(r)),
-  updateEmployee: (id: string, body: Partial<Pick<WorkEmployee, 'fullName' | 'defaultUnitRate' | 'salaryVisibility' | 'status'>>) =>
+  updateEmployee: (id: string, body: Partial<Pick<WorkEmployee, 'fullName' | 'defaultUnitRate' | 'salaryVisibility' | 'status'>> & { sheetUrl?: string }) =>
     put(`/api/work/employees/${id}`, body).then((r) => parse<WorkEmployee>(r)),
   archiveEmployee: (id: string) => fetch(`/api/work/employees/${id}`, { method: 'DELETE' }).then(noContent),
   regenerateBind: (id: string) => post(`/api/work/employees/${id}/regenerate-bind`).then((r) => parse<WorkEmployee>(r)),

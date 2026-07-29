@@ -24,6 +24,28 @@ const TIME_ZONE = 'Asia/Ho_Chi_Minh';
 const MAX_PROCESSED_UPDATES = 5_000;
 const CAPCUT_LINK_LIFETIME_MS = 15 * 60_000;
 
+export type SheetWebhookWriter = (webhookUrl: string, payload: Record<string, unknown>) => Promise<void>;
+export type SheetWebhookVerifier = (webhookUrl: string) => Promise<void>;
+
+const postSheetWebhook: SheetWebhookWriter = async (webhookUrl, payload) => {
+  const response = await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(`Sheet webhook HTTP ${response.status}`);
+};
+
+const verifySheetWebhook: SheetWebhookVerifier = async (webhookUrl) => {
+  try {
+    const response = await fetch(webhookUrl);
+    const version = await response.text();
+    if (!response.ok || version.trim() !== 'teamhatde-sheet-v2') throw new Error('version mismatch');
+  } catch {
+    throw new Error('Apps Script Sheet đang là bản cũ. Hãy cập nhật apps-script.gs và Deploy phiên bản mới');
+  }
+};
+
 const dayFormatter = new Intl.DateTimeFormat('en-CA', {
   timeZone: TIME_ZONE,
   year: 'numeric',
@@ -71,6 +93,16 @@ function unitRate(value: unknown): number {
 
 function makeBindCode(): string {
   return randomBytes(4).toString('hex').toUpperCase();
+}
+
+function spreadsheetId(value: unknown): string | undefined {
+  const raw = String(value ?? '').trim();
+  if (!raw) return undefined;
+  const id = raw.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/)?.[1] ?? raw;
+  if (!/^[A-Za-z0-9_-]{20,}$/.test(id)) {
+    throw new Error('Google Sheet riêng phải là URL hoặc Spreadsheet ID hợp lệ');
+  }
+  return id;
 }
 
 function recordProcessed(state: TelegramWorkState, updateId: number, outcome: string): void {
@@ -189,6 +221,8 @@ export class TelegramWorkService {
     private readonly settings: SettingsStore,
     private readonly telegram: TelegramBotApi,
     private readonly payments?: PaymentSessionService,
+    private readonly sheetWriter: SheetWebhookWriter = postSheetWebhook,
+    private readonly sheetVerifier: SheetWebhookVerifier = verifySheetWebhook,
   ) {
     this.payments?.setVipVerifiedHandler((taskId, vipEndTime) => this.completeCapcutVip(taskId, vipEndTime));
   }
@@ -347,6 +381,11 @@ export class TelegramWorkService {
     if (this.settings.getWorkTelegramMode() === 'off') {
       throw new Error('Hãy bật polling hoặc webhook trước khi chạy phân phối Telegram');
     }
+    const sheetWebhookUrl = this.settings.getSheetWebhookUrl();
+    if (!sheetWebhookUrl) {
+      throw new Error('Chưa cấu hình Google Sheet URL tổng trong tab Mail');
+    }
+    await this.sheetVerifier(sheetWebhookUrl);
     const normalized = input.allocations
       .map((item) => ({ employeeId: String(item.employeeId), quantity: Number(item.quantity) }))
       .filter((item) => item.quantity > 0);
@@ -364,6 +403,9 @@ export class TelegramWorkService {
         const employee = state.employees.find((row) => row.id === item.employeeId);
         if (!employee || employee.status !== 'active' || !employee.telegramUserId || !employee.telegramChatId || !employee.telegramTopicId) {
           throw new Error(`Nhân viên ${item.employeeId} chưa active hoặc chưa bind đủ Telegram`);
+        }
+        if (!employee.sheetSpreadsheetId) {
+          throw new Error(`Nhân viên ${employee.fullName} chưa cấu hình Google Sheet riêng`);
         }
         if (!Number.isSafeInteger(item.quantity) || item.quantity < 1) throw new Error('Quota phải là số nguyên dương');
         return { ...item, assigned: 0 };
@@ -550,6 +592,7 @@ export class TelegramWorkService {
         });
         if (!item) return;
         try {
+          await this.syncDistributionSheets(item);
           const delivered = this.store.snapshot().tasks.find(
             (task) => task.distributionItemId === item.id && task.deliveryStatus === 'sent',
           );
@@ -600,6 +643,7 @@ export class TelegramWorkService {
     fullName: string;
     defaultUnitRate: number;
     salaryVisibility?: SalaryVisibility;
+    sheetUrl?: string;
   }): Promise<WorkEmployeeDto> {
     const fullName = input.fullName.trim();
     if (!fullName) throw new Error('Tên nhân viên là bắt buộc');
@@ -612,6 +656,7 @@ export class TelegramWorkService {
         salaryVisibility: input.salaryVisibility ?? 'topic',
         status: 'unbound',
         bindCode: makeBindCode(),
+        sheetSpreadsheetId: spreadsheetId(input.sheetUrl),
         createdAt: now,
         updatedAt: now,
       };
@@ -626,6 +671,7 @@ export class TelegramWorkService {
     defaultUnitRate?: number;
     salaryVisibility?: SalaryVisibility;
     status?: 'active' | 'inactive';
+    sheetUrl?: string;
   }): Promise<WorkEmployeeDto> {
     const before = this.store.snapshot().employees.find((item) => item.id === id);
     if (!before) throw new Error('Không tìm thấy nhân viên');
@@ -639,6 +685,7 @@ export class TelegramWorkService {
       }
       if (input.defaultUnitRate !== undefined) employee.defaultUnitRate = unitRate(input.defaultUnitRate);
       if (input.salaryVisibility !== undefined) employee.salaryVisibility = input.salaryVisibility;
+      if (input.sheetUrl !== undefined) employee.sheetSpreadsheetId = spreadsheetId(input.sheetUrl);
       if (input.status !== undefined) {
         if (input.status === 'active' && (!employee.telegramUserId || !employee.telegramChatId || !employee.telegramTopicId)) {
           throw new Error('Chưa thể bật hoạt động: nhân viên chưa bind đủ Telegram user/topic');
@@ -657,6 +704,57 @@ export class TelegramWorkService {
       }
     }
     return { ...updated, totals: employeeTotals(this.store.snapshot(), updated.id) };
+  }
+
+  private async syncDistributionSheets(item: DistributionItem): Promise<void> {
+    let state = this.store.snapshot();
+    let saved = state.distributionItems.find((entry) => entry.id === item.id);
+    const employee = state.employees.find((entry) => entry.id === item.employeeId);
+    if (!employee?.sheetSpreadsheetId) throw new Error('Nhân viên chưa cấu hình Google Sheet riêng');
+    const webhookUrl = this.settings.getSheetWebhookUrl();
+    if (!webhookUrl) throw new Error('Google Sheet URL tổng đã bị xóa');
+
+    if (!saved?.totalSheetSyncedAt) {
+      await this.sheetWriter(webhookUrl, {
+        entryId: `total:${item.id}`,
+        profileName: item.profileName,
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+        email: item.email,
+        mailLine: item.mailLine,
+        checkoutUrl: item.checkoutUrl,
+        status: 'ok',
+      });
+      await this.store.mutate((draft) => {
+        const target = draft.distributionItems.find((entry) => entry.id === item.id);
+        if (target) {
+          target.totalSheetSyncedAt = new Date().toISOString();
+          target.updatedAt = new Date().toISOString();
+        }
+      });
+      state = this.store.snapshot();
+      saved = state.distributionItems.find((entry) => entry.id === item.id);
+    }
+
+    if (!saved?.employeeSheetSyncedAt) {
+      await this.sheetWriter(webhookUrl, {
+        entryId: `employee:${item.id}`,
+        targetSpreadsheetId: employee.sheetSpreadsheetId,
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+        email: item.email,
+        // Sheet nhân viên không nhận password, refresh token hoặc client ID.
+        mailLine: item.email,
+        checkoutUrl: item.checkoutUrl,
+      });
+      await this.store.mutate((draft) => {
+        const target = draft.distributionItems.find((entry) => entry.id === item.id);
+        if (target) {
+          target.employeeSheetSyncedAt = new Date().toISOString();
+          target.updatedAt = new Date().toISOString();
+        }
+      });
+    }
   }
 
   async archiveEmployee(id: string): Promise<void> {

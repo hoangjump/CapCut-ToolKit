@@ -73,6 +73,30 @@ chỉ được phép truy cập trang/API thanh toán, không thể mở dashboa
 Lệnh `npm run dist:win` tự tải binary chính thức của Cloudflare và nhét vào bộ cài;
 máy nhân viên không phải cài thêm gì, máy quản lý cũng không cần mở port router.
 
+### Sheet tổng và Sheet riêng của nhân viên
+
+Mỗi tài khoản CapCut được ghi hai nơi trước khi bot gửi link Telegram:
+
+- **Sheet tổng:** lưu tên nhân viên, full mail (`email|password|refresh_token|client_id`)
+  và link thanh toán. Chỉ quản lý được quyền xem file này.
+- **Sheet nhân viên:** chỉ lưu tên nhân viên, email và link thanh toán; không ghi
+  password, refresh token hoặc client ID.
+
+Cấu hình một lần như sau:
+
+1. Mở Apps Script đang gắn với Sheet tổng, thay toàn bộ mã bằng
+   [`apps-script.gs`](apps-script.gs), sau đó chọn **Deploy -> Manage deployments**
+   và tạo version mới.
+2. Giữ URL Web App kết thúc bằng `/exec` trong `Mail -> Google Sheet URL`.
+3. Tạo một file Google Sheet riêng cho mỗi nhân viên với cùng layout cột, rồi chỉ
+   share file đó cho đúng nhân viên.
+4. Trong `Công việc -> Nhân viên -> Sửa`, dán URL hoặc Spreadsheet ID của file
+   riêng vào `Google Sheet riêng`.
+
+Apps Script Web App phải chạy bằng tài khoản chủ sở hữu có quyền mở cả Sheet tổng
+và các Sheet riêng. App sẽ chặn bắt đầu phân phối nếu Apps Script chưa được deploy
+lại hoặc nhân viên có quota chưa được cấu hình Sheet riêng.
+
 [Dockerfile](Dockerfile) dùng base image `mcr.microsoft.com/playwright:vX.Y-noble`
 **chỉ để lấy system lib** (Xvfb, fonts, thư viện đồ họa mà Firefox cần) — engine
 thật là binary Camoufox được `npx camoufox-js fetch` tải vào `/opt/camoufox` và

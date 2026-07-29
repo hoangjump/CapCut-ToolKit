@@ -116,11 +116,11 @@ function EmployeesPanel() {
       <CardContent>
         <div className="overflow-x-auto"><Table>
           <TableHeader><TableRow>
-            <TableHead>Nhân viên</TableHead><TableHead>Telegram topic</TableHead><TableHead>Đơn giá</TableHead>
+            <TableHead>Nhân viên</TableHead><TableHead>Telegram topic</TableHead><TableHead>Sheet riêng</TableHead><TableHead>Đơn giá</TableHead>
             <TableHead>Hôm nay</TableHead><TableHead>Tháng này</TableHead><TableHead>Trạng thái</TableHead><TableHead className="text-right">Thao tác</TableHead>
           </TableRow></TableHeader>
           <TableBody>
-            {!visibleEmployees.length && <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">Chưa có nhân viên.</TableCell></TableRow>}
+            {!visibleEmployees.length && <TableRow><TableCell colSpan={8} className="py-10 text-center text-muted-foreground">Chưa có nhân viên.</TableCell></TableRow>}
             {visibleEmployees.map((employee) => (
               <TableRow key={employee.id}>
                 <TableCell><div className="font-medium">{employee.fullName}</div><div className="text-xs text-muted-foreground">User ID: {employee.telegramUserId || 'chưa bind'}</div></TableCell>
@@ -130,6 +130,7 @@ function EmployeesPanel() {
                     ? <button className="mt-1 font-mono text-xs text-primary hover:underline" onClick={() => copyBind(employee)}>/bind {employee.bindCode}</button>
                     : <div className="mt-1 text-xs text-muted-foreground">Đã liên kết</div>}
                 </TableCell>
+                <TableCell><div>{employee.sheetSpreadsheetId ? 'Đã cấu hình' : 'Chưa có'}</div>{employee.sheetSpreadsheetId && <div className="max-w-32 truncate font-mono text-xs text-muted-foreground" title={employee.sheetSpreadsheetId}>{employee.sheetSpreadsheetId}</div>}</TableCell>
                 <TableCell>{formatMoney(employee.defaultUnitRate)}/con</TableCell>
                 <TableCell>{employee.totals.todayQuantity} con<div className="text-xs text-muted-foreground">{formatMoney(employee.totals.todayAmount)}</div></TableCell>
                 <TableCell>{employee.totals.monthQuantity} con<div className="text-xs text-muted-foreground">{formatMoney(employee.totals.monthAmount)}</div></TableCell>
@@ -160,6 +161,7 @@ function EmployeeDialog({ employee, onClose, onSaved }: { employee: WorkEmployee
   const [name, setName] = useState(employee?.fullName ?? '');
   const [rate, setRate] = useState(String(employee?.defaultUnitRate ?? 0));
   const [visibility, setVisibility] = useState<SalaryVisibility>(employee?.salaryVisibility ?? 'topic');
+  const [sheetUrl, setSheetUrl] = useState(employee?.sheetSpreadsheetId ?? '');
   const [status, setStatus] = useState<'active' | 'inactive'>(employee?.status === 'inactive' ? 'inactive' : 'active');
   const [saving, setSaving] = useState(false);
 
@@ -167,8 +169,8 @@ function EmployeeDialog({ employee, onClose, onSaved }: { employee: WorkEmployee
     if (!name.trim()) return toast.error('Nhập tên nhân viên');
     setSaving(true);
     try {
-      if (employee) await workApi.updateEmployee(employee.id, { fullName: name.trim(), defaultUnitRate: Number(rate), salaryVisibility: visibility, status });
-      else await workApi.createEmployee({ fullName: name.trim(), defaultUnitRate: Number(rate), salaryVisibility: visibility });
+      if (employee) await workApi.updateEmployee(employee.id, { fullName: name.trim(), defaultUnitRate: Number(rate), salaryVisibility: visibility, status, sheetUrl: sheetUrl.trim() });
+      else await workApi.createEmployee({ fullName: name.trim(), defaultUnitRate: Number(rate), salaryVisibility: visibility, sheetUrl: sheetUrl.trim() });
       toast.success(employee ? 'Đã cập nhật nhân viên' : 'Đã tạo nhân viên');
       await onSaved(); onClose();
     } catch (err) { toast.error((err as Error).message); } finally { setSaving(false); }
@@ -181,6 +183,7 @@ function EmployeeDialog({ employee, onClose, onSaved }: { employee: WorkEmployee
         <div className="space-y-4">
           <div className="space-y-1.5"><Label>Họ tên</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
           <div className="space-y-1.5"><Label>Đơn giá mỗi con</Label><Input type="number" min="0" value={rate} onChange={(e) => setRate(e.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Google Sheet riêng</Label><Input value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} placeholder="Dán URL hoặc Spreadsheet ID" /><p className="text-xs text-muted-foreground">File này chỉ ghi email và link thanh toán của nhân viên; Sheet tổng vẫn lưu đầy đủ như cũ.</p></div>
           <div className="space-y-1.5"><Label>Hiển thị tiền công</Label><Select value={visibility} onValueChange={(v) => setVisibility(v as SalaryVisibility)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
             <SelectItem value="topic">Hiện trong topic</SelectItem><SelectItem value="private">Nhắn riêng nhân viên</SelectItem><SelectItem value="admin-only">Chỉ hiện trên app</SelectItem>
           </SelectContent></Select></div>

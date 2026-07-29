@@ -291,7 +291,7 @@ export async function runProject(
             // A sheet hiccup must not change the run outcome.
             flowLog.warn(`ghi sheet lỗi: ${(e as Error).message}`);
           }
-        } else {
+        } else if (!deps.onResult) {
           flowLog.warn('ghi sheet bỏ qua — chưa cấu hình Google Sheet URL (vào tab Mail)');
         }
         // Telegram chỉ báo khi ĐĂNG KÝ THÀNH CÔNG (không có flowError). Lỗi gửi

@@ -1,8 +1,9 @@
 // ============================================================
 // Apps Script Web App cho tool TeamHatDe-Capcut-Auto
-// Ghi mỗi profile 1 dòng vào Google Sheet.
+// Ghi mỗi profile 1 dòng vào Sheet tổng hoặc file Sheet riêng của nhân viên.
 //
 // Layout cột (theo sheet của bạn):
+//   A  = Nhân viên
 //   B  = Date       (thời gian)
 //   C  = FullAcess  (mail full: email|password|refresh_token|client_id)
 //   H  = CheckOut   (link thanh toán)
@@ -14,12 +15,24 @@
 // nên 1000+ dòng vẫn nhanh như dòng đầu.
 // ============================================================
 
+function doGet() {
+  // App kiểm tra version này trước khi chạy để tránh script cũ ghi nhầm dòng
+  // dành cho nhân viên vào Sheet tổng.
+  return ContentService.createTextOutput('teamhatde-sheet-v2');
+}
+
 function doPost(e) {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000); // 10 luồng ghi song song -> xếp hàng để không đè dòng nhau
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
     var d = JSON.parse(e.postData.contents);
+    // Không truyền targetSpreadsheetId -> ghi Sheet tổng đang gắn Apps Script.
+    // Có targetSpreadsheetId -> ghi file riêng của nhân viên. Web App phải chạy
+    // dưới tài khoản chủ sở hữu có quyền mở các file đó.
+    var spreadsheet = d.targetSpreadsheetId
+      ? SpreadsheetApp.openById(String(d.targetSpreadsheetId))
+      : SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = spreadsheet.getSheets()[0];
 
     var START = 3; // dữ liệu bắt đầu dòng 3 (dòng 1-2 là tiêu đề)
 
@@ -34,8 +47,9 @@ function doPost(e) {
       row++;
     }
 
+    if (d.employeeName) sheet.getRange(row, 1).setValue(d.employeeName); // A = Nhân viên
     sheet.getRange(row, 2).setValue(new Date());             // B = Date
-    sheet.getRange(row, 3).setValue(d.mailLine || '');       // C = FullAcess
+    sheet.getRange(row, 3).setValue(d.mailLine || d.email || ''); // C = FullAcess/email
     sheet.getRange(row, 8).setValue(d.checkoutUrl || '');    // H = CheckOut
     sheet.getRange(row, 13).setValue(d.errorMessage || '');  // M = lý do lỗi
 

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { SettingsStore } from '../settingsStore.js';
-import { TelegramWorkService, hasHeart } from './service.js';
+import { TelegramWorkService, hasHeart, type SheetWebhookWriter } from './service.js';
 import { TelegramWorkStore } from './store.js';
 import type { TelegramBotApi } from './telegramClient.js';
 import {
@@ -72,6 +72,22 @@ class PrewarmBrowser implements PaymentBrowser {
   async closeAll(): Promise<void> {}
   async frame(): Promise<Buffer> { return Buffer.alloc(0); }
   async input(_sessionId: string, _input: PaymentBrowserInput): Promise<void> {}
+}
+
+class FlakySheetWriter {
+  readonly attempts: Array<{ webhookUrl: string; payload: Record<string, unknown> }> = [];
+  readonly successful: Array<{ webhookUrl: string; payload: Record<string, unknown> }> = [];
+  private failedOnce = false;
+
+  readonly write: SheetWebhookWriter = async (webhookUrl, payload) => {
+    const entry = { webhookUrl, payload: structuredClone(payload) };
+    this.attempts.push(entry);
+    if (payload.targetSpreadsheetId && payload.email === 'mail1@example.com' && !this.failedOnce) {
+      this.failedOnce = true;
+      throw new Error('Sheet tạm thời không ghi được');
+    }
+    this.successful.push(entry);
+  };
 }
 
 async function waitFor(check: () => boolean, message: string): Promise<void> {
@@ -237,16 +253,28 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     await settings.setWorkTelegramBotToken('test-token');
     await settings.setWorkTelegramChatId('-100123');
     await settings.setPaymentPublicUrl('https://app.example');
+    await settings.setSheetWebhookUrl('https://sheet.example/exec');
     const fake = new FakeTelegram();
     const store = new TelegramWorkStore(root);
     const paymentBrowser = new PrewarmBrowser();
     const payments = new PaymentSessionService(store, settings, paymentBrowser);
-    const service = new TelegramWorkService(store, settings, fake, payments);
+    const sheetWriter = new FlakySheetWriter();
+    let sheetVerifyCount = 0;
+    const service = new TelegramWorkService(store, settings, fake, payments, sheetWriter.write, async () => {
+      sheetVerifyCount += 1;
+    });
     await service.init();
     await settings.setWorkTelegramMode('polling');
 
-    const duy = await service.createEmployee({ fullName: 'Duy', defaultUnitRate: 5_000 });
-    const tai = await service.createEmployee({ fullName: 'Tài', defaultUnitRate: 7_000 });
+    const duySheetId = 'duy-sheet-id-12345678901234567890';
+    const taiSheetId = 'tai-sheet-id-12345678901234567890';
+    const duy = await service.createEmployee({
+      fullName: 'Duy', defaultUnitRate: 5_000,
+      sheetUrl: `https://docs.google.com/spreadsheets/d/${duySheetId}/edit#gid=0`,
+    });
+    const tai = await service.createEmployee({ fullName: 'Tài', defaultUnitRate: 7_000, sheetUrl: taiSheetId });
+    assert.equal(duy.sheetSpreadsheetId, duySheetId);
+    assert.equal(tai.sheetSpreadsheetId, taiSheetId);
     await service.processUpdate({ update_id: 10, message: { message_id: 1, message_thread_id: 45, text: `/bind ${duy.bindCode}`, chat: { id: -100123 }, from: { id: 555 } } });
     await service.processUpdate({ update_id: 11, message: { message_id: 2, message_thread_id: 46, text: `/bind ${tai.bindCode}`, chat: { id: -100123 }, from: { id: 777 } } });
 
@@ -266,6 +294,7 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
       projectName: 'Auto CapCut',
       allocations: [{ employeeId: duy.id, quantity: 2 }, { employeeId: tai.id, quantity: 1 }],
     });
+    assert.equal(sheetVerifyCount, 1);
     await service.pauseDistribution(run.id);
     for (let index = 1; index <= 3; index += 1) {
       await service.enqueueCapcutResult(run.id, {
@@ -291,12 +320,39 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     );
 
     await service.resumeDistribution(run.id);
-    await waitFor(() => service.listDistributions('project-1')[0]?.sent === 3, 'distribution did not flush');
+    await waitFor(() => {
+      const status = service.listDistributions('project-1')[0];
+      return status?.sent === 2 && status.failed === 1;
+    }, 'sheet failure did not stop the affected item');
+    const sheetFailed = service.listDistributions('project-1')[0].items.find((item) => item.status === 'failed')!;
+    assert.match(sheetFailed.error ?? '', /Sheet tạm thời không ghi được/);
+    await service.retryDistributionItem(sheetFailed.id);
+    await waitFor(() => service.listDistributions('project-1')[0]?.sent === 3, 'distribution retry did not flush');
     assert.equal(paymentBrowser.created.length, 3);
+    assert.equal(sheetWriter.attempts.length, 7);
+    assert.equal(sheetWriter.successful.length, 6);
+    const totalSheetRows = sheetWriter.successful.filter((entry) => !entry.payload.targetSpreadsheetId);
+    const employeeSheetRows = sheetWriter.successful.filter((entry) => entry.payload.targetSpreadsheetId);
+    assert.equal(totalSheetRows.length, 3);
+    assert.equal(totalSheetRows.every((entry) => String(entry.payload.mailLine).includes('|pass')), true);
+    assert.deepEqual(new Set(totalSheetRows.map((entry) => entry.payload.employeeName)), new Set(['Duy', 'Tài']));
+    assert.deepEqual(
+      employeeSheetRows
+        .map((entry) => [entry.payload.email, entry.payload.targetSpreadsheetId])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      [
+        ['mail1@example.com', duySheetId],
+        ['mail2@example.com', taiSheetId],
+        ['mail3@example.com', duySheetId],
+      ],
+    );
+    assert.equal(employeeSheetRows.every((entry) => entry.payload.mailLine === entry.payload.email), true);
+    assert.doesNotMatch(JSON.stringify(employeeSheetRows), /pass\d|refresh\d|client\d/);
     assert.equal(store.snapshot().paymentSessions.every((session) => session.status === 'ready'), true);
     await service.finishDistribution(run.id);
     await waitFor(() => service.listDistributions('project-1')[0]?.status === 'finished', 'distribution did not finish');
     current = service.listDistributions('project-1')[0];
+    assert.equal(current.items.every((item) => Boolean(item.totalSheetSyncedAt && item.employeeSheetSyncedAt)), true);
     assert.equal(current.completed, 0);
     assert.equal(service.payroll().reduce((sum, row) => sum + row.totals.allAmount, 0), 0);
 

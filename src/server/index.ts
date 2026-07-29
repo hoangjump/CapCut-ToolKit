@@ -1791,7 +1791,9 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
             else await mails.markFailed(id, outcome.error || 'Flow thất bại sau khi cấp mail');
           },
           rentMail: rentMailDep,
-          appendSheet: appendSheetDep,
+          // Đợt phân phối ghi Sheet tổng + Sheet nhân viên trong cùng queue để
+          // retry từng bước mà không tạo dòng trùng.
+          appendSheet: distributionRunId ? undefined : appendSheetDep,
           notify: notifyDep,
           onResult: distributionRunId
             ? async (row, source) => {
