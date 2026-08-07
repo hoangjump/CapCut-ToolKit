@@ -73,6 +73,12 @@ chỉ được phép truy cập trang/API thanh toán, không thể mở dashboa
 Lệnh `npm run dist:win` tự tải binary chính thức của Cloudflare và nhét vào bộ cài;
 máy nhân viên không phải cài thêm gì, máy quản lý cũng không cần mở port router.
 
+### Đặc tả các flow tự động
+
+- [`docs/flow-chatgpt-signup.md`](docs/flow-chatgpt-signup.md) — trình tự đăng ký
+  ChatGPT bằng gmail SmsBower + lên Plus qua iDEAL, kèm sơ đồ tuần tự và ba mấu
+  chốt hay sai (thời điểm treo SmsBower, `geoip: false`, proxy sticky).
+
 ### Sheet tổng và Sheet riêng của nhân viên
 
 Mỗi tài khoản CapCut được ghi hai nơi trước khi bot gửi link Telegram:
