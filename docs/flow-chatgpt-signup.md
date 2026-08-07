@@ -6,6 +6,11 @@
 Tài liệu này mô tả **thứ đang chạy**, không phải thứ dự định làm. Sửa flow thì
 sửa luôn file này.
 
+**Bản đặc tả bằng code** (để bàn giao cho người implement lại):
+[`src/flows/chatgpt-signup.contract.ts`](../src/flows/chatgpt-signup.contract.ts) —
+dữ liệu có kiểu, `import` thẳng selector từ flow đang chạy, kèm test chặn lệch
+([`chatgpt-signup.contract.test.ts`](../src/flows/chatgpt-signup.contract.test.ts)).
+
 ---
 
 ## Điều kiện tiên quyết

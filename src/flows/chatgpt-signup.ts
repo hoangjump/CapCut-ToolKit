@@ -43,21 +43,21 @@ import type { Page, Locator, BrowserContext } from 'playwright-core';
  */
 
 // --- Selector (bám DOM thật + fallback, ưu tiên thuộc tính ổn định) ---------
-const SEL_EMAIL = ['#email', 'input[name="email"]', 'input[type="email"]', 'input[autocomplete~="email"]', 'input[autocomplete="username"]'];
+export const SEL_EMAIL = ['#email', 'input[name="email"]', 'input[type="email"]', 'input[autocomplete~="email"]', 'input[autocomplete="username"]'];
 // Continue sau email: button[name=intent][value=email] — ổn định, không theo text.
-const BTN_EMAIL_CONTINUE = ['button[name="intent"][value="email"]', 'button[type="submit"]'];
+export const BTN_EMAIL_CONTINUE = ['button[name="intent"][value="email"]', 'button[type="submit"]'];
 // "Continue with password": a[href="/create-account/password"] — ổn định.
-const LINK_CONTINUE_PASSWORD = ['a[href="/create-account/password"]', '//a[contains(normalize-space(),"Continue with password")]'];
-const SEL_PASSWORD = ['input[type="password"]', 'input[name="password"]', '#password', 'input[autocomplete="current-password"]', 'input[autocomplete="new-password"]'];
-const BTN_SUBMIT = ['button[type="submit"]'];
+export const LINK_CONTINUE_PASSWORD = ['a[href="/create-account/password"]', '//a[contains(normalize-space(),"Continue with password")]'];
+export const SEL_PASSWORD = ['input[type="password"]', 'input[name="password"]', '#password', 'input[autocomplete="current-password"]', 'input[autocomplete="new-password"]'];
+export const BTN_SUBMIT = ['button[type="submit"]'];
 // Continue(validate) sau code: button[name=intent][value=validate] — ổn định.
-const BTN_VALIDATE = ['button[name="intent"][value="validate"]', 'button[type="submit"]'];
-const SEL_CODE = ['input[name="code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
-const SEL_NAME = ['input[name="name"]', 'input[autocomplete="name"]', '#name'];
-const SEL_AGE = ['input[name="age"]', 'input[inputmode="numeric"]', 'input[type="number"]'];
+export const BTN_VALIDATE = ['button[name="intent"][value="validate"]', 'button[type="submit"]'];
+export const SEL_CODE = ['input[name="code"]', 'input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]'];
+export const SEL_NAME = ['input[name="name"]', 'input[autocomplete="name"]', '#name'];
+export const SEL_AGE = ['input[name="age"]', 'input[inputmode="numeric"]', 'input[type="number"]'];
 
 // Mật khẩu cố định (theo spec user). Đổi ở đây nếu cần.
-const PASSWORD = 'emHoang@2004';
+export const PASSWORD = 'emHoang@2004';
 
 // Tên tiếng Việt random cho "Full name".
 const VN_HO = ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng', 'Huỳnh', 'Phan', 'Vũ', 'Võ', 'Đặng', 'Bùi', 'Đỗ', 'Hồ', 'Ngô', 'Dương'];
