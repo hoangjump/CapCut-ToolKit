@@ -75,6 +75,9 @@ máy nhân viên không phải cài thêm gì, máy quản lý cũng không cầ
 
 ### Đặc tả các flow tự động
 
+- [`docs/camoufox-launch.md`](docs/camoufox-launch.md) — quy trình tạo browser
+  Camoufox: bảng tham số launch, sáu cái bẫy (import tĩnh, relay proxy, geoip tự
+  chết, screen min=max, hai kiểu trả về, humanize) và checklist dựng lại.
 - [`docs/flow-chatgpt-signup.md`](docs/flow-chatgpt-signup.md) — trình tự đăng ký
   ChatGPT bằng gmail SmsBower + lên Plus qua iDEAL, kèm sơ đồ tuần tự và ba mấu
   chốt hay sai (thời điểm treo SmsBower, `geoip: false`, proxy sticky).
