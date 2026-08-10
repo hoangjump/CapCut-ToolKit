@@ -61,7 +61,7 @@ flowchart TD
 | `os` | `'windows'`\|`'macos'`\|`'linux'`\|bỏ trống | OS mà fingerprint khai. Bỏ trống = Camoufox tự random mỗi lần | Cần cả đàn giống nhau thì ghim; ngược lại để random |
 | `proxy` | `{ server }` | **URL relay local**, không phải proxy thật | Luôn qua relay — xem bẫy 2 |
 | `geoip` | `true` \| bỏ trống | Suy timezone + geolocation + locale + WebRTC IP từ IP egress | Tắt khi cần locale cố định — xem bẫy 3 |
-| `locale` | `'en-US'`… | Ép locale cứng, **thắng cả geoip** | Khi flow bắt nút theo chữ tiếng Anh |
+| `locale` | `'en-US'`… | Ép locale cứng, **thắng cả geoip** | Khi flow bắt nút theo chữ tiếng Anh — nhưng đọc bẫy 7 trước |
 | `block_webrtc` | boolean | Tắt hẳn stack WebRTC | Bật khi sợ rò IP; để tắt thì relay đã ép egress rồi |
 | `block_images` | boolean | Không tải ảnh | Bật để tiết kiệm băng thông proxy tính tiền |
 | `humanize` | số giây | Trần thời gian animate **một** cú di chuột | Xem bẫy 6 |
@@ -84,7 +84,7 @@ nhau — bản thân điều đó đã là dấu hiệu để gom nhóm.
 
 ---
 
-## Sáu cái bẫy
+## Bảy cái bẫy
 
 ### 1. Phải `import 'camoufox-js'` tĩnh, ngay đầu process
 
@@ -163,6 +163,36 @@ Bản mới animate **mỗi** `mouse.move`, nên phải đặt trần ngắn: gi
 native nhưng tránh một chuỗi Bezier bị nhân thành nhiều giây. Giá trị dự án gốc
 đang dùng: `0.18` trên Windows, `0.06` nơi khác.
 
+### 7. `locale:region` làm hỏng `Intl.DisplayNames`
+
+Đây là lỗi spoof của chính Camoufox, và nó âm thầm: trang vẫn chạy, chỉ có dữ
+liệu hiển thị sai.
+
+Camoufox spoof `Intl.DisplayNames` dựa trên `locale:region` trong config. Hễ
+config **có** `locale:region` thì:
+
+```
+Intl.DisplayNames.of(<mã nước bất kỳ>)  →  luôn trả về CHÍNH nước của region đó
+```
+
+Nghĩa là mọi dropdown quốc gia build bằng `Intl.DisplayNames.of(code)` sẽ hiện
+**cùng một tên nước lặp lại cho cả danh sách**.
+
+Chỗ dễ hiểu nhầm — `locale:region` sinh ra từ **cả hai** đường:
+
+| Cấu hình | Có region? | `DisplayNames` |
+| --- | --- | --- |
+| `geoip: true` | có (suy từ IP) | ✗ hỏng |
+| `locale: 'en-US'` ép cứng | có (`US`) | ✗ **vẫn hỏng** |
+| `geoip: false` + `language: 'real'`, không ép locale | không | ✓ đúng |
+
+Nên **không thể** thay `geoip` bằng ép `locale` để chữa. Muốn `DisplayNames`
+đúng thì phải bỏ hẳn region, chấp nhận timezone/geolocation không khớp IP proxy
+và UI về mặc định en-US.
+
+Chỉ chạm tới bẫy này khi trang bạn tự động hoá dùng `Intl.DisplayNames` — dropdown
+chọn quốc gia là trường hợp điển hình.
+
 ---
 
 ## Prefs hiệu năng cho Windows
@@ -209,6 +239,7 @@ bấm là SVG.
 - [ ] Ghim `screen` bằng min=max, không dùng `window`
 - [ ] `humanize` có trần ngắn
 - [ ] Windows: áp 5 prefs hiệu năng ở trên
+- [ ] Trang có dropdown quốc gia → bỏ hẳn `locale:region` (bẫy 7)
 
 Kiểm nhanh xem đã đúng chưa — mở một trang và đọc:
 

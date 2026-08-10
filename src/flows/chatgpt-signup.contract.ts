@@ -125,9 +125,18 @@ export const ANTI_DETECT_OVERRIDE = {
   geoip: false,
   language: 'real',
   why:
-    'Bảng giá ChatGPT render tên quốc gia bằng Intl.DisplayNames. Ép locale theo IP '
-    + 'proxy làm tên nước hiển thị sai → không chọn được Netherlands. Đánh đổi: '
-    + 'timezone/geolocation không còn khớp IP proxy.',
+    'LỖI SPOOF CỦA CHÍNH CAMOUFOX. Camoufox spoof Intl.DisplayNames theo '
+    + '"locale:region" trong config; hễ config CÓ locale:region thì .of(mã nước bất kỳ) '
+    + 'luôn trả về CHÍNH nước của region đó. Dropdown quốc gia ChatGPT build bằng '
+    + 'Intl.DisplayNames.of(code) nên cả list hiện cùng một tên nước → chọn sai.',
+  /** locale:region sinh ra từ CẢ HAI đường — nên không thể thay geoip bằng ép
+   *  locale để chữa. Phải bỏ hẳn region thì spoof mới đúng. */
+  regionSources: {
+    'geoip: true': 'có region (suy từ IP) → hỏng',
+    "locale: 'en-US'": 'có region (US) → VẪN hỏng',
+    "geoip: false + language: 'real', không ép locale": 'không region → đúng',
+  },
+  tradeoff: 'timezone/geolocation không còn khớp IP proxy; UI về mặc định en-US.',
 } as const;
 
 /** Điều kiện hạ tầng. Không thoả thì flow chạy nhưng thất bại ở bước thanh toán. */

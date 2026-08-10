@@ -161,11 +161,30 @@ cứng (`available_to_get_next_code=false`) và **hỏng cả lượt thuê**.
 
 ### 2. `geoip: false` + `language: 'real'` là bắt buộc cho flow này
 
-Bảng giá ChatGPT render tên quốc gia bằng `Intl.DisplayNames`. Nếu ép locale theo
-IP proxy, tên nước hiển thị sai và `selectCountry` không tìm thấy "Netherlands".
+Đây là **lỗi spoof của chính Camoufox**, không phải lỗi selector.
 
-Đánh đổi có ý thức: timezone/geolocation **không còn khớp** IP proxy. Các flow
-khác giữ `geoip` như cũ.
+Camoufox spoof `Intl.DisplayNames` dựa trên `locale:region` trong config. Hễ
+config **có** `locale:region` thì spoof hỏng theo kiểu rất đặc trưng:
+
+```
+Intl.DisplayNames.of(<mã nước bất kỳ>)  →  luôn trả về CHÍNH nước của region đó
+```
+
+Dropdown quốc gia của ChatGPT build bằng `Intl.DisplayNames.of(code)`, nên cả
+danh sách hiện **cùng một tên nước** lặp đi lặp lại → `selectCountry` chọn sai.
+
+⚠️ Chỗ dễ hiểu nhầm: `locale:region` sinh ra từ **cả hai** đường —
+
+| Cấu hình | Có `locale:region`? | DisplayNames |
+| --- | --- | --- |
+| `geoip: true` | có (suy từ IP) | ✗ hỏng |
+| `locale: 'en-US'` ép cứng | có (`US`) | ✗ **vẫn hỏng** |
+| `geoip: false` + `language: 'real'`, không ép locale | không | ✓ đúng |
+
+Nên **không thể** thay `geoip` bằng ép `locale` để chữa. Phải bỏ hẳn region.
+
+Đánh đổi có ý thức: timezone/geolocation **không còn khớp** IP proxy, UI về mặc
+định của Camoufox (en-US). Các flow khác giữ `geoip` như cũ.
 
 ### 3. Bị "declined" là chống gian lận, không phải lỗi code
 
