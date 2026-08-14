@@ -4,16 +4,13 @@ import {
   Check,
   Circle,
   ClipboardCopy,
-  Eye,
   FileSpreadsheet,
-  Monitor,
   Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
   Send,
   Settings,
-  Unplug,
   Users,
   WalletCards,
   X,
@@ -22,13 +19,10 @@ import { toast } from 'sonner';
 import {
   workApi,
   type PayrollRow,
-  type PaymentAdminSession,
-  type PaymentControl,
   type SalaryVisibility,
   type WorkEmployee,
   type WorkTask,
   type WorkTelegramConfig,
-  type TunnelStatus,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -42,7 +36,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { RemotePaymentScreen } from '@/PaymentViewer';
 
 const formatMoney = (value: number) => `${new Intl.NumberFormat('vi-VN').format(value)}đ`;
 const employeeStatus: Record<WorkEmployee['status'], string> = {
@@ -50,17 +43,6 @@ const employeeStatus: Record<WorkEmployee['status'], string> = {
 };
 const taskStatus: Record<WorkTask['status'], string> = {
   queued: 'Đang gửi', pending: 'Chờ hoàn thành', completed: 'Hoàn thành', cancelled: 'Đã hủy', failed: 'Gửi lỗi',
-};
-const paymentStatus: Record<PaymentAdminSession['status'], string> = {
-  pending: 'Chờ nhân viên',
-  starting: 'Đang mở browser',
-  ready: 'Đang thao tác',
-  verifying: 'Đang xác minh VIP',
-  paid: 'VIP đã xác minh',
-  verification_failed: 'Lỗi xác minh VIP',
-  expired: 'Hết hạn',
-  failed: 'Mở lỗi',
-  closed: 'Đã đóng',
 };
 
 function statusVariant(status: string): 'success' | 'danger' | 'muted' | 'outline' {
@@ -78,13 +60,11 @@ export function WorkTab() {
         <TabsTrigger value="employees"><Users className="h-4 w-4" /> Nhân viên</TabsTrigger>
         <TabsTrigger value="tasks"><Send className="h-4 w-4" /> Giao việc</TabsTrigger>
         <TabsTrigger value="payroll"><WalletCards className="h-4 w-4" /> Bảng công</TabsTrigger>
-        <TabsTrigger value="payments"><Monitor className="h-4 w-4" /> Thanh toán</TabsTrigger>
         <TabsTrigger value="config"><Settings className="h-4 w-4" /> Telegram</TabsTrigger>
       </TabsList>
       <TabsContent value="employees"><EmployeesPanel /></TabsContent>
       <TabsContent value="tasks"><TasksPanel /></TabsContent>
       <TabsContent value="payroll"><PayrollPanel /></TabsContent>
-      <TabsContent value="payments"><PaymentControlPanel /></TabsContent>
       <TabsContent value="config"><TelegramConfigPanel /></TabsContent>
     </Tabs>
   );
@@ -470,173 +450,15 @@ function PayrollPanel() {
     </TableRow>)}</TableBody>
   </Table></div></CardContent></Card>;
 }
-
-function PaymentControlPanel() {
-  const [control, setControl] = useState<PaymentControl>({ maxSessions: null, running: 0, sessions: [] });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [limitEnabled, setLimitEnabled] = useState(false);
-  const [limitValue, setLimitValue] = useState('6');
-  const [savingLimit, setSavingLimit] = useState(false);
-  const limitDirty = useRef(false);
-
-  const load = useCallback(async (silent = false) => {
-    try {
-      const next = await workApi.paymentControl();
-      setControl(next);
-      if (!limitDirty.current) {
-        setLimitEnabled(next.maxSessions !== null);
-        if (next.maxSessions !== null) setLimitValue(String(next.maxSessions));
-      }
-    }
-    catch (err) { if (!silent) toast.error((err as Error).message); }
-  }, []);
-
-  useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(true), 1_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
-
-  const selected = selectedId ? control.sessions.find((session) => session.id === selectedId) : undefined;
-
-  async function closeSession(session: PaymentAdminSession) {
-    if (!confirm(`Đóng phiên thanh toán của ${session.email}?`)) return;
-    try {
-      await workApi.closePaymentControlSession(session.id);
-      setSelectedId(null);
-      await load(true);
-      toast.success('Đã đóng browser thanh toán');
-    } catch (err) { toast.error((err as Error).message); }
-  }
-
-  async function saveLimit() {
-    const maxSessions = limitEnabled ? Number(limitValue) : null;
-    if (maxSessions !== null && (!Number.isSafeInteger(maxSessions) || maxSessions <= 0)) {
-      toast.error('Giới hạn browser phải là số nguyên lớn hơn 0');
-      return;
-    }
-    setSavingLimit(true);
-    try {
-      const next = await workApi.updatePaymentControl(maxSessions);
-      limitDirty.current = false;
-      setControl(next);
-      setLimitEnabled(next.maxSessions !== null);
-      if (next.maxSessions !== null) setLimitValue(String(next.maxSessions));
-      toast.success(next.maxSessions === null ? 'Đã tắt giới hạn phiên' : `Đã giới hạn ${next.maxSessions} phiên thanh toán`);
-    } catch (err) { toast.error((err as Error).message); }
-    finally { setSavingLimit(false); }
-  }
-
-  return <>
-    <Card>
-      <CardHeader className="gap-3 space-y-0 md:flex-row md:items-center md:justify-between">
-        <div>
-          <CardTitle className="text-base">Bảng điều khiển thanh toán</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">Camoufox chạy trên máy này; màn hình được truyền cho nhân viên qua Cloudflare Tunnel.</p>
-        </div>
-        <div className="flex w-full flex-wrap items-center justify-between gap-2 md:w-auto md:justify-end">
-          <span className="whitespace-nowrap text-sm tabular-nums"><strong>{control.running}</strong>{control.maxSessions === null ? ' browser đang chạy · Không giới hạn' : `/${control.maxSessions} browser đang chạy`}</span>
-          <Button size="sm" variant="outline" onClick={() => void load()}><RefreshCw /> Làm mới</Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="mb-4 flex flex-wrap items-end gap-3 border-b pb-4">
-          <label className="flex h-9 items-center gap-2 text-sm">
-            <Switch checked={limitEnabled} onCheckedChange={(checked) => { limitDirty.current = true; setLimitEnabled(checked); }} />
-            Giới hạn số browser
-          </label>
-          <div className="space-y-1">
-            <Label htmlFor="payment-session-limit" className="text-xs text-muted-foreground">Số phiên tối đa</Label>
-            <Input
-              id="payment-session-limit"
-              className="h-9 w-28"
-              type="number"
-              min="1"
-              step="1"
-              disabled={!limitEnabled}
-              value={limitValue}
-              onChange={(event) => { limitDirty.current = true; setLimitValue(event.target.value); }}
-            />
-          </div>
-          <Button size="sm" disabled={savingLimit} onClick={() => void saveLimit()}>
-            {savingLimit && <RefreshCw className="animate-spin" />} Lưu giới hạn
-          </Button>
-          <span className="pb-2 text-xs text-muted-foreground">Phiên đang chạy không bị đóng khi giảm giới hạn.</span>
-        </div>
-        <div className="overflow-x-auto"><Table>
-        <TableHeader><TableRow><TableHead>Nhân viên</TableHead><TableHead>Tài khoản</TableHead><TableHead>Proxy</TableHead><TableHead>Thời gian</TableHead><TableHead>Trạng thái</TableHead><TableHead className="text-right">Thao tác</TableHead></TableRow></TableHeader>
-        <TableBody>
-          {!control.sessions.length && <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">Chưa có phiên thanh toán đang chờ hoặc đang chạy.</TableCell></TableRow>}
-          {control.sessions.map((session) => <TableRow key={session.id}>
-            <TableCell className="font-medium">{session.employeeName}</TableCell>
-            <TableCell><div>{session.email}</div>{session.error && <div className="max-w-[360px] truncate text-xs text-destructive" title={session.error}>{session.error}</div>}</TableCell>
-            <TableCell className="max-w-[220px] truncate font-mono text-xs" title={session.proxyServer}>{session.proxyServer || 'Không dùng proxy'}</TableCell>
-            <TableCell><div className="text-sm">{new Date(session.createdAt).toLocaleTimeString('vi-VN')}</div><div className="text-xs text-muted-foreground">Hết hạn {new Date(session.expiresAt).toLocaleTimeString('vi-VN')}</div></TableCell>
-            <TableCell><Badge variant={statusVariant(session.status)}>{paymentStatus[session.status]}</Badge></TableCell>
-            <TableCell><div className="flex justify-end gap-1">
-              {session.viewable && <Button size="sm" variant="outline" onClick={() => setSelectedId(session.id)}><Eye /> Xem</Button>}
-              {session.status !== 'paid' && <Button size="sm" variant="ghost" onClick={() => void closeSession(session)}>Đóng</Button>}
-            </div></TableCell>
-          </TableRow>)}
-        </TableBody>
-        </Table></div>
-      </CardContent>
-    </Card>
-    {selected && <PaymentMonitorDialog session={selected} onClose={() => setSelectedId(null)} onStop={() => closeSession(selected)} />}
-  </>;
-}
-
-function PaymentMonitorDialog({
-  session,
-  onClose,
-  onStop,
-}: {
-  session: PaymentAdminSession;
-  onClose: () => void;
-  onStop: () => Promise<void>;
-}) {
-  return <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-    <DialogContent className="w-[96vw] max-w-6xl gap-0 overflow-hidden p-0">
-      <DialogHeader className="border-b px-4 py-3 pr-12">
-        <DialogTitle className="text-base">Màn hình thanh toán — {session.email}</DialogTitle>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>{session.employeeName}</span><span>{session.proxyServer || 'Không dùng proxy'}</span><span>{paymentStatus[session.status]}</span>
-        </div>
-      </DialogHeader>
-      {session.status === 'ready'
-        ? <RemotePaymentScreen
-            frameEndpoint={workApi.paymentControlFrameUrl(session.id)}
-            streamEndpoint={workApi.paymentControlStreamUrl(session.id)}
-            onInput={(input) => workApi.sendPaymentControlInput(session.id, input)}
-          />
-        : <div className="flex min-h-80 flex-col items-center justify-center gap-3 bg-neutral-950 text-neutral-100">
-            {session.status === 'paid' ? <Check className="h-9 w-9 text-green-500" /> : session.status === 'verification_failed' ? <X className="h-9 w-9 text-red-500" /> : <RefreshCw className="h-7 w-7 animate-spin" />}
-            <strong>{session.status === 'paid' ? 'VIP đã xác minh và cộng công' : paymentStatus[session.status]}</strong>
-            <span className="text-sm text-neutral-400">Browser sẽ tự đóng và giải phóng slot.</span>
-          </div>}
-      <DialogFooter className="border-t p-3">
-        <Button variant="outline" onClick={onClose}>Ẩn popup</Button>
-        {!['paid', 'verification_failed'].includes(session.status) && <Button variant="destructive" onClick={() => void onStop()}>Đóng browser</Button>}
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>;
-}
-
 function TelegramConfigPanel() {
   const [config, setConfig] = useState<WorkTelegramConfig | null>(null);
   const [token, setToken] = useState('');
   const [chatId, setChatId] = useState('');
   const [webhookUrl, setWebhookUrl] = useState('');
-  const [paymentPublicUrl, setPaymentPublicUrl] = useState('');
-  const [tunnelToken, setTunnelToken] = useState('');
-  const [tunnelDomain, setTunnelDomain] = useState('');
-  const tunnelDomainDirty = useRef(false);
   const syncConfig = useCallback((value: WorkTelegramConfig) => {
     setConfig(value);
     setChatId(value.chatId);
     setWebhookUrl(value.webhookUrl);
-    setPaymentPublicUrl(value.paymentPublicUrl);
-    if (!tunnelDomainDirty.current) setTunnelDomain(value.paymentTunnelDomain);
   }, []);
   const load = useCallback(async () => { try { syncConfig(await workApi.config()); } catch (err) { toast.error((err as Error).message); } }, [syncConfig]);
   useEffect(() => { load(); }, [load]);
@@ -650,27 +472,7 @@ function TelegramConfigPanel() {
     catch (err) { toast.error((err as Error).message); }
   }
 
-  async function runTunnel(action: () => Promise<TunnelStatus>, success: string) {
-    try { await action(); syncConfig(await workApi.config()); toast.success(success); }
-    catch (err) { toast.error((err as Error).message); }
-  }
 
-  async function saveTunnelConfig(clear = false) {
-    if (!clear && !tunnelToken.trim() && !config?.paymentTunnelHasToken) {
-      return toast.error('Nhập Tunnel token lấy từ Cloudflare Zero Trust');
-    }
-    if (!clear && !tunnelDomain.trim()) return toast.error('Nhập domain đã gắn Public Hostname');
-    try {
-      if (config?.tunnel && config.tunnel.state !== 'off') await workApi.stopTunnel();
-      const value = await workApi.saveConfig(clear
-        ? { clearPaymentTunnelToken: true, paymentTunnelDomain: '' }
-        : { paymentTunnelToken: tunnelToken.trim() || undefined, paymentTunnelDomain: tunnelDomain });
-      tunnelDomainDirty.current = false;
-      syncConfig(value);
-      setTunnelToken('');
-      toast.success(clear ? 'Đã chuyển về Quick Tunnel' : 'Đã lưu Named Tunnel');
-    } catch (err) { toast.error((err as Error).message); }
-  }
 
   return <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
     <div className="space-y-4">
@@ -684,24 +486,6 @@ function TelegramConfigPanel() {
         <div className="border-t pt-4 space-y-2"><Label>Webhook URL công khai</Label><div className="flex gap-2"><Input value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://domain.com" /><Button variant="outline" onClick={() => run(() => workApi.configureWebhook(webhookUrl), 'Đã đăng ký webhook')}>Đăng ký</Button></div></div>
       </CardContent></Card>
 
-      <Card><CardHeader className="flex-row items-center justify-between space-y-0"><CardTitle className="text-base">Link thanh toán cho nhân viên</CardTitle><Badge variant={config?.tunnel?.state === 'online' ? 'success' : config?.tunnel?.state === 'error' ? 'danger' : 'muted'}>{config?.tunnel?.state === 'online' ? 'Đang mở' : config?.tunnel?.state === 'starting' ? 'Đang kết nối' : config?.tunnel?.state === 'error' ? 'Có lỗi' : 'Đang tắt'}</Badge></CardHeader><CardContent className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="space-y-1.5"><Label>Cloudflare Tunnel token</Label><Input type="password" value={tunnelToken} onChange={(e) => setTunnelToken(e.target.value)} placeholder={config?.paymentTunnelTokenMasked || 'Token từ lệnh cài connector'} /></div>
-          <div className="space-y-1.5"><Label>Domain thanh toán</Label><Input value={tunnelDomain} onChange={(e) => { tunnelDomainDirty.current = true; setTunnelDomain(e.target.value); }} placeholder="pay.example.com" /></div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void saveTunnelConfig()}>Lưu Named Tunnel</Button>
-          {config?.paymentTunnelHasToken && <Button variant="ghost" onClick={() => void saveTunnelConfig(true)}>Dùng Quick Tunnel</Button>}
-        </div>
-        <p className="text-xs text-muted-foreground">Trên Cloudflare Public Hostname, đặt Service thành <code className="text-foreground">{config?.tunnel?.originUrl || 'http://127.0.0.1:61367'}</code>. Đây là Tunnel token, không phải API token.</p>
-        <div className="space-y-1.5"><Label>Địa chỉ công khai</Label><Input readOnly value={paymentPublicUrl} placeholder={config?.paymentTunnelDomain || 'App sẽ tự tạo link trycloudflare.com'} /><p className="text-xs text-muted-foreground">App chỉ gửi link Telegram sau khi địa chỉ này truy cập được.</p></div>
-        {config?.tunnel?.error && <p className="text-sm text-destructive">{config.tunnel.error}</p>}
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={config?.tunnel?.state === 'starting' || config?.tunnel?.state === 'online'} onClick={() => runTunnel(workApi.startTunnel, 'Đã bật link nhân viên')}>{config?.tunnel?.state === 'starting' && <RefreshCw className="animate-spin" />}Bật link nhân viên</Button>
-          <Button variant="outline" disabled={!config?.tunnel || config.tunnel.state === 'off'} onClick={() => runTunnel(workApi.stopTunnel, 'Đã tắt link nhân viên')}><Unplug /> Tắt</Button>
-        </div>
-        <p className="text-xs text-muted-foreground">{config?.tunnel?.autoStart ? 'Tunnel sẽ tự bật ở những lần mở app tiếp theo.' : 'Bấm bật một lần để app ghi nhớ và tự mở tunnel lần sau.'}</p>
-      </CardContent></Card>
     </div>
     <Card><CardHeader><CardTitle className="text-base">Thiết lập Telegram</CardTitle></CardHeader><CardContent className="space-y-3 text-sm text-muted-foreground">
       <p>Bot phải là Administrator của Supergroup và có quyền quản lý topic.</p>

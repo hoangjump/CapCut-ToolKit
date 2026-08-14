@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
 import type { BrowserCookieSnapshot, ProxyConfig } from '../types.js';
@@ -37,70 +37,6 @@ export interface PaymentControlDto {
   sessions: PaymentAdminSessionDto[];
 }
 
-export type PaymentBrowserInput =
-  | { type: 'click'; x: number; y: number; button?: 'left' | 'middle' | 'right' }
-  | { type: 'move'; x: number; y: number }
-  | { type: 'wheel'; deltaX: number; deltaY: number }
-  | { type: 'key'; key: string; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }
-  | { type: 'text'; text: string };
-
-function inputRecord(raw: unknown): Record<string, unknown> {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Dữ liệu điều khiển không hợp lệ');
-  return raw as Record<string, unknown>;
-}
-
-function finiteNumber(value: unknown, field: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${field} không hợp lệ`);
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'boolean') throw new Error(`${field} không hợp lệ`);
-  return value;
-}
-
-export function parsePaymentBrowserInput(raw: unknown): PaymentBrowserInput {
-  const value = inputRecord(raw);
-  if (value.type === 'click') {
-    if (value.button !== undefined && !['left', 'middle', 'right'].includes(String(value.button))) {
-      throw new Error('Nút chuột không hợp lệ');
-    }
-    return {
-      type: 'click',
-      x: finiteNumber(value.x, 'Tọa độ X'),
-      y: finiteNumber(value.y, 'Tọa độ Y'),
-      button: value.button as 'left' | 'middle' | 'right' | undefined,
-    };
-  }
-  if (value.type === 'move') {
-    return { type: 'move', x: finiteNumber(value.x, 'Tọa độ X'), y: finiteNumber(value.y, 'Tọa độ Y') };
-  }
-  if (value.type === 'wheel') {
-    return {
-      type: 'wheel',
-      deltaX: finiteNumber(value.deltaX, 'Độ cuộn X'),
-      deltaY: finiteNumber(value.deltaY, 'Độ cuộn Y'),
-    };
-  }
-  if (value.type === 'key') {
-    if (typeof value.key !== 'string' || !value.key || value.key.length > 40) throw new Error('Phím không hợp lệ');
-    return {
-      type: 'key',
-      key: value.key,
-      altKey: optionalBoolean(value.altKey, 'Alt'),
-      ctrlKey: optionalBoolean(value.ctrlKey, 'Ctrl'),
-      metaKey: optionalBoolean(value.metaKey, 'Meta'),
-      shiftKey: optionalBoolean(value.shiftKey, 'Shift'),
-    };
-  }
-  if (value.type === 'text') {
-    if (typeof value.text !== 'string' || value.text.length > 2_000) throw new Error('Nội dung dán không hợp lệ');
-    return { type: 'text', text: value.text };
-  }
-  throw new Error('Loại điều khiển không hợp lệ');
-}
-
 export interface PaymentBrowserCreateInput {
   id: string;
   checkoutUrl: string;
@@ -115,23 +51,17 @@ export interface PaymentBrowserCreateInput {
   ) => Promise<void>;
 }
 
+export interface PaymentProxyProvider {
+  acquire(sourceProxyId?: string): Promise<{ leaseId: string; proxy: ProxyConfig; egressIp: string }>;
+  release(leaseId: string): void;
+}
+
 export interface PaymentBrowser {
   create(input: PaymentBrowserCreateInput): Promise<{ sessionId: string }>;
   close(sessionId: string): Promise<void>;
   closeAll(): Promise<void>;
-  frame(sessionId: string): Promise<Buffer>;
-  input(sessionId: string, input: PaymentBrowserInput): Promise<void>;
   capacity?(): number | null;
   setCapacity?(maxSessions: number | null): void;
-}
-
-export interface PaymentProxyProvider {
-  acquire(sourceProxyId?: string): Promise<{
-    leaseId: string;
-    proxy: ProxyConfig;
-    egressIp: string;
-  }>;
-  release(leaseId: string): void;
 }
 
 function normalizeHttpUrl(raw: string, field: string): string {
@@ -188,15 +118,10 @@ export class PaymentSessionService {
     await this.browser.closeAll();
   }
 
+  /** Xác minh VIP chạy bằng browser nền TẠI MÁY — không còn cần URL công khai
+   *  hay Cloudflare tunnel. Luôn sẵn sàng miễn app đang chạy. */
   configured(): boolean {
-    const publicUrl = this.settings.getPaymentPublicUrl();
-    if (!publicUrl) return false;
-    try {
-      normalizeHttpUrl(publicUrl, 'URL công khai');
-      return true;
-    } catch {
-      return false;
-    }
+    return true;
   }
 
   async createForTask(input: {
@@ -207,17 +132,13 @@ export class PaymentSessionService {
     proxy?: ProxyConfig;
     proxyRecordId?: string;
     capcutCookies?: BrowserCookieSnapshot[];
-  }): Promise<{ id: string; accessUrl: string } | undefined> {
+  }): Promise<{ id: string } | undefined> {
     if (!this.configured()) return undefined;
-    const publicUrl = normalizeHttpUrl(this.settings.getPaymentPublicUrl()!, 'URL công khai');
     normalizeHttpUrl(input.checkoutUrl, 'Link thanh toán');
 
-    const accessToken = randomBytes(32).toString('base64url');
     const now = new Date();
     const session: WorkPaymentSession = {
       id: randomUUID(),
-      accessToken,
-      accessUrl: `${publicUrl}/pay/${accessToken}`,
       taskId: input.taskId,
       employeeId: input.employeeId,
       email: input.email,
@@ -238,11 +159,32 @@ export class PaymentSessionService {
         task.paymentStatus = 'pending';
       }
     });
-    return { id: session.id, accessUrl: session.accessUrl };
+    return { id: session.id };
   }
 
-  accessUrlForTask(taskId: string): string | undefined {
-    return this.store.snapshot().paymentSessions.find((item) => item.taskId === taskId)?.accessUrl;
+  /** Mở browser nền cho một phiên và chờ nó sẵn sàng. Trước đây việc này do
+   *  nhân viên bấm vào trang /pay kích hoạt; giờ trang đó không còn nên app tự
+   *  gọi — browser chỉ để POLL trạng thái VIP của CapCut, không stream đi đâu. */
+  private async startSession(sessionId: string): Promise<PaymentSessionDto> {
+    const current = this.store.snapshot().paymentSessions.find((item) => item.id === sessionId);
+    if (!current) throw new Error('Không tìm thấy phiên thanh toán');
+    if (
+      new Date(current.expiresAt).getTime() <= Date.now()
+      && !['paid', 'verification_failed', 'closed', 'expired'].includes(current.status)
+    ) {
+      await this.expireDue();
+      return { ...dto(current), status: 'expired' };
+    }
+    if (['ready', 'verifying', 'paid', 'verification_failed', 'closed', 'expired'].includes(current.status)) return dto(current);
+    const running = this.starting.get(current.id);
+    if (running) return running;
+    const promise = this.start(current.id);
+    this.starting.set(current.id, promise);
+    try {
+      return await promise;
+    } finally {
+      this.starting.delete(current.id);
+    }
   }
 
   async prepareForTask(taskId: string): Promise<boolean> {
@@ -254,7 +196,7 @@ export class PaymentSessionService {
     const current = this.control();
     if (current.maxSessions !== null && session.status !== 'starting' && current.running >= current.maxSessions) return false;
     try {
-      const prepared = await this.claim(session.accessToken);
+      const prepared = await this.startSession(session.id);
       return prepared.status === 'ready' || prepared.status === 'paid';
     } catch (error) {
       log.warn(`chuẩn bị trước phiên ${session.id} lỗi: ${(error as Error).message}`);
@@ -306,64 +248,9 @@ export class PaymentSessionService {
     return this.control();
   }
 
-  getByToken(token: string): PaymentSessionDto {
-    const session = this.requireToken(token);
-    if (new Date(session.expiresAt).getTime() <= Date.now() && !['paid', 'verification_failed', 'closed', 'expired'].includes(session.status)) {
-      void this.expireDue();
-      return { ...dto(session), status: 'expired' };
-    }
-    return dto(session);
-  }
-
-  async claim(token: string): Promise<PaymentSessionDto> {
-    const current = this.requireToken(token);
-    if (
-      new Date(current.expiresAt).getTime() <= Date.now()
-      && !['paid', 'verification_failed', 'closed', 'expired'].includes(current.status)
-    ) {
-      await this.expireDue();
-      return { ...dto(current), status: 'expired' };
-    }
-    if (['ready', 'verifying', 'paid', 'verification_failed', 'closed', 'expired'].includes(current.status)) return dto(current);
-    const running = this.starting.get(current.id);
-    if (running) return running;
-    const promise = this.start(current.id);
-    this.starting.set(current.id, promise);
-    try {
-      return await promise;
-    } finally {
-      this.starting.delete(current.id);
-    }
-  }
-
-  async frame(token: string): Promise<Buffer> {
-    const session = this.requireReadyToken(token);
-    return this.useBrowser(session, (id) => this.browser.frame(id));
-  }
-
-  async input(token: string, input: PaymentBrowserInput): Promise<void> {
-    const session = this.requireReadyToken(token);
-    await this.useBrowser(session, (id) => this.browser.input(id, input));
-  }
-
-  async controlFrame(id: string): Promise<Buffer> {
-    const session = this.requireReadyId(id);
-    return this.useBrowser(session, (browserId) => this.browser.frame(browserId));
-  }
-
-  async controlInput(id: string, input: PaymentBrowserInput): Promise<void> {
-    const session = this.requireReadyId(id);
-    await this.useBrowser(session, (browserId) => this.browser.input(browserId, input));
-  }
-
   async closeById(id: string): Promise<void> {
     this.requireId(id);
     await this.finish(id, 'closed');
-  }
-
-  async closeByToken(token: string): Promise<void> {
-    const session = this.requireToken(token);
-    await this.finish(session.id, 'closed');
   }
 
   async revokeTask(taskId: string): Promise<void> {
@@ -569,23 +456,9 @@ export class PaymentSessionService {
     });
   }
 
-  private requireToken(token: string): WorkPaymentSession {
-    const session = this.store.snapshot().paymentSessions.find((item) => item.accessToken === token);
-    if (!session) throw new Error('Link thanh toán không hợp lệ');
-    return session;
-  }
-
   private requireId(id: string): WorkPaymentSession {
     const session = this.store.snapshot().paymentSessions.find((item) => item.id === id);
     if (!session) throw new Error('Không tìm thấy phiên thanh toán');
-    return session;
-  }
-
-  private requireReadyToken(token: string): WorkPaymentSession {
-    const session = this.requireToken(token);
-    if (session.status !== 'ready' || !session.browserSessionId) {
-      throw new Error('Trình duyệt thanh toán chưa sẵn sàng hoặc đã đóng');
-    }
     return session;
   }
 

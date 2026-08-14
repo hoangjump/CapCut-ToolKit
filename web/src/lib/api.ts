@@ -221,20 +221,7 @@ export interface WorkTelegramConfig {
   mode: 'off' | 'polling' | 'webhook';
   webhookUrl: string;
   pollingActive: boolean;
-  paymentPublicUrl: string;
   paymentBrowserEnabled: boolean;
-  paymentTunnelHasToken: boolean;
-  paymentTunnelTokenMasked: string | null;
-  paymentTunnelDomain: string;
-  tunnel?: TunnelStatus;
-}
-export interface TunnelStatus {
-  state: 'off' | 'starting' | 'online' | 'error';
-  mode: 'quick' | 'named';
-  originUrl: string;
-  publicUrl: string;
-  autoStart: boolean;
-  error?: string;
 }
 export type PaymentSessionStatus = 'pending' | 'starting' | 'ready' | 'verifying' | 'paid' | 'verification_failed' | 'expired' | 'failed' | 'closed';
 export interface PaymentSession {
@@ -256,11 +243,6 @@ export interface PaymentAdminSession {
   expiresAt: string;
   updatedAt: string;
   error?: string;
-}
-export interface PaymentControl {
-  maxSessions: number | null;
-  running: number;
-  sessions: PaymentAdminSession[];
 }
 export type PaymentBrowserInput =
   | { type: 'click'; x: number; y: number; button?: 'left' | 'middle' | 'right' }
@@ -402,7 +384,6 @@ export const workApi = {
   saveConfig: (body: {
     botToken?: string;
     chatId?: string;
-    paymentPublicUrl?: string;
     paymentTunnelToken?: string;
     clearPaymentTunnelToken?: boolean;
     paymentTunnelDomain?: string;
@@ -411,9 +392,6 @@ export const workApi = {
   enablePolling: () => post('/api/work/config/polling').then((r) => parse<WorkTelegramConfig>(r)),
   configureWebhook: (url: string) => post('/api/work/config/webhook', { url }).then((r) => parse<WorkTelegramConfig>(r)),
   disable: () => post('/api/work/config/off').then((r) => parse<WorkTelegramConfig>(r)),
-  tunnel: () => fetch('/api/work/tunnel').then((r) => parse<TunnelStatus>(r)),
-  startTunnel: () => post('/api/work/tunnel/start').then((r) => parse<TunnelStatus>(r)),
-  stopTunnel: () => post('/api/work/tunnel/stop').then((r) => parse<TunnelStatus>(r)),
   employees: () => fetch('/api/work/employees').then((r) => parse<WorkEmployee[]>(r)),
   createEmployee: (body: { fullName: string; defaultUnitRate: number; salaryVisibility: SalaryVisibility; sheetUrl?: string }) =>
     post('/api/work/employees', body).then((r) => parse<WorkEmployee>(r)),
@@ -439,22 +417,6 @@ export const workApi = {
   resumeDistribution: (id: string) => post(`/api/work/distributions/${id}/resume`).then((r) => parse<DistributionRun>(r)),
   clearDistribution: (id: string) => fetch(`/api/work/distributions/${id}`, { method: 'DELETE' }).then(noContent),
   retryDistributionItem: (id: string) => post(`/api/work/distribution-items/${id}/retry`).then((r) => parse<DistributionRun>(r)),
-  paymentSession: (token: string) => fetch(`/api/work/payment-sessions/${encodeURIComponent(token)}`).then((r) => parse<PaymentSession>(r)),
-  claimPaymentSession: (token: string) => post(`/api/work/payment-sessions/${encodeURIComponent(token)}/claim`).then((r) => parse<PaymentSession>(r)),
-  paymentFrameUrl: (token: string) => `/api/work/payment-sessions/${encodeURIComponent(token)}/frame`,
-  paymentStreamUrl: (token: string) => `/api/work/payment-sessions/${encodeURIComponent(token)}/stream`,
-  sendPaymentInput: (token: string, input: PaymentBrowserInput) =>
-    post(`/api/work/payment-sessions/${encodeURIComponent(token)}/input`, input).then(noContent),
-  closePaymentSession: (token: string) => fetch(`/api/work/payment-sessions/${encodeURIComponent(token)}`, { method: 'DELETE' }).then(noContent),
-  paymentControl: () => fetch('/api/work/payment-control').then((r) => parse<PaymentControl>(r)),
-  updatePaymentControl: (maxSessions: number | null) =>
-    put('/api/work/payment-control', { maxSessions }).then((r) => parse<PaymentControl>(r)),
-  paymentControlFrameUrl: (id: string) => `/api/work/payment-control/${encodeURIComponent(id)}/frame`,
-  paymentControlStreamUrl: (id: string) => `/api/work/payment-control/${encodeURIComponent(id)}/stream`,
-  sendPaymentControlInput: (id: string, input: PaymentBrowserInput) =>
-    post(`/api/work/payment-control/${encodeURIComponent(id)}/input`, input).then(noContent),
-  closePaymentControlSession: (id: string) =>
-    fetch(`/api/work/payment-control/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(noContent),
 };
 
 export const CODE_TYPES = ['all', 'facebook', 'google', 'instagram', 'tiktok', 'twitter', 'apple', 'amazon', 'lazada', 'shopee', 'telegram', 'wechat'];

@@ -267,14 +267,6 @@ export interface AppSettings {
   workTelegramMode?: 'off' | 'polling' | 'webhook';
   workTelegramWebhookUrl?: string;
   workTelegramWebhookSecret?: string;
-  /** URL công khai của app, dùng tạo link /pay/:token gửi cho nhân viên. */
-  paymentPublicUrl?: string;
-  /** Tự bật Cloudflare Tunnel khi app desktop khởi động. */
-  paymentTunnelAutoStart?: boolean;
-  /** Token của named Cloudflare Tunnel, lấy từ lệnh cài connector. */
-  paymentTunnelToken?: string;
-  /** Domain HTTPS đã gắn Public Hostname vào named tunnel. */
-  paymentTunnelDomain?: string;
   /** Số browser thanh toán được chạy cùng lúc. null = không giới hạn. */
   paymentMaxSessions?: number | null;
 }

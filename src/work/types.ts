@@ -95,8 +95,6 @@ export type PaymentSessionStatus = 'pending' | 'starting' | 'ready' | 'verifying
 
 export interface WorkPaymentSession {
   id: string;
-  accessToken: string;
-  accessUrl: string;
   taskId: string;
   employeeId: string;
   email: string;

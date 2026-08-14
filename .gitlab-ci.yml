@@ -39,7 +39,6 @@ build_windows:
   script:
     - npm ci
     - npm ci --prefix web
-    - node scripts/download-cloudflared.mjs
     - npm run build
     - npm run build --prefix web
     - npx electron-builder --win --publish never

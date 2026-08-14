@@ -6,59 +6,39 @@ import test from 'node:test';
 import { SettingsStore } from '../settingsStore.js';
 import type { ProxyConfig } from '../types.js';
 import {
-  parsePaymentBrowserInput,
   PaymentSessionService,
   type PaymentBrowser,
   type PaymentBrowserCreateInput,
-  type PaymentBrowserInput,
   type PaymentProxyProvider,
 } from './paymentSessions.js';
 import { TelegramWorkStore } from './store.js';
+
+// Sau khi gỡ màn hình thanh toán từ xa: KHÔNG còn trang /pay, tunnel, stream hay
+// điều khiển từ xa. Browser nền chỉ để POLL trạng thái VIP của CapCut. App tự
+// kích hoạt qua prepareForTask(taskId); nhân viên không bấm gì để mở nó nữa.
 
 const STATIC_PROXY: ProxyConfig = { server: 'http://proxy.example:8080', username: 'user', password: 'pass' };
 
 class FakeBrowser implements PaymentBrowser {
   readonly created: Array<PaymentBrowserCreateInput> = [];
   readonly closed: string[] = [];
-  readonly inputs: PaymentBrowserInput[] = [];
+  private maxSessions: number | null = 3;
 
   async create(input: PaymentBrowserCreateInput): Promise<{ sessionId: string }> {
     this.created.push(input);
     return { sessionId: `browser-${input.id}` };
   }
-
-  async close(sessionId: string): Promise<void> {
-    this.closed.push(sessionId);
-  }
-
+  async close(sessionId: string): Promise<void> { this.closed.push(sessionId); }
   async closeAll(): Promise<void> {}
-
-  async frame(): Promise<Buffer> {
-    return Buffer.from('jpeg');
-  }
-
-  async input(_sessionId: string, input: PaymentBrowserInput): Promise<void> {
-    this.inputs.push(input);
-  }
-
-  private maxSessions: number | null = 3;
-
   capacity(): number | null { return this.maxSessions; }
-
   setCapacity(maxSessions: number | null): void { this.maxSessions = maxSessions; }
 }
 
 class PaidDuringCreateBrowser extends FakeBrowser {
   override async create(input: PaymentBrowserCreateInput): Promise<{ sessionId: string }> {
-    this.created.push(input);
+    await super.create(input);
     await input.onStatus('paid');
     return { sessionId: `browser-${input.id}` };
-  }
-}
-
-class MissingFrameBrowser extends FakeBrowser {
-  override async frame(): Promise<Buffer> {
-    throw new Error('Phiên trình duyệt chưa sẵn sàng hoặc đã đóng');
   }
 }
 
@@ -75,434 +55,212 @@ class FakePaymentProxyProvider implements PaymentProxyProvider {
       egressIp: `203.0.113.${attempt + 9}`,
     };
   }
-
-  release(leaseId: string): void {
-    this.released.push(leaseId);
-  }
+  release(leaseId: string): void { this.released.push(leaseId); }
 }
 
-test('payment browser input rejects malformed public requests', () => {
-  assert.deepEqual(parsePaymentBrowserInput({ type: 'click', x: 10, y: 20 }), {
-    type: 'click', x: 10, y: 20, button: undefined,
-  });
-  assert.throws(() => parsePaymentBrowserInput({ type: 'click', x: '10', y: 20 }), /Tọa độ X/);
-  assert.throws(() => parsePaymentBrowserInput({ type: 'key', key: 'A', ctrlKey: 'yes' }), /Ctrl/);
-  assert.throws(() => parsePaymentBrowserInput({ type: 'unknown' }), /Loại điều khiển/);
-});
+/** Trạng thái một task đọc từ snapshot (không còn getByToken công khai). */
+function sessionStatus(store: TelegramWorkStore, taskId: string): string | undefined {
+  return store.snapshot().paymentSessions.find((s) => s.taskId === taskId)?.status;
+}
 
-test('payment session fails closed instead of using the machine IP when proxy is missing', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-no-proxy-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const browser = new FakeBrowser();
-    const service = new PaymentSessionService(store, settings, browser);
-    await service.init();
-    const created = await service.createForTask({
-      taskId: 'task-no-proxy',
-      employeeId: 'employee-1',
-      email: 'worker@example.com',
-      checkoutUrl: 'https://cashier.example/checkout',
-    });
-    const token = created!.accessUrl.split('/').at(-1)!;
-
-    await assert.rejects(service.claim(token), /bắt buộc phải có proxy/);
-    assert.equal(browser.created.length, 0);
-    assert.equal(store.snapshot().paymentSessions[0].status, 'failed');
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('payment session starts lazily, keeps proxy and marks paid without changing payroll', async () => {
+async function withService(
+  fn: (ctx: { service: PaymentSessionService; store: TelegramWorkStore; settings: SettingsStore }) => Promise<void>,
+  browser: PaymentBrowser = new FakeBrowser(),
+  proxies?: PaymentProxyProvider,
+): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'payment-session-test-'));
   try {
     const settings = new SettingsStore(root);
     await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
     const store = new TelegramWorkStore(root);
     await store.init();
+    const service = new PaymentSessionService(store, settings, browser, proxies);
+    await service.init();
+    await fn({ service, store, settings });
+    await service.close();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test('fails closed instead of using the machine IP when proxy is missing', async () => {
+  const browser = new FakeBrowser();
+  await withService(async ({ service, store }) => {
+    await service.createForTask({
+      taskId: 'task-no-proxy', employeeId: 'e1', email: 'w@example.com',
+      checkoutUrl: 'https://cashier.example/checkout',
+    });
+    // Không proxy → không được mở browser bằng IP máy.
+    assert.equal(await service.prepareForTask('task-no-proxy'), false);
+    assert.equal(browser.created.length, 0);
+    assert.equal(sessionStatus(store, 'task-no-proxy'), 'failed');
+  }, browser);
+});
+
+test('verifies VIP and marks paid without touching payroll', async () => {
+  const browser = new FakeBrowser();
+  await withService(async ({ service, store }) => {
     await store.mutate((state) => {
       state.tasks.push({
-        id: 'task-1',
-        employeeId: 'employee-1',
-        description: 'Thanh toán CapCut',
-        quantity: 1,
-        unitRate: 5_000,
-        amount: 5_000,
-        status: 'pending',
-        deliveryStatus: 'sent',
-        source: 'capcut-distribution',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        id: 'task-1', employeeId: 'e1', description: 'Pay', quantity: 1, unitRate: 5_000,
+        amount: 5_000, status: 'pending', deliveryStatus: 'sent', source: 'capcut-distribution',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       });
     });
-    const browser = new FakeBrowser();
-    const service = new PaymentSessionService(store, settings, browser);
-    await service.init();
-    const proxy = STATIC_PROXY;
-
-    const created = await service.createForTask({
-      taskId: 'task-1',
-      employeeId: 'employee-1',
-      email: 'worker@example.com',
-      checkoutUrl: 'https://cashier.example/checkout',
-      proxy,
+    await service.createForTask({
+      taskId: 'task-1', employeeId: 'e1', email: 'w@example.com',
+      checkoutUrl: 'https://cashier.example/checkout', proxy: STATIC_PROXY,
     });
-    assert.ok(created?.accessUrl.startsWith('https://app.example/pay/'));
-    assert.equal(browser.created.length, 0);
 
-    const token = created!.accessUrl.split('/').at(-1)!;
-    assert.equal(service.getByToken(token).status, 'pending');
-    const ready = await service.claim(token);
-    assert.equal(ready.status, 'ready');
-    assert.deepEqual(browser.created[0].proxy, proxy);
+    assert.equal(await service.prepareForTask('task-1'), true);
+    assert.deepEqual(browser.created[0].proxy, STATIC_PROXY);
+
+    // Admin view không rò checkout URL/cookie.
     const control = service.control();
-    assert.equal(control.maxSessions, 3);
     assert.equal(control.running, 1);
-    assert.equal(control.sessions[0].viewable, true);
-    assert.equal(control.sessions[0].proxyServer, proxy.server);
-    assert.equal('accessToken' in control.sessions[0], false);
     assert.equal('checkoutUrl' in control.sessions[0], false);
-    assert.equal((await service.controlFrame(control.sessions[0].id)).toString(), 'jpeg');
-    assert.equal((await service.frame(token)).toString(), 'jpeg');
-    await service.input(token, { type: 'click', x: 10, y: 20 });
-    assert.deepEqual(browser.inputs[0], { type: 'click', x: 10, y: 20 });
 
     await browser.created[0].onStatus('paid');
     const task = store.snapshot().tasks[0];
     assert.equal(task.paymentStatus, 'paid');
     assert.ok(task.paidAt);
+    // VIP tự xác minh KHÔNG cộng công — công chỉ cộng khi nhân viên thả ❤️.
     assert.equal(store.snapshot().earnings.length, 0);
-    assert.equal(service.getByToken(token).status, 'paid');
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    assert.equal(sessionStatus(store, 'task-1'), 'paid');
+  }, browser);
 });
 
-test('payment session capacity is persisted and updated without restarting', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-capacity-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const browser = new FakeBrowser();
-    const service = new PaymentSessionService(store, settings, browser);
-    await service.init();
-
+test('capacity is persisted and updated without restarting', async () => {
+  await withService(async ({ service, settings }) => {
     assert.equal((await service.updateCapacity(7)).maxSessions, 7);
     assert.equal(settings.getPaymentMaxSessions(), 7);
     assert.equal((await service.updateCapacity(null)).maxSessions, null);
     assert.equal(settings.getPaymentMaxSessions(), null);
     await assert.rejects(service.updateCapacity(-1), /số nguyên lớn hơn 0/);
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  });
 });
 
-test('payment session keeps CapCut cookies private and verifies VIP before paid', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-vip-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const browser = new FakeBrowser();
-    const verified: Array<{ taskId: string; vipEndTime: number }> = [];
-    const service = new PaymentSessionService(store, settings, browser);
+test('keeps CapCut cookies private and verifies VIP before paid', async () => {
+  const browser = new FakeBrowser();
+  const verified: Array<{ taskId: string; vipEndTime: number }> = [];
+  await withService(async ({ service, store }) => {
     service.setVipVerifiedHandler(async (taskId, vipEndTime) => { verified.push({ taskId, vipEndTime }); });
-    await service.init();
     const cookies = [{
-      name: 'sessionid', value: 'secret-session', domain: '.capcut.com', path: '/', expires: -1,
+      name: 'sessionid', value: 'secret', domain: '.capcut.com', path: '/', expires: -1,
       httpOnly: true, secure: true, sameSite: 'Lax' as const,
     }];
-    const created = await service.createForTask({
-      taskId: 'task-vip', employeeId: 'employee-1', email: 'worker@example.com',
+    await service.createForTask({
+      taskId: 'task-vip', employeeId: 'e1', email: 'w@example.com',
       checkoutUrl: 'https://cashier.example/checkout', proxy: STATIC_PROXY, capcutCookies: cookies,
     });
-    const token = created!.accessUrl.split('/').at(-1)!;
 
-    await service.claim(token);
+    assert.equal(await service.prepareForTask('task-vip'), true);
     assert.deepEqual(browser.created[0].capcutCookies, cookies);
-    assert.equal('capcutCookies' in service.getByToken(token), false);
 
     await browser.created[0].onStatus('verifying');
-    assert.equal(service.getByToken(token).status, 'verifying');
+    assert.equal(sessionStatus(store, 'task-vip'), 'verifying');
     await browser.created[0].onStatus('paid', undefined, { vipEndTime: 1_900_000_000 });
     assert.deepEqual(verified, [{ taskId: 'task-vip', vipEndTime: 1_900_000_000 }]);
-    assert.equal(service.getByToken(token).status, 'paid');
+    assert.equal(sessionStatus(store, 'task-vip'), 'paid');
+    // Cookie bị xoá khỏi bản lưu sau khi xong.
     assert.equal(store.snapshot().paymentSessions[0].capcutCookies, undefined);
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  }, browser);
 });
 
-test('VIP verification failure closes the browser without offering another payment attempt', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-vip-failure-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const browser = new FakeBrowser();
-    const service = new PaymentSessionService(store, settings, browser);
-    await service.init();
+test('VIP verification failure closes the browser without another attempt', async () => {
+  const browser = new FakeBrowser();
+  await withService(async ({ service, store }) => {
     const created = await service.createForTask({
-      taskId: 'task-vip-failure', employeeId: 'employee-1', email: 'worker@example.com',
+      taskId: 'task-fail', employeeId: 'e1', email: 'w@example.com',
       checkoutUrl: 'https://cashier.example/checkout', proxy: STATIC_PROXY,
-      capcutCookies: [{
-        name: 'sessionid', value: 'secret-session', domain: '.capcut.com', path: '/', expires: -1,
-        httpOnly: true, secure: true, sameSite: 'Lax',
-      }],
     });
-    const token = created!.accessUrl.split('/').at(-1)!;
-
-    await service.claim(token);
-    await browser.created[0].onStatus('verifying');
+    await service.prepareForTask('task-fail');
     await browser.created[0].onStatus('verification_failed', 'CapCut chưa báo VIP');
-    assert.equal(service.getByToken(token).status, 'verification_failed');
-    assert.match(service.getByToken(token).error ?? '', /chưa báo VIP/);
+    assert.equal(sessionStatus(store, 'task-fail'), 'verification_failed');
     assert.deepEqual(browser.closed, [`browser-${created!.id}`]);
 
-    assert.equal((await service.claim(token)).status, 'verification_failed');
+    // Đã hỏng xác minh thì không mở lại browser lần nữa.
+    assert.equal(await service.prepareForTask('task-fail'), false);
     assert.equal(browser.created.length, 1);
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  }, browser);
 });
 
-test('payment session can be prepared before the employee opens the Telegram link', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-prepare-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const browser = new FakeBrowser();
-    const service = new PaymentSessionService(store, settings, browser);
-    await service.init();
-    await service.createForTask({
-      taskId: 'task-prepare',
-      employeeId: 'employee-1',
-      email: 'worker@example.com',
-      checkoutUrl: 'https://cashier.example/checkout',
-      proxy: STATIC_PROXY,
-    });
-
-    assert.equal(await service.prepareForTask('task-prepare'), true);
-    assert.equal(browser.created.length, 1);
-    assert.equal(store.snapshot().paymentSessions[0].status, 'ready');
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('payment preparation rotates to a fresh proxy and holds it until the session closes', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-proxy-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const browser = new FakeBrowser();
-    const proxies = new FakePaymentProxyProvider();
-    const service = new PaymentSessionService(store, settings, browser, proxies);
-    await service.init();
+test('preparation rotates to a fresh proxy and holds it until the session closes', async () => {
+  const browser = new FakeBrowser();
+  const proxies = new FakePaymentProxyProvider();
+  await withService(async ({ service, store }) => {
     const created = await service.createForTask({
-      taskId: 'task-proxy',
-      employeeId: 'employee-1',
-      email: 'worker@example.com',
+      taskId: 'task-proxy', employeeId: 'e1', email: 'w@example.com',
       checkoutUrl: 'https://cashier.example/checkout',
-      proxy: { server: 'http://registration-proxy.example:8080' },
-      proxyRecordId: 'source-proxy-1',
+      proxy: { server: 'http://registration-proxy.example:8080' }, proxyRecordId: 'source-proxy-1',
     });
-    const token = created!.accessUrl.split('/').at(-1)!;
-
     assert.equal(await service.prepareForTask('task-proxy'), true);
     assert.deepEqual(proxies.acquired, ['source-proxy-1']);
     assert.equal(browser.created[0].proxy?.server, 'http://fresh-proxy-1.example:8080');
     assert.equal(browser.created[0].expectedProxyIp, '203.0.113.10');
     assert.equal(store.snapshot().paymentSessions[0].paymentProxyIp, '203.0.113.10');
 
-    await service.closeByToken(token);
+    await service.closeById(created!.id);
     assert.deepEqual(proxies.released, ['payment-proxy-1']);
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  }, browser, proxies);
 });
 
 test('a risk failure releases the current lease before retrying with a fresh proxy', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-risk-retry-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const browser = new FakeBrowser();
-    const proxies = new FakePaymentProxyProvider();
-    const service = new PaymentSessionService(store, settings, browser, proxies);
-    await service.init();
-    const created = await service.createForTask({
-      taskId: 'task-risk-retry',
-      employeeId: 'employee-1',
-      email: 'worker@example.com',
-      checkoutUrl: 'https://cashier.example/checkout',
-      proxyRecordId: 'source-proxy-1',
+  const browser = new FakeBrowser();
+  const proxies = new FakePaymentProxyProvider();
+  await withService(async ({ service }) => {
+    await service.createForTask({
+      taskId: 'task-risk', employeeId: 'e1', email: 'w@example.com',
+      checkoutUrl: 'https://cashier.example/checkout', proxyRecordId: 'source-proxy-1',
     });
-    const token = created!.accessUrl.split('/').at(-1)!;
-
-    await service.claim(token);
+    await service.prepareForTask('task-risk');
     await browser.created[0].onStatus('failed', 'Cổng thanh toán từ chối do risk');
     assert.deepEqual(proxies.released, ['payment-proxy-1']);
 
-    const retried = await service.claim(token);
-    assert.equal(retried.status, 'ready');
+    assert.equal(await service.prepareForTask('task-risk'), true);
     assert.deepEqual(proxies.acquired, ['source-proxy-1', 'source-proxy-1']);
     assert.equal(browser.created[1].proxy?.server, 'http://fresh-proxy-2.example:8080');
     assert.equal(browser.created[1].expectedProxyIp, '203.0.113.11');
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  }, browser, proxies);
 });
 
-test('persisted ready sessions reset after app restart instead of returning endless frame conflicts', async () => {
+test('persisted ready sessions reset to pending after app restart', async () => {
   const root = await mkdtemp(join(tmpdir(), 'payment-session-restart-test-'));
   try {
     const settings = new SettingsStore(root);
     await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
     const store = new TelegramWorkStore(root);
     await store.init();
-    await store.mutate((state) => {
-      state.tasks.push({
-        id: 'task-restart', employeeId: 'employee-1', description: 'Pay', quantity: 1,
-        unitRate: 5_000, amount: 5_000, status: 'pending', deliveryStatus: 'sent',
-        paymentStatus: 'ready', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      });
-    });
     const first = new PaymentSessionService(store, settings, new FakeBrowser());
     await first.init();
-    const created = await first.createForTask({
-      taskId: 'task-restart', employeeId: 'employee-1', email: 'worker@example.com',
-      checkoutUrl: 'https://cashier.example/checkout',
-      proxy: STATIC_PROXY,
+    await first.createForTask({
+      taskId: 'task-restart', employeeId: 'e1', email: 'w@example.com',
+      checkoutUrl: 'https://cashier.example/checkout', proxy: STATIC_PROXY,
     });
-    const token = created!.accessUrl.split('/').at(-1)!;
-    await first.claim(token);
+    await first.prepareForTask('task-restart');
     await first.close();
 
-    const reloadedStore = new TelegramWorkStore(root);
-    await reloadedStore.init();
-    const restarted = new PaymentSessionService(reloadedStore, settings, new FakeBrowser());
+    const reloaded = new TelegramWorkStore(root);
+    await reloaded.init();
+    const restarted = new PaymentSessionService(reloaded, settings, new FakeBrowser());
     await restarted.init();
-    const session = reloadedStore.snapshot().paymentSessions[0];
+    const session = reloaded.snapshot().paymentSessions[0];
     assert.equal(session.status, 'pending');
     assert.equal(session.browserSessionId, undefined);
-    assert.equal(reloadedStore.snapshot().tasks[0].paymentStatus, 'pending');
     await restarted.close();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('a crashed browser marks the session failed so the employee can retry', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-crash-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    await store.mutate((state) => {
-      state.tasks.push({
-        id: 'task-crash', employeeId: 'employee-1', description: 'Pay', quantity: 1,
-        unitRate: 5_000, amount: 5_000, status: 'pending', deliveryStatus: 'sent',
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      });
-    });
-    const service = new PaymentSessionService(store, settings, new MissingFrameBrowser());
-    await service.init();
-    const created = await service.createForTask({
-      taskId: 'task-crash', employeeId: 'employee-1', email: 'worker@example.com',
-      checkoutUrl: 'https://cashier.example/checkout',
-      proxy: STATIC_PROXY,
-    });
-    const token = created!.accessUrl.split('/').at(-1)!;
-    await service.claim(token);
-
-    await assert.rejects(service.frame(token), /đã đóng/);
-    const session = store.snapshot().paymentSessions[0];
-    assert.equal(session.status, 'failed');
-    assert.equal(session.browserSessionId, undefined);
-    assert.match(session.error ?? '', /đã đóng/);
-    assert.equal(store.snapshot().tasks[0].paymentStatus, 'failed');
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('payment session stays disabled until the app has a public tunnel URL', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-disabled-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const service = new PaymentSessionService(store, settings, new FakeBrowser());
-    await service.init();
-    assert.equal(await service.createForTask({
-      taskId: 'task-1',
-      employeeId: 'employee-1',
-      email: 'worker@example.com',
-      checkoutUrl: 'https://cashier.example/checkout',
-    }), undefined);
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test('paid status reported during browser creation is not overwritten by ready', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'payment-session-race-test-'));
-  try {
-    const settings = new SettingsStore(root);
-    await settings.init();
-    await settings.setPaymentPublicUrl('https://app.example');
-    const store = new TelegramWorkStore(root);
-    await store.init();
-    const service = new PaymentSessionService(store, settings, new PaidDuringCreateBrowser());
-    await service.init();
-    const created = await service.createForTask({
-      taskId: 'task-race',
-      employeeId: 'employee-1',
-      email: 'worker@example.com',
-      checkoutUrl: 'https://cashier.example/checkout',
-      proxy: STATIC_PROXY,
+  const browser = new PaidDuringCreateBrowser();
+  await withService(async ({ service, store }) => {
+    await service.createForTask({
+      taskId: 'task-race', employeeId: 'e1', email: 'w@example.com',
+      checkoutUrl: 'https://cashier.example/checkout', proxy: STATIC_PROXY,
     });
-
-    const token = created!.accessUrl.split('/').at(-1)!;
-    assert.equal((await service.claim(token)).status, 'paid');
-    assert.equal(service.getByToken(token).status, 'paid');
-    await service.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    assert.equal(await service.prepareForTask('task-race'), true);
+    assert.equal(sessionStatus(store, 'task-race'), 'paid');
+  }, browser);
 });

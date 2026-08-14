@@ -7,12 +7,11 @@ import type { BrowserContext, Page } from 'playwright-core';
 import { anonymizeProxy, closeAnonymizedProxy } from 'proxy-chain';
 import { createLogger } from '../logger.js';
 import type { ProxyConfig } from '../types.js';
-import type { PaymentBrowser, PaymentBrowserCreateInput, PaymentBrowserInput } from './paymentSessions.js';
+import type { PaymentBrowser, PaymentBrowserCreateInput } from './paymentSessions.js';
 
 const log = createLogger('payment-browser');
 const WIDTH = 1280;
 const HEIGHT = 720;
-const FRAME_CACHE_MS = 75;
 const PROXY_CHECK_URL = 'https://api.ipify.org?format=json';
 const CAPCUT_VIP_CHECK_URL = 'https://commerce-api-sg.capcut.com/commerce/v3/trade/subscription_infos';
 const CAPCUT_VIP_POLL_MS = 3_000;
@@ -41,8 +40,6 @@ interface LocalSession {
   checking: boolean;
   reported: boolean;
   nextVipCheckAt: number;
-  latestFrame?: Buffer;
-  frameAt: number;
   capture?: Promise<Buffer>;
 }
 
@@ -90,9 +87,6 @@ async function upstreamProxy(proxy: ProxyConfig | undefined): Promise<string> {
   return anonymizeProxy(value.toString());
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
 
 export class LocalPaymentBrowser implements PaymentBrowser {
   private readonly sessions = new Map<string, LocalSession>();
@@ -131,50 +125,7 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     }
   }
 
-  async frame(sessionId: string): Promise<Buffer> {
-    const session = this.requireSession(sessionId);
-    if (session.latestFrame && Date.now() - session.frameAt < FRAME_CACHE_MS) return session.latestFrame;
-    if (session.capture) return session.capture;
-    session.capture = this.capture(session).finally(() => { session.capture = undefined; });
-    return session.capture;
-  }
 
-  async input(sessionId: string, input: PaymentBrowserInput): Promise<void> {
-    const session = this.requireSession(sessionId);
-    const page = this.pageFor(session);
-    if (input.type === 'click') {
-      await page.mouse.click(clamp(input.x, 0, WIDTH), clamp(input.y, 0, HEIGHT), {
-        button: input.button === 'right' ? 'right' : input.button === 'middle' ? 'middle' : 'left',
-      });
-      return;
-    }
-    if (input.type === 'move') {
-      await page.mouse.move(clamp(input.x, 0, WIDTH), clamp(input.y, 0, HEIGHT));
-      return;
-    }
-    if (input.type === 'wheel') {
-      await page.mouse.wheel(clamp(input.deltaX, -2_000, 2_000), clamp(input.deltaY, -2_000, 2_000));
-      return;
-    }
-    if (input.type === 'text') {
-      await page.keyboard.insertText(input.text.slice(0, 2_000));
-      return;
-    }
-    const key = input.key.slice(0, 40);
-    if (!key) return;
-    if (key.length === 1 && !input.altKey && !input.ctrlKey && !input.metaKey) {
-      await page.keyboard.insertText(key);
-      return;
-    }
-    const modifiers = [
-      input.ctrlKey ? 'Control' : '',
-      input.altKey ? 'Alt' : '',
-      input.metaKey ? 'Meta' : '',
-      input.shiftKey ? 'Shift' : '',
-    ].filter(Boolean);
-    const normalized = key === ' ' ? 'Space' : key;
-    await page.keyboard.press([...modifiers, normalized].join('+'));
-  }
 
   async close(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
@@ -233,7 +184,6 @@ export class LocalPaymentBrowser implements PaymentBrowser {
         checking: false,
         reported: false,
         nextVipCheckAt: Date.now() + CAPCUT_VIP_POLL_MS,
-        frameAt: 0,
       } as LocalSession;
       const watch = (next: Page) => {
         session.activePage = next;
@@ -261,13 +211,6 @@ export class LocalPaymentBrowser implements PaymentBrowser {
     }
   }
 
-  private async capture(session: LocalSession): Promise<Buffer> {
-    const page = this.pageFor(session);
-    const frame = await capturePaymentFrame(page, session.latestFrame);
-    session.latestFrame = frame;
-    session.frameAt = Date.now();
-    return frame;
-  }
 
   private pageFor(session: LocalSession): Page {
     if (!session.activePage.isClosed()) return session.activePage;

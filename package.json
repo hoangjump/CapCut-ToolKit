@@ -13,8 +13,7 @@
     "desktop:dev": "npm run build && electron .",
     "desktop:pack": "npm run build && npm run build:web && electron-builder --dir",
     "dist:mac": "npm run build && npm run build:web && electron-builder --mac",
-    "prepare:cloudflared:win": "node scripts/download-cloudflared.mjs",
-    "dist:win": "npm run prepare:cloudflared:win && npm run build && npm run build:web && electron-builder --win",
+    "dist:win": "npm run build && npm run build:web && electron-builder --win",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/*.test.ts src/flows/*.test.ts src/work/*.test.ts src/server/*.test.ts",
     "build:web": "npm --prefix web install && npm --prefix web run build",
@@ -69,12 +68,6 @@
     "win": {
       "target": [
         "nsis"
-      ],
-      "extraResources": [
-        {
-          "from": "vendor/cloudflared/cloudflared.exe",
-          "to": "cloudflared/cloudflared.exe"
-        }
       ]
     },
     "nsis": {

@@ -4,8 +4,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
-import {
-  ProxyStore } from '../proxyStore.js';
+import { ProxyStore } from '../proxyStore.js';
 import { ProfileManager } from '../profileManager.js';
 import { BrowserManager } from '../browserManager.js';
 import { ProxyLeaseRegistry } from '../proxyLeaseRegistry.js';
@@ -13,21 +12,6 @@ import { MailStore } from '../mailStore.js';
 import { UsedIpStore } from '../usedIpStore.js';
 import { SettingsStore } from '../settingsStore.js';
 import { ProjectStore } from '../projectStore.js';
-import {
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-} from '../types.js';
 import { createLogger, subscribeLogs, recentLogs } from '../logger.js';
 import { TelegramClient } from '../work/telegramClient.js';
 import { TelegramWorkService } from '../work/service.js';
@@ -35,9 +19,6 @@ import { TelegramWorkStore } from '../work/store.js';
 import { registerTelegramWorkRoutes } from '../work/routes.js';
 import { PaymentSessionService } from '../work/paymentSessions.js';
 import { LocalPaymentBrowser } from '../work/localPaymentBrowser.js';
-import { PaymentStreamServer } from '../work/paymentStream.js';
-import { paymentHostGuard } from './paymentHostGuard.js';
-import { TunnelManager } from './tunnelManager.js';
 import { PaymentProxyAllocator } from './paymentProxyAllocator.js';
 import { createApiProxyHelpers } from './apiProxy.js';
 import { errorMiddleware } from './http.js';
@@ -49,7 +30,6 @@ import { registerProfileRoutes } from './routes/profiles.js';
 import { registerProjectRoutes } from './routes/projects.js';
 
 const log = createLogger('server');
-
 
 export interface ServerConfig {
   host?: string;
@@ -65,9 +45,7 @@ export interface CreatedApp {
   storeRoot: string;
   headless: boolean | 'virtual';
   publicDir: string;
-  tunnel: TunnelManager;
   paymentSessions: PaymentSessionService;
-  getPaymentPublicUrl: () => string | undefined;
   close: () => Promise<void>;
 }
 
@@ -92,9 +70,6 @@ function parseHeadless(): boolean | 'virtual' {
   return true;
 }
 
-
-
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // In dev (tsx) __dirname = src/server; in prod (tsc) = dist/server. Project root
 // is two levels up in both cases.
@@ -106,9 +81,6 @@ function resolveDefaultPublicDir(): string {
   return existsSync(join(webDist, 'index.html')) ? webDist : join(PROJECT_ROOT, 'public');
 }
 const DEFAULT_PUBLIC_DIR = resolveDefaultPublicDir();
-
-
-
 
 export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> {
   const storeRoot = config.storeRoot ?? process.env.STORE_ROOT ?? join(process.cwd(), 'profiles-store');
@@ -145,8 +117,6 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   const mails = new MailStore(storeRoot);
   await mails.init();
 
-  const tunnel = new TunnelManager(settings);
-
   const telegramStore = new TelegramWorkStore(storeRoot);
   const paymentProxyAllocator = new PaymentProxyAllocator(store, usedIps, proxyLeases, {
     rotate: (record) => rotatePaymentProxy(record),
@@ -165,7 +135,6 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   await projects.init();
 
   const app = express();
-  app.use(paymentHostGuard(() => settings.getPaymentPublicUrl()));
   // Danh sách mail OAuth2 có refresh token dài; vài nghìn dòng dễ vượt mức
   // 100 KB mặc định của Express dù dữ liệu hợp lệ.
   // Import kho mail gửi cả danh sách trong MỘT request JSON. Mail OAuth2 có
@@ -178,12 +147,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
 
   // Employee/topic task management. This module has its own bot credentials so
   // it does not interfere with the existing registration notifications.
-  registerTelegramWorkRoutes(app, telegramWork, paymentSessions, tunnel);
-  app.get('/pay/health', (_req, res) => res.status(204).end());
-  app.get('/pay/:token', (_req, res) => {
-    res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
-    res.sendFile(join(publicDir, 'index.html'));
-  });
+  registerTelegramWorkRoutes(app, telegramWork);
 
   // Live log stream (SSE). Sends the ring buffer first so a client connecting
   // mid-run sees recent history, then streams each new line. The log bus in
@@ -229,11 +193,8 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
     storeRoot,
     headless,
     publicDir,
-    tunnel,
     paymentSessions,
-    getPaymentPublicUrl: () => settings.getPaymentPublicUrl(),
-    close: async () => {
-      await tunnel.close();
+      close: async () => {
       await telegramWork.close();
       await browsers.closeAll();
     } };
@@ -251,14 +212,11 @@ export async function startServer(config: ServerConfig = {}): Promise<StartedSer
     const listening = created.app.listen(port, host, () => resolve(listening));
     listening.once('error', reject);
   });
-  const paymentStream = new PaymentStreamServer(server, created.paymentSessions, created.getPaymentPublicUrl);
 
   const address = server.address() as AddressInfo | null;
   const resolvedPort = address?.port ?? port;
   const urlHost = host === '0.0.0.0' ? 'localhost' : host;
   const url = `http://${urlHost}:${resolvedPort}`;
-  created.tunnel.setOrigin(url, Boolean(config.embeddedTunnel));
-  if (config.embeddedTunnel) void created.tunnel.startIfEnabled();
 
   log.info(`proxy manager listening on ${url}`);
   log.info(`serving UI from ${created.publicDir}`);
@@ -272,7 +230,6 @@ export async function startServer(config: ServerConfig = {}): Promise<StartedSer
     url,
     port: resolvedPort,
     close: async () => {
-      await paymentStream.close();
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       }).catch((err) => {

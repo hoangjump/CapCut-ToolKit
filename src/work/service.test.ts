@@ -11,7 +11,6 @@ import {
   PaymentSessionService,
   type PaymentBrowser,
   type PaymentBrowserCreateInput,
-  type PaymentBrowserInput,
 } from './paymentSessions.js';
 import type { TelegramUpdate } from './types.js';
 
@@ -70,8 +69,6 @@ class PrewarmBrowser implements PaymentBrowser {
   }
   async close(): Promise<void> {}
   async closeAll(): Promise<void> {}
-  async frame(): Promise<Buffer> { return Buffer.alloc(0); }
-  async input(_sessionId: string, _input: PaymentBrowserInput): Promise<void> {}
 }
 
 class FlakySheetWriter {
@@ -252,7 +249,6 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     await settings.init();
     await settings.setWorkTelegramBotToken('test-token');
     await settings.setWorkTelegramChatId('-100123');
-    await settings.setPaymentPublicUrl('https://app.example');
     await settings.setSheetWebhookUrl('https://sheet.example/exec');
     const fake = new FakeTelegram();
     const store = new TelegramWorkStore(root);
@@ -277,17 +273,6 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     assert.equal(tai.sheetSpreadsheetId, taiSheetId);
     await service.processUpdate({ update_id: 10, message: { message_id: 1, message_thread_id: 45, text: `/bind ${duy.bindCode}`, chat: { id: -100123 }, from: { id: 555 } } });
     await service.processUpdate({ update_id: 11, message: { message_id: 2, message_thread_id: 46, text: `/bind ${tai.bindCode}`, chat: { id: -100123 }, from: { id: 777 } } });
-
-    settings.setRuntimePaymentPublicUrl(null);
-    await assert.rejects(
-      service.startDistribution({
-        projectId: 'project-1',
-        projectName: 'Auto CapCut',
-        allocations: [{ employeeId: duy.id, quantity: 1 }],
-      }),
-      /Cloudflare Tunnel chưa sẵn sàng/,
-    );
-    settings.setRuntimePaymentPublicUrl('https://app.example');
 
     const run = await service.startDistribution({
       projectId: 'project-1',
@@ -386,8 +371,10 @@ test('CapCut distribution respects quotas and auto-pays only after VIP verificat
     assert.ok(sentText.includes(`<code>${firstItem.email}</code>`));
     assert.equal(sentText.includes(firstItem.password!), false);
     assert.doesNotMatch(sentText, /Mail full:|refresh\d|client\d/);
-    assert.match(sentText, /<a href="https:\/\/app\.example\/pay\/[^"]+">Link thanh toán<\/a>/);
-    assert.equal(sentText.includes(firstItem.checkoutUrl), false);
+    // Không còn trang /pay — nhân viên nhận thẳng link checkout CapCut gốc
+    // (href bị escape HTML, & → &amp;).
+    const escapedCheckout = firstItem.checkoutUrl.replace(/&/g, '&amp;');
+    assert.ok(sentText.includes(`<a href="${escapedCheckout}">Link thanh toán</a>`));
     assert.match(sentText, new RegExp(`Hạn: ${expiresAt} \\(15 phút\\)`));
     assert.match(sentText, /hệ thống tự tim tin nhắn và cộng sản lượng/i);
     assert.match(sentText, /Không cần thả tim hoặc bấm kiểm tra lại/);

@@ -310,9 +310,22 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
         <ConfigSection title="Số lượng và luồng chạy" description="Điều chỉnh quy mô của lần chạy.">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 2xl:grid-cols-2">
             <div className="space-y-1.5"><Label>Số lượng cần tạo</Label><Input disabled={distributionEnabled} type="number" min={0} value={ephemeral} onChange={(e) => setEphemeral(e.target.value)} />{distributionEnabled && <p className="text-xs text-muted-foreground">Tự lấy từ tổng quota nhân viên.</p>}</div>
-            <div className="space-y-1.5"><Label>Số proxy chạy song song</Label><Input type="number" min={1} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label>Số luồng mỗi nhân viên</Label><Input type="number" min={1} value={concurrency} onChange={(e) => setConcurrency(e.target.value)} /></div>
           </div>
-          {Number(ephemeral) > 0 && Number(concurrency) > 0 && <p className="text-xs text-muted-foreground">Khoảng {Math.ceil(Number(ephemeral) / Number(concurrency))} account mỗi proxy; mỗi account tự xoay tới IP egress chưa từng đăng ký.</p>}
+          {Number(concurrency) > 0 && (() => {
+            // Số luồng là MỖI NHÂN VIÊN. Có phân phối thì tổng browser song song
+            // = luồng × số nhân viên, nên phải nói rõ con số thật.
+            const staff = distributionEnabled ? Object.values(quotaByEmployee).filter((q) => Number(q) > 0).length : 0;
+            const total = staff > 0 ? Number(concurrency) * staff : Number(concurrency);
+            return (
+              <p className="text-xs text-muted-foreground">
+                {staff > 0
+                  ? `${concurrency} luồng × ${staff} nhân viên = ${total} browser chạy song song.`
+                  : `${total} browser chạy song song (chưa bật phân phối nên không nhân theo nhân viên).`}
+                {Number(ephemeral) > 0 && ` Mỗi account tự xoay tới IP egress chưa từng đăng ký.`}
+              </p>
+            );
+          })()}
         </ConfigSection>
 
         <ConfigSection title="Hiệu năng" description="Tùy chọn hiển thị và tải tài nguyên browser.">

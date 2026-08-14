@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { maskKey, type SettingsStore } from '../settingsStore.js';
+import { type SettingsStore } from '../settingsStore.js';
 import { createLogger } from '../logger.js';
 import type { BrowserCookieSnapshot, ProxyConfig } from '../types.js';
 import type { TelegramBotApi } from './telegramClient.js';
@@ -331,28 +331,17 @@ export class TelegramWorkService {
       mode: this.settings.getWorkTelegramMode(),
       webhookUrl: this.settings.getWorkTelegramWebhookUrl() ?? '',
       pollingActive: this.pollingActive,
-      paymentPublicUrl: this.settings.getPaymentPublicUrl() ?? '',
+      // Xác minh VIP chạy bằng browser nền tại máy — không còn tunnel/URL công khai.
       paymentBrowserEnabled: this.payments?.configured() ?? false,
-      paymentTunnelHasToken: Boolean(this.settings.getPaymentTunnelToken()),
-      paymentTunnelTokenMasked: maskKey(this.settings.getPaymentTunnelToken()),
-      paymentTunnelDomain: this.settings.getPaymentTunnelDomain() ?? '',
     };
   }
 
   async saveConfig(input: {
     botToken?: string;
     chatId?: string;
-    paymentPublicUrl?: string;
-    paymentTunnelToken?: string;
-    clearPaymentTunnelToken?: boolean;
-    paymentTunnelDomain?: string;
   }): Promise<ReturnType<TelegramWorkService['configDto']>> {
     if (input.botToken !== undefined) await this.settings.setWorkTelegramBotToken(input.botToken);
     if (input.chatId !== undefined) await this.settings.setWorkTelegramChatId(input.chatId);
-    if (input.paymentPublicUrl !== undefined) await this.settings.setPaymentPublicUrl(input.paymentPublicUrl);
-    if (input.clearPaymentTunnelToken) await this.settings.setPaymentTunnelToken(undefined);
-    else if (input.paymentTunnelToken !== undefined) await this.settings.setPaymentTunnelToken(input.paymentTunnelToken);
-    if (input.paymentTunnelDomain !== undefined) await this.settings.setPaymentTunnelDomain(input.paymentTunnelDomain);
     await this.refreshPolling();
     return this.configDto();
   }
@@ -945,7 +934,7 @@ export class TelegramWorkService {
           proxyRecordId: task.capcutCredentials.proxyRecordId,
           capcutCookies: task.capcutCredentials.capcutCookies,
         });
-        if (!payment) throw new Error('Link nhân viên chưa bật');
+        if (!payment) throw new Error('Không tạo được phiên xác minh VIP');
         await this.payments.prepareForTask(task.id);
         task = this.store.snapshot().tasks.find((item) => item.id === task.id) ?? task;
       } catch (error) {
@@ -1422,7 +1411,8 @@ export class TelegramWorkService {
   }
 
   private taskMessage(task: WorkTask, employee: WorkEmployee, cancelled = false): string {
-    return taskMessage(task, employee, cancelled, this.payments?.accessUrlForTask(task.id));
+    // Không còn trang /pay — link gửi nhân viên là link checkout CapCut gốc.
+    return taskMessage(task, employee, cancelled);
   }
 
   private requireChatId(): string {

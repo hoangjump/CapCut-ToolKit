@@ -425,6 +425,12 @@ export function registerProjectRoutes(app: Express, { profiles, browsers, mails,
       // Project chỉ ghi đè khi bật true headless. Khi tắt, giữ mặc định của
       // server: Electron=headful, Docker=virtual display.
       const runHeadless = project.headless === true ? true : headless;
+      const perEmployee = Math.max(1, project.concurrency ?? 2);
+      const employeeCount = distribution ? distribution.allocations.length : 0;
+      const effectiveConcurrency = employeeCount > 0 ? perEmployee * employeeCount : perEmployee;
+      if (employeeCount > 0) {
+        log.info(`${project.name}: ${perEmployee} luồng × ${employeeCount} nhân viên = ${effectiveConcurrency} browser song song`);
+      }
       const results = await runProject(
         browsers,
         {
@@ -439,7 +445,11 @@ export function registerProjectRoutes(app: Express, { profiles, browsers, mails,
           mailStockTags: project.mailStockTags,
           smsbowerService: project.smsbowerService,
         },
-        { concurrency: project.concurrency, headless: runHeadless, storeRoot },
+        // "Số luồng" trong project là luồng MỖI NHÂN VIÊN, không phải tổng. Chia
+        // một trần chung cho N nhân viên khiến mỗi người chỉ tới lượt sau khi
+        // người khác xong — luân phiên, chậm. Nhân lên theo số nhân viên trong
+        // đợt phân phối để mỗi người thật sự có đủ luồng của mình.
+        { concurrency: effectiveConcurrency, headless: runHeadless, storeRoot },
         {
           buyMail: buyMailDep,
           settleMail: async (id, outcome) => {

@@ -16,7 +16,6 @@ export function maskKey(key: string | undefined): string | null {
 export class SettingsStore {
   private readonly file: string;
   private settings: AppSettings = {};
-  private runtimePaymentPublicUrl: string | null | undefined;
 
   constructor(root = join(process.cwd(), 'profiles-store')) {
     this.file = join(root, 'settings.json');
@@ -142,59 +141,14 @@ export class SettingsStore {
     await this.persist();
   }
 
-  getPaymentPublicUrl(): string | undefined {
-    if (this.runtimePaymentPublicUrl !== undefined) return this.runtimePaymentPublicUrl ?? undefined;
-    return (process.env.PAYMENT_PUBLIC_URL?.trim().replace(/\/+$/, '')
-      || this.settings.paymentPublicUrl)
-      || undefined;
-  }
 
-  setRuntimePaymentPublicUrl(url: string | null): void {
-    this.runtimePaymentPublicUrl = url?.trim().replace(/\/+$/, '') || null;
-  }
 
-  async setPaymentPublicUrl(url: string | undefined): Promise<void> {
-    this.settings.paymentPublicUrl = url?.trim().replace(/\/+$/, '') || undefined;
-    await this.persist();
-  }
 
-  getPaymentTunnelAutoStart(): boolean {
-    return this.settings.paymentTunnelAutoStart ?? true;
-  }
 
-  async setPaymentTunnelAutoStart(enabled: boolean): Promise<void> {
-    this.settings.paymentTunnelAutoStart = enabled;
-    await this.persist();
-  }
 
-  getPaymentTunnelToken(): string | undefined {
-    return this.settings.paymentTunnelToken;
-  }
 
-  async setPaymentTunnelToken(token: string | undefined): Promise<void> {
-    this.settings.paymentTunnelToken = token?.trim() || undefined;
-    await this.persist();
-  }
 
-  getPaymentTunnelDomain(): string | undefined {
-    return this.settings.paymentTunnelDomain;
-  }
 
-  async setPaymentTunnelDomain(domain: string | undefined): Promise<void> {
-    const raw = domain?.trim();
-    if (!raw) {
-      this.settings.paymentTunnelDomain = undefined;
-      await this.persist();
-      return;
-    }
-    const parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password
-      || parsed.pathname !== '/' || parsed.search || parsed.hash) {
-      throw new Error('Domain tunnel phải có dạng https://pay.example.com');
-    }
-    this.settings.paymentTunnelDomain = parsed.origin;
-    await this.persist();
-  }
 
   getPaymentMaxSessions(): number | null {
     if (this.settings.paymentMaxSessions === null) return null;
