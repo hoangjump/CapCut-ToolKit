@@ -5,7 +5,6 @@ import { settingsApi, mailApi, sellApi, smsbowerApi, mktApi, type SmsbowerRest }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 // Bảng tên gợi ý cho mã service SmsBower (chuẩn sms-activate). Chỉ để HIỂN THỊ
 // cho dễ nhận diện — mã thô luôn hiện kèm nên không sợ nhầm. OpenAI/ChatGPT là
@@ -52,6 +51,20 @@ function KeyField({ label, state, hint, placeholder, onSave }: {
       </div>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
+  );
+}
+
+/** Card gập được — mặc định gập để tab không thành bức tường ô nhập. */
+function Section({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  return (
+    <details open={defaultOpen} className="group rounded-xl border bg-card">
+      <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-4 [&::-webkit-details-marker]:hidden">
+        <span className="text-base font-semibold">{title}</span>
+        <span className="text-xs text-muted-foreground group-open:hidden">Mở</span>
+        <span className="hidden text-xs text-muted-foreground group-open:inline">Thu gọn</span>
+      </summary>
+      <div className="space-y-4 px-5 pb-5">{children}</div>
+    </details>
   );
 }
 
@@ -132,10 +145,8 @@ export function SettingsTab() {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-      <Card>
-        <CardHeader><CardTitle className="text-base">Nhà cung cấp mail</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+    <div className="mx-auto grid max-w-2xl grid-cols-1 gap-3">
+      <Section title="Nhà cung cấp mail">
           <KeyField
             label="API key dongvanfb" state={state.mail}
             placeholder="Dán API key dongvanfb..."
@@ -155,12 +166,9 @@ export function SettingsTab() {
             <Button variant="outline" size="sm" onClick={() => balance('sell', sellApi.balance)}>Xem số dư</Button>
             <span className="text-sm font-semibold text-primary">{balances.sell}</span>
           </div>
-        </CardContent>
-      </Card>
+      </Section>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Proxy</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+      <Section title="Proxy">
           <KeyField
             label="API key tài khoản mktproxy" state={state.mkt}
             hint='Dùng để mua proxy và xem số dư. Đây là key TÀI KHOẢN (mkt_...), không phải key của từng proxy.'
@@ -173,12 +181,9 @@ export function SettingsTab() {
             </Button>
             <span className="text-sm font-semibold text-primary">{balances.mkt}</span>
           </div>
-        </CardContent>
-      </Card>
+      </Section>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Thuê số nhận OTP</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+      <Section title="Thuê số nhận OTP">
           <KeyField
             label="API key SmsBower" state={state.sms}
             hint='Thuê gmail nhận OTP theo service (dùng cho flow ChatGPT). Đặt "Mã service" trong tab Chạy tự động.'
@@ -207,12 +212,9 @@ export function SettingsTab() {
           {smsRestState === '(0 service)' && (
             <p className="text-xs text-destructive">SmsBower không trả service nào cho gmail.com — có thể hết hàng hoặc sai key.</p>
           )}
-        </CardContent>
-      </Card>
+      </Section>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Google Sheet &amp; Telegram</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+      <Section title="Google Sheet & Telegram" defaultOpen>
           <div className="space-y-1.5">
             <Label>Google Sheet URL <span className="font-normal text-muted-foreground">{state.sheet}</span></Label>
             <div className="flex gap-2">
@@ -236,8 +238,7 @@ export function SettingsTab() {
               nhân viên cấu hình riêng ở tab Công việc.
             </p>
           </div>
-        </CardContent>
-      </Card>
+      </Section>
     </div>
   );
 }

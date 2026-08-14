@@ -114,6 +114,18 @@ export function ProxyTab() {
   }
   /** Xoá SẠCH kho proxy. Bắt gõ lại số lượng — confirm thường quá dễ bấm nhầm
    *  cho một thao tác không hoàn tác được. */
+  async function delDead() {
+    const dead = list.filter((p) => p.status === 'dead').map((p) => p.id);
+    if (!dead.length) return toast.error('Không có proxy Dead nào');
+    if (!confirm(`Xoá ${dead.length} proxy Dead?`)) return;
+    try {
+      const r = await proxyApi.removeMany(dead);
+      toast.success(`Đã xoá ${r.removed} proxy Dead`);
+      setSelected(new Set());
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+  }
+
   async function delAll() {
     const total = list.length;
     if (!total) return toast.error('Kho proxy đang trống');
@@ -143,6 +155,9 @@ export function ProxyTab() {
             <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} /> Làm mới
           </Button>
           <Button onClick={openAdd}><Plus className="h-4 w-4" /> Thêm mới</Button>
+          <Button variant="ghost" onClick={() => void delDead()}>
+            <Trash2 className="h-4 w-4" /> Xoá Dead
+          </Button>
           <Button variant="ghost" className="text-destructive" onClick={() => void delAll()}>
             <Trash2 className="h-4 w-4" /> Xoá tất cả
           </Button>
