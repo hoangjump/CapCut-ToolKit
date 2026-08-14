@@ -2,6 +2,9 @@ import type { Express } from 'express';
 import type { Request, Response } from 'express';
 import { MailStore, parseMailLine, providerFromEmail } from '../../mailStore.js';
 import type { SettingsStore } from '../../settingsStore.js';
+import type { ProfileManager } from '../../profileManager.js';
+import type { BrowserManager } from '../../browserManager.js';
+import { runAliasesForMail } from '../../aliasRunner.js';
 import { getBalance, getAccountTypes, buyMail, getCode, getMessages } from '../../mailClient.js';
 import * as selltaikhoan from '../../selltaikhoanClient.js';
 import * as smsbower from '../../smsbowerClient.js';
@@ -22,10 +25,12 @@ function mailDto(mail: ReturnType<MailStore['list']>[number]) {
 export interface MailRoutesDeps {
   mails: MailStore;
   settings: SettingsStore;
+  profiles: ProfileManager;
+  browsers: BrowserManager;
 }
 
 /** Kho mail + ba nhà cung cấp: dongvanfb, selltaikhoan, SmsBower. */
-export function registerMailRoutes(app: Express, { mails, settings }: MailRoutesDeps): void {
+export function registerMailRoutes(app: Express, { mails, settings, profiles, browsers }: MailRoutesDeps): void {
   // ---- Mail (dongvanfb) ---------------------------------------------------
   // Read/code endpoints need no API key (email+refresh+client auth); only
   // balance/buy hit api.dongvanfb.net with the stored key.
@@ -335,6 +340,32 @@ export function registerMailRoutes(app: Express, { mails, settings }: MailRoutes
         clientId: mail.clientId,
         type,
       });
+      res.json(result);
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  // Tạo alias cho account nguồn: mở Camoufox qua proxy, login account.live.com,
+  // tạo tới `target` alias (trần 10), lưu mỗi alias vào kho mail (tái dùng cred
+  // cha). Headful mặc định để lần đầu quan sát login. Chạy ĐỒNG BỘ tới khi xong
+  // — flow có login + nhiều bước, client nên đặt timeout dài.
+  app.post('/api/mails/:id/aliases', async (req: Request, res: Response) => {
+    const mail = mails.get(String(req.params.id));
+    if (!mail) {
+      res.status(404).json({ error: 'Mail not found' });
+      return;
+    }
+    try {
+      const result = await runAliasesForMail(
+        { mails, profiles, browsers },
+        {
+          mailId: mail.id,
+          target: req.body?.target !== undefined ? Number(req.body.target) : undefined,
+          prefix: req.body?.prefix ? String(req.body.prefix) : undefined,
+          headless: req.body?.headless === true,
+        },
+      );
       res.json(result);
     } catch (err) {
       res.status(502).json({ error: (err as Error).message });

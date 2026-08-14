@@ -75,7 +75,7 @@ export interface MailRecord {
   provider?: string;
   tags: string[];
   status: 'unchecked' | 'available' | 'reserved' | 'used' | 'failed' | 'disabled';
-  source: 'manual' | 'dongvanfb' | 'selltaikhoan';
+  source: 'manual' | 'dongvanfb' | 'selltaikhoan' | 'alias';
   reservedByProfileId?: string;
   reservedAt?: string;
   usedAt?: string;
@@ -346,6 +346,10 @@ export const mailApi = {
     fetch('/api/mails', { method: 'DELETE', headers: jsonHeaders, body: JSON.stringify(ids ? { ids } : {}) }).then((r) => parse<{ removed: number }>(r)),
   code: (id: string, type: string) => post(`/api/mails/${id}/code`, { type }).then((r) => parse<CodeResult>(r)),
   messages: (id: string) => post(`/api/mails/${id}/messages`, {}).then((r) => parse<{ messages: MailMessage[] }>(r)),
+  createAliases: (id: string, target?: number) =>
+    post(`/api/mails/${id}/aliases`, target !== undefined ? { target } : {}).then((r) =>
+      parse<{ parentEmail: string; created: string[]; existingBefore: number; hitLimit: boolean; storedCount: number }>(r),
+    ),
 };
 
 // ---- mktproxy ----

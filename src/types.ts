@@ -191,7 +191,7 @@ export interface MailCredentials {
 }
 
 export type MailStatus = 'unchecked' | 'available' | 'reserved' | 'used' | 'failed' | 'disabled';
-export type MailSource = 'manual' | 'dongvanfb' | 'selltaikhoan';
+export type MailSource = 'manual' | 'dongvanfb' | 'selltaikhoan' | 'alias';
 export type MailAcquireStrategy = 'api-only' | 'api-then-stock' | 'stock-then-api' | 'stock-only';
 
 /** A mailbox in the local library — either bought via /user/buy or added by

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Ban, CheckCircle2, RefreshCw, Mail as MailIcon, Inbox, Trash2, Upload } from 'lucide-react';
+import { Ban, CheckCircle2, RefreshCw, Mail as MailIcon, Inbox, Trash2, Upload, Copy } from 'lucide-react';
 import {
   mailApi, sellApi, CODE_TYPES,
   type MailRecord, type AccountType, type MailMessage, type SellProduct,
@@ -30,6 +30,7 @@ const MAIL_SOURCE_LABEL: Record<MailRecord['source'], string> = {
   manual: 'Nhập kho',
   dongvanfb: 'dongvanfb',
   selltaikhoan: 'selltaikhoan',
+  alias: 'Alias',
 };
 
 function mailStatusVariant(status: MailRecord['status']): 'success' | 'danger' | 'muted' | 'outline' | 'secondary' {
@@ -61,6 +62,7 @@ export function MailTab() {
   const [codeType, setCodeType] = useState<Record<string, string>>({});
   const [codeResult, setCodeResult] = useState<Record<string, string>>({});
   const [inbox, setInbox] = useState<{ open: boolean; email: string; loading: boolean; msgs: MailMessage[]; error?: string }>({ open: false, email: '', loading: false, msgs: [] });
+  const [aliasing, setAliasing] = useState<Set<string>>(new Set());
 
   const loadMails = useCallback(async () => {
     try {
@@ -136,6 +138,23 @@ export function MailTab() {
   }
   async function del(id: string) {
     try { await mailApi.remove(id); setSelected((current) => { const next = new Set(current); next.delete(id); return next; }); toast.success('Đã xóa mail'); loadMails(); } catch (e) { toast.error((e as Error).message); }
+  }
+  /** Tạo alias cho một account nguồn: mở Camoufox qua proxy, login, tạo tới 10
+   *  alias, lưu vào kho (tái dùng cred cha). Headful — cửa sổ browser sẽ hiện để
+   *  quan sát/xử lý 2FA nếu có. Chạy khá lâu; khoá nút trong lúc chạy. */
+  async function makeAliases(m: MailRecord) {
+    if (m.source === 'alias') return toast.error('Đây đã là alias — chọn account gốc để tạo alias');
+    if (!confirm(`Tạo alias cho ${m.email}?\nSẽ mở trình duyệt, đăng nhập account.live.com qua proxy rồi tạo tới 10 alias.`)) return;
+    setAliasing((s) => new Set(s).add(m.id));
+    toast.info(`Đang tạo alias cho ${m.email}… (mở trình duyệt, có thể mất vài phút)`);
+    try {
+      const r = await mailApi.createAliases(m.id);
+      if (r.created.length) toast.success(`Tạo ${r.created.length} alias, lưu ${r.storedCount} vào kho (đã có sẵn ${r.existingBefore})`);
+      else if (r.hitLimit) toast.error('Account đã chạm trần 10 alias — không tạo thêm được');
+      else toast.error('Không tạo được alias nào — xem log để rõ nguyên nhân');
+      void loadMails();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setAliasing((s) => { const next = new Set(s); next.delete(m.id); return next; }); }
   }
   /** Xoá SẠCH kho mail. Gõ lại số lượng để xác nhận — hộp confirm thường quá dễ
    *  bấm nhầm cho một thao tác không hoàn tác được. */
@@ -282,6 +301,7 @@ export function MailTab() {
                   <TableCell className="text-right">
                     <Button variant="ghost" size="icon" title="Kiểm tra mail" disabled={checking || m.status === 'reserved'} onClick={() => void checkMails([m.id])}><RefreshCw className="h-4 w-4" /></Button>
                     <Button variant="ghost" size="icon" title="Hộp thư" onClick={() => openInbox(m)}><Inbox className="h-4 w-4" /></Button>
+                    {m.source !== 'alias' && <Button variant="ghost" size="icon" title="Tạo alias (login + tạo tới 10 alias)" disabled={aliasing.has(m.id)} onClick={() => void makeAliases(m)}><Copy className={`h-4 w-4 ${aliasing.has(m.id) ? 'animate-pulse text-muted-foreground' : ''}`} /></Button>}
                     <Button variant="ghost" size="icon" title={m.status === 'reserved' ? 'Mail đang được profile sử dụng' : 'Xóa'} disabled={m.status === 'reserved'} onClick={() => del(m.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                   </TableCell>
                 </TableRow>
