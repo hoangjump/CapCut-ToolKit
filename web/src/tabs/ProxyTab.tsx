@@ -32,6 +32,8 @@ export function ProxyTab() {
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
+  const [delAllOpen, setDelAllOpen] = useState(false);
+  const [delAllInput, setDelAllInput] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ProxyDto | null>(null);
   const [addMode, setAddMode] = useState<'list' | 'api'>('list');
@@ -126,16 +128,20 @@ export function ProxyTab() {
     } catch (e) { toast.error((e as Error).message); }
   }
 
-  async function delAll() {
-    const total = list.length;
-    if (!total) return toast.error('Kho proxy đang trống');
-    const answer = prompt(`Xoá SẠCH ${total} proxy trong kho? Không hoàn tác được.\nGõ ${total} để xác nhận:`);
-    if (answer === null) return;
-    if (answer.trim() !== String(total)) return toast.error('Số không khớp, đã huỷ');
+  // Mở dialog gõ-số xác nhận. KHÔNG dùng window.prompt: Electron không hỗ trợ,
+  // luôn trả null nên nút "Xoá tất cả" tưởng hỏng.
+  function delAll() {
+    if (!list.length) return toast.error('Kho proxy đang trống');
+    setDelAllInput('');
+    setDelAllOpen(true);
+  }
+  async function confirmDelAll() {
+    if (delAllInput.trim() !== String(list.length)) return toast.error('Số không khớp, đã huỷ');
     try {
       const result = await proxyApi.removeMany();
       toast.success(`Đã xoá ${result.removed} proxy`);
       setSelected(new Set());
+      setDelAllOpen(false);
       load();
     } catch (e) { toast.error((e as Error).message); }
   }
@@ -222,6 +228,28 @@ export function ProxyTab() {
       </Card>
 
       <MktProxyPanel onImported={load} />
+
+      <Dialog open={delAllOpen} onOpenChange={setDelAllOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Xoá sạch kho proxy</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Sẽ xoá <b>{list.length}</b> proxy. Không hoàn tác được. Gõ <b>{list.length}</b> để xác nhận:
+            </p>
+            <Input
+              autoFocus
+              value={delAllInput}
+              onChange={(e) => setDelAllInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void confirmDelAll(); }}
+              placeholder={String(list.length)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDelAllOpen(false)}>Huỷ</Button>
+            <Button variant="destructive" disabled={delAllInput.trim() !== String(list.length)} onClick={() => void confirmDelAll()}>Xoá tất cả</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent>

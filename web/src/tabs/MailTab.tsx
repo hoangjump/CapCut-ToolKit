@@ -63,6 +63,8 @@ export function MailTab() {
   const [codeResult, setCodeResult] = useState<Record<string, string>>({});
   const [inbox, setInbox] = useState<{ open: boolean; email: string; loading: boolean; msgs: MailMessage[]; error?: string }>({ open: false, email: '', loading: false, msgs: [] });
   const [aliasing, setAliasing] = useState<Set<string>>(new Set());
+  const [delAllOpen, setDelAllOpen] = useState(false);
+  const [delAllInput, setDelAllInput] = useState('');
 
   const loadMails = useCallback(async () => {
     try {
@@ -156,18 +158,22 @@ export function MailTab() {
     } catch (e) { toast.error((e as Error).message); }
     finally { setAliasing((s) => { const next = new Set(s); next.delete(m.id); return next; }); }
   }
-  /** Xoá SẠCH kho mail. Gõ lại số lượng để xác nhận — hộp confirm thường quá dễ
-   *  bấm nhầm cho một thao tác không hoàn tác được. */
-  async function delAll() {
+  /** Xoá SẠCH kho mail. Mở dialog gõ lại số lượng để xác nhận — thao tác không
+   *  hoàn tác được. KHÔNG dùng window.prompt: Electron không hỗ trợ, luôn trả
+   *  null nên nút "Xoá tất cả" tưởng hỏng. */
+  function delAll() {
+    if (!mails.length) return toast.error('Kho mail đang trống');
+    setDelAllInput('');
+    setDelAllOpen(true);
+  }
+  async function confirmDelAll() {
     const total = mails.length;
-    if (!total) return toast.error('Kho mail đang trống');
-    const answer = prompt(`Xoá SẠCH ${total} mail trong kho? Không hoàn tác được.\nGõ ${total} để xác nhận:`);
-    if (answer === null) return;
-    if (answer.trim() !== String(total)) return toast.error('Số không khớp, đã huỷ');
+    if (delAllInput.trim() !== String(total)) return toast.error('Số không khớp, đã huỷ');
     try {
       const result = await mailApi.removeMany();
       toast.success(`Đã xoá ${result.removed} mail`);
       setSelected(new Set());
+      setDelAllOpen(false);
       void loadMails();
     } catch (e) { toast.error((e as Error).message); }
   }
@@ -321,6 +327,28 @@ export function MailTab() {
       </Card>
 
       <MailImportDialog open={importOpen} onOpenChange={setImportOpen} onImported={loadMails} />
+
+      <Dialog open={delAllOpen} onOpenChange={setDelAllOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Xoá sạch kho mail</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Sẽ xoá <b>{mails.length}</b> mail. Không hoàn tác được. Gõ <b>{mails.length}</b> để xác nhận:
+            </p>
+            <Input
+              autoFocus
+              value={delAllInput}
+              onChange={(e) => setDelAllInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void confirmDelAll(); }}
+              placeholder={String(mails.length)}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDelAllOpen(false)}>Huỷ</Button>
+              <Button variant="destructive" disabled={delAllInput.trim() !== String(mails.length)} onClick={() => void confirmDelAll()}>Xoá tất cả</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={inbox.open} onOpenChange={(o) => setInbox((s) => ({ ...s, open: o }))}>
         <DialogContent className="max-w-3xl">
