@@ -354,7 +354,7 @@ export const mailApi = {
   messages: (id: string) => post(`/api/mails/${id}/messages`, {}).then((r) => parse<{ messages: MailMessage[] }>(r)),
   createAliases: (id: string, target?: number) =>
     post(`/api/mails/${id}/aliases`, target !== undefined ? { target } : {}).then((r) =>
-      parse<{ parentEmail: string; created: string[]; existingBefore: number; hitLimit: boolean; storedCount: number }>(r),
+      parse<{ started: boolean; email: string }>(r),
     ),
 };
 

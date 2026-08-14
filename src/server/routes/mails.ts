@@ -6,6 +6,11 @@ import type { ProfileManager } from '../../profileManager.js';
 import type { BrowserManager } from '../../browserManager.js';
 import { runAliasesForMail } from '../../aliasRunner.js';
 import { findAliasOtp } from '../../graphMailClient.js';
+import { createLogger } from '../../logger.js';
+
+const aliasLog = createLogger('alias');
+/** mailId đang chạy tạo alias — chặn double-click sinh hai phiên Camoufox. */
+const aliasRunning = new Set<string>();
 import { getBalance, getAccountTypes, buyMail, getCode, getMessages } from '../../mailClient.js';
 import * as selltaikhoan from '../../selltaikhoanClient.js';
 import * as smsbower from '../../smsbowerClient.js';
@@ -364,30 +369,47 @@ export function registerMailRoutes(app: Express, { mails, settings, profiles, br
     }
   });
 
-  // Tạo alias cho account nguồn: mở Camoufox qua proxy, login account.live.com,
-  // tạo tới `target` alias (trần 10), lưu mỗi alias vào kho mail (tái dùng cred
-  // cha). Headful mặc định để lần đầu quan sát login. Chạy ĐỒNG BỘ tới khi xong
-  // — flow có login + nhiều bước, client nên đặt timeout dài.
-  app.post('/api/mails/:id/aliases', async (req: Request, res: Response) => {
+  // Tạo alias cho account nguồn: mở Camoufox, login account.live.com, tạo tới
+  // `target` alias (trần 10), lưu mỗi alias vào kho mail (tái dùng cred cha).
+  //
+  // Chạy NỀN (fire-and-forget): flow login + tạo 10 alias mất vài phút, giữ mở
+  // một request HTTP lâu vậy sẽ bị Node đóng socket (~5 phút) → UI báo "Failed
+  // to fetch". Nên trả 202 ngay; tiến trình xem ở khung log, alias hiện dần
+  // trong kho (UI tự refresh 5s). Chặn chạy trùng trên cùng một mail.
+  app.post('/api/mails/:id/aliases', (req: Request, res: Response) => {
     const mail = mails.get(String(req.params.id));
     if (!mail) {
       res.status(404).json({ error: 'Mail not found' });
       return;
     }
-    try {
-      const result = await runAliasesForMail(
-        { mails, profiles, browsers },
-        {
-          mailId: mail.id,
-          target: req.body?.target !== undefined ? Number(req.body.target) : undefined,
-          prefix: req.body?.prefix ? String(req.body.prefix) : undefined,
-          headless: req.body?.headless === true,
-        },
-      );
-      res.json(result);
-    } catch (err) {
-      res.status(502).json({ error: (err as Error).message });
+    if (aliasRunning.has(mail.id)) {
+      res.status(409).json({ error: 'Mail này đang chạy tạo alias — chờ xong đã' });
+      return;
     }
+    aliasRunning.add(mail.id);
+    aliasLog.info(`bắt đầu tạo alias cho ${mail.email} (mở Camoufox, login, tạo alias)…`);
+    runAliasesForMail(
+      { mails, profiles, browsers },
+      {
+        mailId: mail.id,
+        target: req.body?.target !== undefined ? Number(req.body.target) : undefined,
+        prefix: req.body?.prefix ? String(req.body.prefix) : undefined,
+        headless: req.body?.headless === true,
+      },
+    )
+      .then((result) => {
+        aliasLog.info(
+          `xong ${mail.email}: tạo ${result.created.length} alias, lưu ${result.storedCount} (đã có ${result.existingBefore})` +
+            (result.hitLimit ? ' — đã chạm trần 10' : ''),
+        );
+      })
+      .catch((err) => {
+        aliasLog.warn(`tạo alias ${mail.email} lỗi: ${(err as Error).message}`);
+      })
+      .finally(() => {
+        aliasRunning.delete(mail.id);
+      });
+    res.status(202).json({ started: true, email: mail.email });
   });
 
   app.post('/api/mails/:id/messages', async (req: Request, res: Response) => {
