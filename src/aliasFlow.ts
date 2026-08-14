@@ -196,26 +196,36 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
 /** Đăng nhập account.live.com bằng email + password (selector chuẩn Microsoft
  *  identity). Đây là phần AUTOMATION đăng nhập — cần test sống trên tài khoản +
  *  proxy thật; 2FA/again-verify không xử lý ở đây (ném để runner ghi lỗi). */
+/** Submit bước login MS hiện tại. UI cũ: #idSIButton9 (input[type=submit]). UI
+ *  mới (2024+): <button type=submit> "Next"/"Sign in". Không thấy nút thì nhấn
+ *  Enter — form MS submit được bằng Enter. Rồi chờ trang bước kế load. */
+async function submitMsStep(page: Page): Promise<void> {
+  const btn = await page.$('#idSIButton9, button[type=submit], input[type=submit]');
+  if (btn) await btn.click().catch(() => {});
+  else await page.keyboard.press('Enter').catch(() => {});
+  await page.waitForLoadState('domcontentloaded', { timeout: 30_000 }).catch(() => {});
+  await page.waitForTimeout(2000);
+}
+
 export async function loginLive(page: Page, cred: AliasCredentials, log: Logger): Promise<void> {
   // Vào qua login.microsoftonline.com: login.live.com hay bị chặn/không tải qua
   // proxy dân cư VN. microsoftonline nhận diện tài khoản consumer (outlook/
   // hotmail) và chạy đúng UI identity dùng chung selector #i0116/#i0118.
   await page.goto('https://login.microsoftonline.com/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
-  // Bước email.
+  // Bước email → submit.
   await page.fill('input[type=email], #i0116', cred.email, { timeout: 45_000 });
-  await page.click('#idSIButton9, input[type=submit]');
-  await page.waitForTimeout(2500);
+  await submitMsStep(page);
 
   // Bước password. Account consumer có thể bị redirect sang trang live — chờ ô
   // password xuất hiện thay vì gõ mù ngay.
-  await page.waitForSelector('input[type=password], #i0118', { timeout: 45_000 });
+  await page.waitForSelector('input[type=password], #i0118', { state: 'visible', timeout: 45_000 });
   await page.fill('input[type=password], #i0118', cred.password, { timeout: 45_000 });
-  await page.click('#idSIButton9, input[type=submit]');
+  await submitMsStep(page);
   await page.waitForTimeout(3000);
 
   // "Stay signed in?" — bấm Yes để phiên bền, bỏ qua nếu không có.
-  const stay = await page.$('#idSIButton9, #acceptButton');
+  const stay = await page.$('#idSIButton9, #acceptButton, button[type=submit]');
   if (stay) {
     await stay.click().catch(() => {});
     await page.waitForTimeout(1500);
