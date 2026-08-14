@@ -197,17 +197,22 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
  *  identity). Đây là phần AUTOMATION đăng nhập — cần test sống trên tài khoản +
  *  proxy thật; 2FA/again-verify không xử lý ở đây (ném để runner ghi lỗi). */
 export async function loginLive(page: Page, cred: AliasCredentials, log: Logger): Promise<void> {
-  await page.goto('https://login.live.com/', { waitUntil: 'domcontentloaded' });
+  // Vào qua login.microsoftonline.com: login.live.com hay bị chặn/không tải qua
+  // proxy dân cư VN. microsoftonline nhận diện tài khoản consumer (outlook/
+  // hotmail) và chạy đúng UI identity dùng chung selector #i0116/#i0118.
+  await page.goto('https://login.microsoftonline.com/', { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
   // Bước email.
-  await page.fill('input[type=email], #i0116', cred.email, { timeout: 30_000 });
+  await page.fill('input[type=email], #i0116', cred.email, { timeout: 45_000 });
   await page.click('#idSIButton9, input[type=submit]');
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(2500);
 
-  // Bước password.
-  await page.fill('input[type=password], #i0118', cred.password, { timeout: 30_000 });
+  // Bước password. Account consumer có thể bị redirect sang trang live — chờ ô
+  // password xuất hiện thay vì gõ mù ngay.
+  await page.waitForSelector('input[type=password], #i0118', { timeout: 45_000 });
+  await page.fill('input[type=password], #i0118', cred.password, { timeout: 45_000 });
   await page.click('#idSIButton9, input[type=submit]');
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
 
   // "Stay signed in?" — bấm Yes để phiên bền, bỏ qua nếu không có.
   const stay = await page.$('#idSIButton9, #acceptButton');
@@ -217,7 +222,7 @@ export async function loginLive(page: Page, cred: AliasCredentials, log: Logger)
   }
 
   const url = page.url();
-  if (/login\.live\.com|error/i.test(url)) {
-    log.warn(`sau đăng nhập vẫn ở ${url} — có thể sai mật khẩu / cần xác minh thêm`);
+  if (/login\.(live|microsoftonline)\.com|\/login|error/i.test(url)) {
+    log.warn(`sau đăng nhập vẫn ở ${url} — có thể sai mật khẩu / cần xác minh thêm (2FA)`);
   }
 }
