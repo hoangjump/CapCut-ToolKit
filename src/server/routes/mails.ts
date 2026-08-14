@@ -5,6 +5,7 @@ import type { SettingsStore } from '../../settingsStore.js';
 import type { ProfileManager } from '../../profileManager.js';
 import type { BrowserManager } from '../../browserManager.js';
 import { runAliasesForMail } from '../../aliasRunner.js';
+import { findAliasOtp } from '../../graphMailClient.js';
 import { getBalance, getAccountTypes, buyMail, getCode, getMessages } from '../../mailClient.js';
 import * as selltaikhoan from '../../selltaikhoanClient.js';
 import * as smsbower from '../../smsbowerClient.js';
@@ -333,6 +334,23 @@ export function registerMailRoutes(app: Express, { mails, settings, profiles, br
     }
     const type = (String(req.body?.type ?? 'all')) as MailCodeType;
     try {
+      // Alias dùng CHUNG hộp thư account cha (cred lưu trên chính bản ghi alias):
+      // smail1s trả cả hộp thư nên sẽ lẫn OTP của cha/alias khác. Đọc thẳng Graph,
+      // LỌC theo recipient = địa chỉ alias, quét cả Junk.
+      if (mail.source === 'alias') {
+        const hit = await findAliasOtp(
+          { email: mail.email, refreshToken: mail.refreshToken, clientId: mail.clientId },
+          { alias: mail.email },
+        );
+        res.json({
+          status: !!hit,
+          code: hit?.code ?? '',
+          content: hit?.message.subject ?? '',
+          date: hit?.message.receivedDateTime ?? '',
+          source: 'graph-alias',
+        });
+        return;
+      }
       const result = await getCode({
         email: mail.email,
         password: mail.password,
