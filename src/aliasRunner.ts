@@ -20,6 +20,9 @@ export interface RunAliasesInput {
   prefix?: string;
   /** Bật/tắt xem tận mắt. Mặc định headful (false) để lần đầu quan sát login. */
   headless?: boolean;
+  /** Ép chạy qua proxy pool. Mặc định false (direct/IP thật) — login tài khoản
+   *  của chính mình không cần proxy, và proxy dân cư hay làm treo trang login. */
+  useProxy?: boolean;
 }
 
 export interface RunAliasesResult {
@@ -55,8 +58,13 @@ export async function runAliasesForMail(
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
   const tmp = await profiles.create({
     name: `alias-${parent.email.split('@')[0]}-${stamp}`,
-    // Rút một proxy Live bất kỳ, đổi IP mỗi lần mở (giống profile ephemeral phân phối).
-    proxyRotation: { mode: 'pool', pool: { tags: [] }, rotateOnOpen: true, rotateOnFailure: true },
+    // KHÔNG ép proxy: đây là login vào tài khoản Microsoft CỦA CHÍNH mình để tạo
+    // alias — chạy IP thật (direct) là ổn và ổn định nhất. Proxy dân cư (mktproxy)
+    // hay trục trặc whitelist/egress → trang login treo không tải được. Proxy chỉ
+    // cần cho bước reg CapCut (tránh ban IP), không cần ở đây.
+    ...(input.useProxy
+      ? { proxyRotation: { mode: 'pool' as const, pool: { tags: [] }, rotateOnOpen: true, rotateOnFailure: true } }
+      : {}),
   });
 
   try {
