@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import type { BrowserManager } from '../browserManager.js';
 import type { BrowserCookieSnapshot, MailAcquireStrategy, MailCredentials, MailCodeType, ProxyConfig, RunResult } from '../types.js';
 import { getCode, getMessages } from '../mailClient.js';
+import { findAliasOtp } from '../graphMailClient.js';
 import { getFlow } from '../flows/index.js';
 import { PageHelper, setShotsDir } from './helper.js';
 import type { FlowContext, SheetRow, BoughtMail, RentedMailbox } from './types.js';
@@ -115,6 +116,25 @@ async function pollOtpByRegex(
   tries = 8,
   intervalMs = 5_000,
 ): Promise<string> {
+  // Tài khoản Microsoft (có refresh_token + client_id): đọc THẲNG Graph, lọc
+  // theo recipient = chính email này. Đúng cho cả mail chính LẪN alias (alias
+  // dùng chung hộp thư cha, phân biệt bằng recipient) + quét cả Junk. Chỉ khi
+  // Graph LỖI mới rơi xuống smail1s; Graph không thấy code = thật sự chưa có.
+  if (mail.refreshToken && mail.clientId) {
+    let graphOk = true;
+    for (let attempt = 1; attempt <= tries; attempt += 1) {
+      try {
+        const hit = await findAliasOtp(mail, { alias: mail.email, codePattern: pattern, windowMinutes: 20 });
+        if (hit) return hit.code;
+      } catch {
+        graphOk = false;
+        break; // Graph hỏng (token/mạng) → thử smail1s bên dưới
+      }
+      if (attempt < tries) await new Promise((res) => setTimeout(res, intervalMs));
+    }
+    if (graphOk) throw new Error(`Không tìm được code khớp ${pattern} qua Graph sau ${tries} lần (hộp ${mail.email})`);
+  }
+
   for (let attempt = 1; attempt <= tries; attempt += 1) {
     const messages = await getMessages(mail);
     for (const m of messages) {

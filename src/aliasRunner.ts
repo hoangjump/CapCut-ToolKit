@@ -83,9 +83,21 @@ export async function runAliasesForMail(
           tags: ['alias'],
           note: `alias của ${parent.email}`,
           source: 'alias',
-          status: 'unchecked' as const,
+          // 'available' để tab Flow (stock allocation) rút reg CapCut được ngay —
+          // alias vừa tạo qua chính tài khoản nên biết chắc dùng được.
+          status: 'available' as const,
         })),
       );
+
+      // Mail gốc vừa login thành công → cũng đánh 'available' để tab Flow reg
+      // CapCut luôn (gốc + alias = 11). Best-effort: bỏ qua nếu đang reserved.
+      try {
+        if (parent.status !== 'reserved' && parent.status !== 'used') {
+          await mails.updateStatus([parent.id], 'available');
+        }
+      } catch (err) {
+        log.warn(`đánh dấu mail gốc available lỗi: ${(err as Error).message}`);
+      }
 
       return {
         parentEmail: parent.email,
