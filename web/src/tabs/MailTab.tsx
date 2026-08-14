@@ -65,16 +65,19 @@ export function MailTab() {
   const [delAllOpen, setDelAllOpen] = useState(false);
   const [delAllInput, setDelAllInput] = useState('');
 
-  const loadMails = useCallback(async () => {
+  // silent: poll nền (mỗi 5s) KHÔNG toast khi lỗi — lúc flow lái Camoufox, event
+  // loop server nghẽn vài giây làm poll rớt ("Failed to fetch"); giữ dữ liệu cũ,
+  // lần sau tự khỏi. Chỉ báo lỗi khi người dùng tự bấm (silent=false).
+  const loadMails = useCallback(async (silent = false) => {
     try {
       const rows = await mailApi.list();
       setMails(rows);
       setSelected((current) => new Set([...current].filter((id) => rows.some((mail) => mail.id === id && mail.status !== 'reserved'))));
-    } catch (e) { toast.error((e as Error).message); }
+    } catch (e) { if (!silent) toast.error((e as Error).message); }
   }, []);
   useEffect(() => { void loadMails(); }, []);
   useEffect(() => {
-    const timer = window.setInterval(() => void loadMails(), 5_000);
+    const timer = window.setInterval(() => void loadMails(true), 5_000);
     return () => window.clearInterval(timer);
   }, [loadMails]);
 
