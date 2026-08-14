@@ -26,6 +26,25 @@ function StatusBadge({ p }: { p: ProxyDto }) {
   return <Badge variant="muted">-</Badge>;
 }
 
+/** Chi tiết proxy xoay (mktproxy) kiểu KiotProxy: IP egress · khu vực · đếm ngược
+ *  tới lượt đổi IP kế. `now` truyền từ ngoài để đếm ngược chạy sống. */
+function ApiProxyInfo({ p, now }: { p: ProxyDto; now: number }) {
+  if (!p.isApi) return null;
+  const parts: string[] = [];
+  if (p.egressIp) parts.push(`IP: ${p.egressIp}`);
+  if (p.region) parts.push(p.region);
+  if (p.infoAt && p.nextRotateSeconds != null) {
+    const remain = Math.max(0, Math.round((new Date(p.infoAt).getTime() + p.nextRotateSeconds * 1000 - now) / 1000));
+    parts.push(remain > 0 ? `đổi IP sau ${remain}s` : 'có thể đổi IP');
+  }
+  if (p.expiresAt) {
+    const t = new Date(p.expiresAt).getTime();
+    if (!Number.isNaN(t)) parts.push(`hết hạn ${new Date(t).toLocaleDateString('vi-VN')}`);
+  }
+  if (!parts.length) return null;
+  return <div className="text-xs text-muted-foreground">{parts.join(' · ')}</div>;
+}
+
 export function ProxyTab() {
   const [list, setList] = useState<ProxyDto[]>([]);
   const [q, setQ] = useState('');
@@ -50,6 +69,12 @@ export function ProxyTab() {
   async function load() {
     try { setList(await proxyApi.list(q)); } catch (e) { toast.error((e as Error).message); }
   }
+  // Nhịp 1s cho đếm ngược "đổi IP sau Ns" của proxy API chạy sống.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
   useEffect(() => {
     const t = setTimeout(load, 200);
     return () => clearTimeout(t);
@@ -74,7 +99,11 @@ export function ProxyTab() {
       } else if (addMode === 'api') {
         if (!fApiKey.trim()) { toast.error('Dán API key proxy (key đơn xoay mktproxy)'); setSaving(false); return; }
         const created = await proxyApi.create({ apiProvider: 'mktproxy', apiKey: fApiKey.trim(), type: fType, tags: fTags });
-        toast.success(`Đã thêm proxy API: ${created[0]?.display || ''}`);
+        const c = created[0];
+        // Đã tự kiểm tra khi thêm — báo luôn Live/Dead + IP egress, không cần bấm Test.
+        if (c?.status === 'live') toast.success(`Đã thêm & kiểm tra: Live${c.latencyMs != null ? ` ${c.latencyMs}ms` : ''}${c.egressIp ? ` · IP ${c.egressIp}` : ''}`);
+        else if (c?.status === 'dead') toast.error(`Đã thêm nhưng proxy Dead — kiểm tra key TÀI KHOẢN mktproxy (để whitelist IP) rồi bấm ▶ thử lại`);
+        else toast.success(`Đã thêm proxy API: ${c?.display || ''}`);
       } else {
         if (!fLines.trim()) { toast.error('Nhập ít nhất một proxy'); setSaving(false); return; }
         const created = await proxyApi.create({ type: fType, tags: fTags, lines: fLines });
@@ -208,7 +237,7 @@ export function ProxyTab() {
                       {p.isApi && <Badge variant="default" className="text-[10px]">API</Badge>}
                     </div>
                   </TableCell>
-                  <TableCell className="font-medium">{p.display}</TableCell>
+                  <TableCell className="font-medium">{p.display}<ApiProxyInfo p={p} now={now} /></TableCell>
                   <TableCell>
                     {p.tags.length ? p.tags.map((t) => <Badge key={t} variant="secondary" className="mr-1">{t}</Badge>) : <span className="text-muted-foreground">-</span>}
                   </TableCell>

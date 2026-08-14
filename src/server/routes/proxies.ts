@@ -52,7 +52,13 @@ export function registerProxyRoutes(app: Express, { store, refreshApiProxy }: Pr
           res.status(400).json({ error: 'Key proxy API không hợp lệ hoặc chưa có IP (đơn mới thử lại sau vài giây).' });
           return;
         }
-        res.status(201).json([toDto(refreshed)]);
+        // Tự KIỂM TRA ngay khi thêm — status Live/Dead hiện liền (không còn "-"),
+        // và chỉ proxy Live mới được tab Flow (pool ephemeral) rút dùng.
+        const result = await checkProxy(refreshed);
+        const checked = await store.update(refreshed.id, {
+          alive: result.alive, latencyMs: result.latencyMs, checkedAt: new Date().toISOString(),
+        });
+        res.status(201).json([{ ...toDto(checked), checkResult: result }]);
         return;
       }
 

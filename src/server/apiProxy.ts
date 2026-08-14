@@ -82,6 +82,12 @@ async function refreshApiProxy(proxy: ProxyRecord): Promise<ProxyRecord> {
     const parsed = parseProxyLine(line);
     return await store.update(proxy.id, {
       type: proto, host: parsed.host, port: parsed.port, username: parsed.username, password: parsed.password,
+      // Chi tiết proxy xoay để hiển thị (KiotProxy-style).
+      egressIp: rp.realIp || rp.ip || undefined,
+      region: rp.region,
+      expiresAt: rp.expiredAt,
+      nextRotateSeconds: rp.second,
+      infoAt: new Date().toISOString(),
     });
   } catch (e) {
     log.warn(`mktproxy: refresh proxy API lỗi (${proxy.id}): ${(e as Error).message}`);

@@ -26,6 +26,18 @@ export interface ProxyRecord {
   apiProvider?: 'mktproxy';
   /** Key đơn hàng proxy xoay (dùng cho /proxies/new, /rotate-ip). Bí mật. */
   apiKey?: string;
+  // --- Thông tin proxy xoay (cập nhật mỗi lần resolve/rotate) — để hiển thị chi
+  //     tiết kiểu KiotProxy. Không có với proxy tĩnh. ---
+  /** IP egress thật NCC báo (real_ip/ip) — IP mà site đích nhìn thấy. */
+  egressIp?: string;
+  /** Khu vực NCC báo (vd "Điện Biên"), nếu có. */
+  region?: string;
+  /** Mốc ISO proxy hết hạn / sẽ đổi hết vòng đời, nếu NCC báo. */
+  expiresAt?: string;
+  /** Số giây tới lượt đổi IP kế tiếp được phép (cooldown), tại thời điểm resolve. */
+  nextRotateSeconds?: number;
+  /** Mốc ISO lần resolve gần nhất — để UI đếm ngược `nextRotateSeconds` từ đây. */
+  infoAt?: string;
 }
 
 export interface CreateProxyInput {

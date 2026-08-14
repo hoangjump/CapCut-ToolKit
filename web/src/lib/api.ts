@@ -32,6 +32,12 @@ export interface ProxyDto {
   status: 'unchecked' | 'live' | 'dead';
   isApi?: boolean;
   apiProvider?: 'mktproxy';
+  // Chi tiết proxy xoay (mktproxy) — vắng với proxy tĩnh.
+  egressIp?: string;
+  region?: string;
+  expiresAt?: string;
+  nextRotateSeconds?: number;
+  infoAt?: string;
 }
 
 export interface AntiDetectConfig {

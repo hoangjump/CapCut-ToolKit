@@ -106,6 +106,10 @@ export interface MktRotatingProxy {
   rotatedAt?: string;
   /** Seconds until the next rotation is allowed (cooldown / auto cadence). */
   second?: number;
+  /** Khu vực NCC báo (tên nhiều field khả dĩ). */
+  region?: string;
+  /** Mốc ISO hết hạn nếu NCC báo (expired_at / expire_time). */
+  expiredAt?: string;
 }
 
 /** fetch + timeout + JSON parse. Adds X-API-Key when `apiKey` is given. Throws an
@@ -286,8 +290,21 @@ function parseRotating(body: any): MktRotatingProxy {
     socks5: d.socks5 ? String(d.socks5) : undefined,
     realIp: d.real_ip ? String(d.real_ip) : undefined,
     rotatedAt: d.rotated_at ? String(d.rotated_at) : undefined,
-    second: body?.second !== undefined ? Number(body.second) : undefined,
+    second: body?.second !== undefined ? Number(body.second)
+      : d.second !== undefined ? Number(d.second)
+      : d.next_rotation !== undefined ? Number(d.next_rotation) : undefined,
+    // Khu vực + hết hạn: NCC dùng tên field khác nhau tuỳ endpoint — thử vài tên.
+    region: firstStr(d.location, d.region, d.geo, d.province, d.city),
+    expiredAt: firstStr(d.expired_at, d.expire_time, d.expiredAt, d.expire_at),
   };
+}
+
+/** Chuỗi không rỗng đầu tiên trong các ứng viên (bỏ qua undefined/null/rỗng). */
+function firstStr(...vals: unknown[]): string | undefined {
+  for (const v of vals) {
+    if (v !== undefined && v !== null && String(v).trim()) return String(v).trim();
+  }
+  return undefined;
 }
 
 /** GET /proxies/new?key= — current rotating proxy (read-only, from cache).
