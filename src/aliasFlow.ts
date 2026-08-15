@@ -50,10 +50,11 @@ export function classifySubmit(pageText: string): AliasSubmitOutcome {
   return { kind: 'unknown', detail: pageText.slice(0, 200) };
 }
 
-/** Điền + submit form AddAssocId cho MỘT tên. Trả về true nếu đã bấm được nút
- *  Add (chưa khẳng định thành công — caller đọc trang xác nhận sau đó). Chạy
- *  trong page context với đúng selector đã kiểm chứng. */
-async function fillAndSubmit(page: Page, name: string): Promise<boolean> {
+/** Điền tên alias + chọn domain @outlook.com trên form AddAssocId. Trả về true
+ *  nếu tìm thấy ô nhập. KHÔNG bấm submit ở đây — submit làm bằng Playwright
+ *  (submitAliasForm) cho bền với UI mới. Fill dùng native setter vì React/Fluent
+ *  bỏ qua .value gán thẳng. */
+async function fillAliasForm(page: Page, name: string): Promise<boolean> {
   return page.evaluate((aliasName) => {
     const doc = (globalThis as any).document;
     const win = globalThis as any;
@@ -61,10 +62,6 @@ async function fillAndSubmit(page: Page, name: string): Promise<boolean> {
       el && el.offsetParent !== null && !el.disabled && win.getComputedStyle(el).visibility !== 'hidden';
     const pick = (sels: string[]): any =>
       sels.map((s) => [...doc.querySelectorAll(s)].find(visible)).find(Boolean);
-    const byText = (re: RegExp): any =>
-      [...doc.querySelectorAll("a, button, input[type='submit']")].find(
-        (el: any) => visible(el) && re.test((el.innerText || el.value || '').trim()),
-      );
     function fillInput(el: any, value: string) {
       const proto =
         el instanceof win.HTMLTextAreaElement ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
@@ -73,8 +70,9 @@ async function fillAndSubmit(page: Page, name: string): Promise<boolean> {
       el.dispatchEvent(new win.Event('change', { bubbles: true }));
     }
 
-    const input = pick(["#AssociatedIdLive", "input[name='AssociatedIdLive']", "input[type='text']"]);
+    const input = pick(["#AssociatedIdLive", "input[name='AssociatedIdLive']", "input[type='text']", "input[type='email']"]);
     if (!input) return false;
+    input.focus();
     fillInput(input, aliasName);
 
     // Radio "tạo địa chỉ email mới" (@outlook.com).
@@ -90,14 +88,32 @@ async function fillAndSubmit(page: Page, name: string): Promise<boolean> {
         domainSel.dispatchEvent(new win.Event('change', { bubbles: true }));
       }
     }
-
-    const submit =
-      pick(['#SubmitYes', "button[type='submit']", "input[type='submit']"]) ||
-      byText(/^(Add alias|Add username|添加别名|添加用户名)$/i);
-    if (!submit) return false;
-    submit.click();
     return true;
   }, name);
+}
+
+/** Bấm nút Add trên form AddAssocId. UI cũ: #SubmitYes. UI mới: <button> "Add
+ *  alias"/"Add". Thử nhiều locator theo id/type/chữ (getByRole bền với loại
+ *  element + ngôn ngữ), không thấy thì nhấn Enter trong ô alias. */
+async function submitAliasForm(page: Page, log: Logger): Promise<void> {
+  const candidates = [
+    page.locator('#SubmitYes'),
+    page.locator("button[type='submit'], input[type='submit']"),
+    page.getByRole('button', { name: /^\s*add\b/i }), // "Add", "Add alias", "Add email"…
+    page.getByRole('button', { name: /thêm|添加/i }),
+  ];
+  for (const loc of candidates) {
+    const el = loc.first();
+    const n = await el.count().catch(() => 0);
+    if (n && (await el.isVisible().catch(() => false)) && (await el.isEnabled().catch(() => false))) {
+      await el.click({ timeout: 5_000 }).catch(() => {});
+      log.info('đã bấm nút Add');
+      return;
+    }
+  }
+  // Không thấy nút rõ ràng → nhấn Enter trong ô alias (form submit).
+  await page.locator('#AssociatedIdLive, input[name="AssociatedIdLive"]').first().press('Enter').catch(() => {});
+  log.info('không thấy nút Add — đã nhấn Enter');
 }
 
 /** Đếm alias hiện có trên trang quản lý, để tôn trọng trần 10. Đếm số dòng có
@@ -156,26 +172,34 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
   const created: string[] = [];
   let hitLimit = false;
   let need = target - existingBefore;
+  let stall = 0; // số lần liên tiếp không rõ kết quả
 
   while (need > 0 && created.length < ALIAS_LIMIT) {
     const name = randomAliasName(prefix);
     await page.goto(ADD_URL, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(800);
 
-    const ok = await fillAndSubmit(page, name);
-    if (!ok) {
+    const filled = await fillAliasForm(page, name);
+    if (!filled) {
       log.warn(`không thấy form AddAssocId cho "${name}" — bỏ qua lần này`);
       await page.waitForTimeout(1000);
       continue;
     }
-    await page.waitForTimeout(2500); // chờ trang xác nhận / lỗi
+    await page.waitForTimeout(500);
+    await submitAliasForm(page, log);
+    await page.waitForTimeout(3000); // chờ trang xác nhận / lỗi
 
+    const url = page.url();
     const bodyText =
       (await page.evaluate(() => (globalThis as any).document.body.innerText).catch(() => '')) || '';
     const outcome = classifySubmit(bodyText);
-    if (outcome.kind === 'created') {
+    // Tín hiệu thành công bền nhất: submit xong MS rời khỏi form AddAssocId (về
+    // trang quản lý). Còn ở AddAssocId = form báo lỗi (trùng/không hợp lệ).
+    const leftAddForm = !/AddAssocId/i.test(url);
+    if (outcome.kind === 'created' || (leftAddForm && outcome.kind !== 'limit')) {
       created.push(`${name}@outlook.com`);
       need--;
+      stall = 0;
       log.info(`✓ tạo alias ${name}@outlook.com (${created.length})`);
     } else if (outcome.kind === 'duplicate') {
       log.info(`tên "${name}" đã có người dùng, thử tên khác`);
@@ -185,8 +209,12 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
       hitLimit = true;
       break;
     } else {
-      log.warn(`kết quả không rõ khi tạo "${name}": ${outcome.detail}`);
-      break; // tránh vòng lặp mù
+      stall += 1;
+      log.warn(`kết quả không rõ khi tạo "${name}" (lần ${stall}): ${outcome.detail}`);
+      if (stall >= 3) {
+        log.warn('ba lần liên tiếp không rõ kết quả — dừng để tránh lặp mù');
+        break;
+      }
     }
   }
 
