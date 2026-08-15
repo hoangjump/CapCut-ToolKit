@@ -82,6 +82,7 @@ export interface MailRecord {
   tags: string[];
   status: 'unchecked' | 'available' | 'reserved' | 'used' | 'failed' | 'disabled';
   source: 'manual' | 'dongvanfb' | 'selltaikhoan' | 'alias';
+  parentEmail?: string;
   reservedByProfileId?: string;
   reservedAt?: string;
   usedAt?: string;

@@ -147,6 +147,11 @@ export interface CreateAliasesOptions {
   /** Đăng nhập account.live.com trước khi tạo (mặc định true). Đặt false nếu
    *  trang đã đăng nhập sẵn (test / phiên có cookie). */
   login?: boolean;
+  /** Đổi IP egress (proxy xoay). Gọi khi MS chặn tần suất ("try again later")
+   *  để tạo tiếp từ IP mới thay vì dừng. Vắng = không xoay được → dừng. */
+  rotateIp?: () => Promise<void>;
+  /** Số lần xoay IP tối đa khi gặp rate-limit. Mặc định 8. */
+  maxRotations?: number;
 }
 
 export interface CreateAliasesResult {
@@ -181,6 +186,8 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
   let rateLimited = false;
   let need = target - existingBefore;
   let stall = 0; // số lần liên tiếp không rõ kết quả
+  let rotations = 0; // số lần đã xoay IP vì rate-limit
+  const maxRotations = opts.maxRotations ?? 8;
 
   while (need > 0 && created.length < ALIAS_LIMIT) {
     const name = randomAliasName(prefix);
@@ -217,7 +224,18 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
       hitLimit = true;
       break;
     } else if (outcome.kind === 'ratelimit') {
-      log.warn('Microsoft chặn thêm alias quá thường xuyên ("try again later") — tự dừng, thử lại sau');
+      // MS chặn tần suất — đổi IP rồi thử LẠI CHÍNH tên này từ IP mới. Giới hạn
+      // này có phần theo IP nên xoay IP thường cho tạo tiếp; nếu hết lượt xoay
+      // (hoặc không có proxy để xoay) thì mới dừng.
+      if (opts.rotateIp && rotations < maxRotations) {
+        rotations += 1;
+        log.info(`bị giới hạn tần suất — xoay IP (lần ${rotations}/${maxRotations}) rồi tạo tiếp`);
+        await opts.rotateIp();
+        continue; // need chưa trừ ở lượt này → vòng sau sinh tên mới, thử tiếp
+      }
+      log.warn(
+        `bị giới hạn tần suất${opts.rotateIp ? ', hết lượt xoay IP' : ' (không có proxy để xoay IP)'} — dừng`,
+      );
       rateLimited = true;
       break;
     } else {

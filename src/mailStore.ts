@@ -16,6 +16,7 @@ export interface CreateMailInput {
   orderCode?: string;
   status?: MailStatus;
   source?: MailSource;
+  parentEmail?: string;
   reservedByProfileId?: string;
 }
 
@@ -104,6 +105,7 @@ export class MailStore {
       orderCode: input.orderCode,
       status: input.status ?? 'unchecked',
       source: input.source ?? 'manual',
+      parentEmail: input.parentEmail,
       reservedByProfileId: input.reservedByProfileId,
       reservedAt: input.status === 'reserved' ? new Date().toISOString() : undefined,
       boughtAt: new Date().toISOString(),
@@ -131,6 +133,7 @@ export class MailStore {
         orderCode: input.orderCode,
         status: input.status ?? 'unchecked',
         source: input.source ?? 'manual',
+        parentEmail: input.parentEmail,
         reservedByProfileId: input.reservedByProfileId,
         reservedAt: input.status === 'reserved' ? new Date().toISOString() : undefined,
         boughtAt: new Date().toISOString(),

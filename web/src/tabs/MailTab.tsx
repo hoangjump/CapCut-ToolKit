@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Ban, CheckCircle2, RefreshCw, Mail as MailIcon, Inbox, Trash2, Upload, Copy } from 'lucide-react';
+import { Ban, CheckCircle2, RefreshCw, Mail as MailIcon, Inbox, Trash2, Upload, Copy, ChevronRight, ChevronDown, CornerDownRight } from 'lucide-react';
 import {
   mailApi, sellApi, CODE_TYPES,
   type MailRecord, type AccountType, type MailMessage, type SellProduct,
@@ -64,6 +64,7 @@ export function MailTab() {
   const [inbox, setInbox] = useState<{ open: boolean; email: string; loading: boolean; msgs: MailMessage[]; error?: string }>({ open: false, email: '', loading: false, msgs: [] });
   const [delAllOpen, setDelAllOpen] = useState(false);
   const [delAllInput, setDelAllInput] = useState('');
+  const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
 
   // silent: poll nền (mỗi 5s) KHÔNG toast khi lỗi — lúc flow lái Camoufox, event
   // loop server nghẽn vài giây làm poll rớt ("Failed to fetch"); giữ dữ liệu cũ,
@@ -193,9 +194,33 @@ export function MailTab() {
     if (statusFilter !== 'all' && mail.status !== statusFilter) return false;
     return !needle || `${mail.email} ${mail.provider ?? ''} ${mail.source} ${mail.tags.join(' ')}`.toLowerCase().includes(needle);
   });
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+
+  // Nhóm alias con NGAY DƯỚI tài khoản cha (theo parentEmail). Cha có thể thu gọn
+  // (chevron) để giấu đám alias. alias "mồ côi" (không thấy cha trong danh sách)
+  // xếp cuối. childCount để hiện "(N alias)" trên dòng cha.
+  const aliasesByParent = new Map<string, MailRecord[]>();
+  for (const m of filtered) {
+    if (m.source === 'alias' && m.parentEmail) {
+      const k = m.parentEmail.toLowerCase();
+      const arr = aliasesByParent.get(k) ?? [];
+      arr.push(m); aliasesByParent.set(k, arr);
+    }
+  }
+  const grouped: MailRecord[] = [];
+  const accounted = new Set<string>();
+  for (const m of filtered) {
+    if (m.source === 'alias') continue;
+    grouped.push(m);
+    const kids = aliasesByParent.get(m.email.toLowerCase()) ?? [];
+    kids.forEach((k) => accounted.add(k.id));
+    if (kids.length && !collapsedParents.has(m.email.toLowerCase())) grouped.push(...kids);
+  }
+  for (const m of filtered) if (m.source === 'alias' && !accounted.has(m.id)) grouped.push(m);
+  const childCount = (email: string) => (aliasesByParent.get(email.toLowerCase()) ?? []).length;
+
+  const pageCount = Math.max(1, Math.ceil(grouped.length / PAGE_SIZE));
   const curPage = Math.min(page, pageCount);
-  const pageMails = filtered.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+  const pageMails = grouped.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
   const selectablePageMails = pageMails.filter((mail) => mail.status !== 'reserved');
   const pageSelected = selectablePageMails.length > 0 && selectablePageMails.every((mail) => selected.has(mail.id));
   const availableCount = mails.filter((mail) => mail.status === 'available').length;
@@ -288,7 +313,34 @@ export function MailTab() {
               {pageMails.map((m) => (
                 <TableRow key={m.id}>
                   <TableCell><Checkbox disabled={m.status === 'reserved'} checked={selected.has(m.id)} onCheckedChange={(checked) => setSelected((current) => { const next = new Set(current); checked ? next.add(m.id) : next.delete(m.id); return next; })} aria-label={`Chọn ${m.email}`} /></TableCell>
-                  <TableCell><div className="font-medium">{m.email}</div><div className="text-xs text-muted-foreground">{m.tags.length ? m.tags.join(', ') : m.provider || '—'}</div>{m.lastError && <div className="max-w-80 truncate text-xs text-destructive" title={m.lastError}>{m.lastError}</div>}{codeResult[m.id] && <div className="text-xs text-muted-foreground">{codeResult[m.id]}</div>}</TableCell>
+                  <TableCell>
+                    {(() => {
+                      const isAlias = m.source === 'alias';
+                      const kids = !isAlias ? childCount(m.email) : 0;
+                      const isCollapsed = collapsedParents.has(m.email.toLowerCase());
+                      return (
+                        <div className={`flex items-start gap-1.5 ${isAlias ? 'pl-6' : ''}`}>
+                          {kids > 0 && (
+                            <button
+                              type="button"
+                              className="mt-0.5 text-muted-foreground hover:text-foreground"
+                              title={isCollapsed ? 'Mở danh sách alias' : 'Thu gọn alias'}
+                              onClick={() => setCollapsedParents((s) => { const n = new Set(s); n.has(m.email.toLowerCase()) ? n.delete(m.email.toLowerCase()) : n.add(m.email.toLowerCase()); return n; })}
+                            >
+                              {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                            </button>
+                          )}
+                          {isAlias && <CornerDownRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                          <div>
+                            <div className="font-medium">{m.email}{kids > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({kids} alias)</span>}</div>
+                            <div className="text-xs text-muted-foreground">{isAlias && m.parentEmail ? `cha: ${m.parentEmail}` : m.tags.length ? m.tags.join(', ') : m.provider || '—'}</div>
+                            {m.lastError && <div className="max-w-80 truncate text-xs text-destructive" title={m.lastError}>{m.lastError}</div>}
+                            {codeResult[m.id] && <div className="text-xs text-muted-foreground">{codeResult[m.id]}</div>}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </TableCell>
                   <TableCell><Badge variant={mailStatusVariant(m.status)}>{MAIL_STATUS_LABEL[m.status]}</Badge>{m.reservedByProfileId && <div className="mt-1 max-w-28 truncate text-xs text-muted-foreground" title={m.reservedByProfileId}>{m.reservedByProfileId}</div>}</TableCell>
                   <TableCell><div className="text-sm">{MAIL_SOURCE_LABEL[m.source]}</div><div className="text-xs text-muted-foreground">{m.provider || '—'}</div></TableCell>
                   <TableCell className="text-xs text-muted-foreground">{m.lastCheckedAt ? new Date(m.lastCheckedAt).toLocaleString('vi-VN') : 'Chưa kiểm tra'}</TableCell>

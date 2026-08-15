@@ -180,7 +180,7 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
 
   registerMktproxyRoutes(app, { store, settings, ensureWhitelist });
 
-  registerMailRoutes(app, { mails, settings, profiles, browsers });
+  registerMailRoutes(app, { mails, settings, profiles, browsers, store });
 
   registerProjectRoutes(app, { profiles, browsers, mails, projects, settings, telegramWork, storeRoot, headless });
 

@@ -211,6 +211,9 @@ export interface MailRecord {
   /** Lifecycle state used by the automatic stock allocator. */
   status: MailStatus;
   source: MailSource;
+  /** Với alias (source='alias'): email của tài khoản CHA đẻ ra alias này — để
+   *  nhóm hiển thị và biết OTP đọc qua hộp thư nào. */
+  parentEmail?: string;
   reservedByProfileId?: string;
   reservedAt?: string;
   usedAt?: string;

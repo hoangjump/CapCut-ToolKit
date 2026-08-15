@@ -1,7 +1,9 @@
 import type { BrowserManager } from './browserManager.js';
 import type { ProfileManager } from './profileManager.js';
 import type { MailStore } from './mailStore.js';
+import type { ProxyStore } from './proxyStore.js';
 import { createAliases } from './aliasFlow.js';
+import { rotateIp as mktRotateIp } from './mktproxyClient.js';
 import { createLogger } from './logger.js';
 
 const log = createLogger('alias-run');
@@ -10,6 +12,7 @@ export interface AliasRunnerDeps {
   profiles: ProfileManager;
   browsers: BrowserManager;
   mails: MailStore;
+  store: ProxyStore;
 }
 
 export interface RunAliasesInput {
@@ -49,7 +52,7 @@ export async function runAliasesForMail(
   deps: AliasRunnerDeps,
   input: RunAliasesInput,
 ): Promise<RunAliasesResult> {
-  const { profiles, browsers, mails } = deps;
+  const { profiles, browsers, mails, store } = deps;
   const parent = mails.get(input.mailId);
   if (!parent) throw new Error('Không tìm thấy account nguồn trong kho mail');
   if (!parent.password) throw new Error('Account nguồn thiếu mật khẩu — không đăng nhập được account.live.com');
@@ -57,14 +60,16 @@ export async function runAliasesForMail(
     throw new Error('Account nguồn thiếu refresh_token/client_id — alias sẽ không đọc được OTP');
   }
 
+  // MS chặn thêm alias theo tần suất (một phần theo IP) — cần XOAY IP để tạo tiếp.
+  // Dùng proxy pool nếu có proxy Live; không có thì chạy direct (không xoay được,
+  // sẽ dừng khi rate-limit). input.useProxy ép bật/tắt.
+  const hasLiveProxy = store.list().some((p) => p.alive === true);
+  const wantProxy = input.useProxy ?? hasLiveProxy;
+
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
   const tmp = await profiles.create({
     name: `alias-${parent.email.split('@')[0]}-${stamp}`,
-    // KHÔNG ép proxy: đây là login vào tài khoản Microsoft CỦA CHÍNH mình để tạo
-    // alias — chạy IP thật (direct) là ổn và ổn định nhất. Proxy dân cư (mktproxy)
-    // hay trục trặc whitelist/egress → trang login treo không tải được. Proxy chỉ
-    // cần cho bước reg CapCut (tránh ban IP), không cần ở đây.
-    ...(input.useProxy
+    ...(wantProxy
       ? { proxyRotation: { mode: 'pool' as const, pool: { tags: [] }, rotateOnOpen: true, rotateOnFailure: true } }
       : {}),
   });
@@ -73,12 +78,36 @@ export async function runAliasesForMail(
     const session = await browsers.open(tmp.id, { headless: input.headless ?? false });
     try {
       const page = session.context.pages()[0] ?? (await session.context.newPage());
+
+      // Callback xoay IP: chỉ có khi proxy đang thuê là mktproxy API (có key để
+      // gọi rotate-ip). Xoay đổi IP egress của gateway, không cần mở lại browser.
+      let rotateIp: (() => Promise<void>) | undefined;
+      if (session.leasedProxyId) {
+        const px = store.get(session.leasedProxyId);
+        if (px?.apiProvider === 'mktproxy' && px.apiKey) {
+          const key = px.apiKey;
+          rotateIp = async () => {
+            try {
+              const rp = await mktRotateIp(key);
+              log.info(`xoay IP mktproxy → ${rp.realIp || rp.ip || '(IP mới)'}`);
+            } catch (e) {
+              log.warn(`xoay IP lỗi: ${(e as Error).message}`);
+            }
+            await new Promise((r) => setTimeout(r, 4_000)); // chờ egress đổi
+          };
+        }
+      }
+      if (wantProxy && !rotateIp) {
+        log.warn('proxy đang dùng KHÔNG phải mktproxy API → không xoay IP được khi rate-limit');
+      }
+
       const result = await createAliases({
         page,
         cred: { email: parent.email, password: parent.password },
         target: input.target,
         prefix: input.prefix,
         log,
+        rotateIp,
       });
 
       // Mỗi alias = một dòng mail mới TÁI DÙNG cred cha. status 'unchecked' để
@@ -93,6 +122,7 @@ export async function runAliasesForMail(
           tags: ['alias'],
           note: `alias của ${parent.email}`,
           source: 'alias',
+          parentEmail: parent.email,
           // 'available' để tab Flow (stock allocation) rút reg CapCut được ngay —
           // alias vừa tạo qua chính tài khoản nên biết chắc dùng được.
           status: 'available' as const,

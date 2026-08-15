@@ -4,6 +4,7 @@ import { MailStore, parseMailLine, providerFromEmail } from '../../mailStore.js'
 import type { SettingsStore } from '../../settingsStore.js';
 import type { ProfileManager } from '../../profileManager.js';
 import type { BrowserManager } from '../../browserManager.js';
+import type { ProxyStore } from '../../proxyStore.js';
 import { runAliasesForMail } from '../../aliasRunner.js';
 import { findAliasOtp } from '../../graphMailClient.js';
 import { createLogger } from '../../logger.js';
@@ -33,10 +34,11 @@ export interface MailRoutesDeps {
   settings: SettingsStore;
   profiles: ProfileManager;
   browsers: BrowserManager;
+  store: ProxyStore;
 }
 
 /** Kho mail + ba nhà cung cấp: dongvanfb, selltaikhoan, SmsBower. */
-export function registerMailRoutes(app: Express, { mails, settings, profiles, browsers }: MailRoutesDeps): void {
+export function registerMailRoutes(app: Express, { mails, settings, profiles, browsers, store }: MailRoutesDeps): void {
   // ---- Mail (dongvanfb) ---------------------------------------------------
   // Read/code endpoints need no API key (email+refresh+client auth); only
   // balance/buy hit api.dongvanfb.net with the stored key.
@@ -389,7 +391,7 @@ export function registerMailRoutes(app: Express, { mails, settings, profiles, br
     aliasRunning.add(mail.id);
     aliasLog.info(`bắt đầu tạo alias cho ${mail.email} (mở Camoufox, login, tạo alias)…`);
     runAliasesForMail(
-      { mails, profiles, browsers },
+      { mails, profiles, browsers, store },
       {
         mailId: mail.id,
         target: req.body?.target !== undefined ? Number(req.body.target) : undefined,
