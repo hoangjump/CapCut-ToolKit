@@ -400,7 +400,8 @@ export function registerMailRoutes(app: Express, { mails, settings, profiles, br
       .then((result) => {
         aliasLog.info(
           `xong ${mail.email}: tạo ${result.created.length} alias, lưu ${result.storedCount} (đã có ${result.existingBefore})` +
-            (result.hitLimit ? ' — đã chạm trần 10' : ''),
+            (result.hitLimit ? ' — đã chạm trần 10' : '') +
+            (result.rateLimited ? ' — MS chặn thêm quá thường xuyên, thử lại sau' : ''),
         );
       })
       .catch((err) => {

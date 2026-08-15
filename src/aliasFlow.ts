@@ -36,6 +36,7 @@ export type AliasSubmitOutcome =
   | { kind: 'created' }
   | { kind: 'duplicate' } // tên đã có người dùng → thử tên khác
   | { kind: 'limit' } // đã chạm trần 10 alias
+  | { kind: 'ratelimit' } // MS chặn thêm alias quá thường xuyên → dừng, thử lại sau
   | { kind: 'unknown'; detail: string };
 
 /** Phân loại text trang sau khi submit. Tách riêng để unit-test không cần trình
@@ -43,7 +44,11 @@ export type AliasSubmitOutcome =
  *  tiếng Trung theo IP proxy). */
 export function classifySubmit(pageText: string): AliasSubmitOutcome {
   const t = pageText.toLowerCase();
-  if (/already.*(taken|in use|exists)|不可用|已被使用|已被占用|已存在/.test(t)) return { kind: 'duplicate' };
+  // Giới hạn TẦN SUẤT: "We limit how frequently you can add aliases … try again
+  // later" — khác trần 10, phải chờ. Kiểm tra TRƯỚC 'created' vì trang này vẫn ở
+  // form (có thể lẫn từ khoá khác).
+  if (/how frequently|frequently you can add|try again later|添加.*频繁|请稍后/.test(t)) return { kind: 'ratelimit' };
+  if (/already.*(taken|in use|exists)|not available|不可用|已被使用|已被占用|已存在/.test(t)) return { kind: 'duplicate' };
   if (/(reached|maximum).*(limit|aliases)|too many|已达到|上限|最多/.test(t)) return { kind: 'limit' };
   // Trang danh sách quay lại (có "Remove"/"删除") = tạo xong.
   if (/remove|删除|primary alias|别名/.test(t)) return { kind: 'created' };
@@ -148,6 +153,8 @@ export interface CreateAliasesResult {
   created: string[];
   existingBefore: number;
   hitLimit: boolean;
+  /** MS chặn vì thêm alias quá thường xuyên — dừng, thử lại sau (khác hitLimit). */
+  rateLimited: boolean;
 }
 
 /**
@@ -171,6 +178,7 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
 
   const created: string[] = [];
   let hitLimit = false;
+  let rateLimited = false;
   let need = target - existingBefore;
   let stall = 0; // số lần liên tiếp không rõ kết quả
 
@@ -208,6 +216,10 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
       log.warn(`tài khoản đã chạm trần alias — dừng`);
       hitLimit = true;
       break;
+    } else if (outcome.kind === 'ratelimit') {
+      log.warn('Microsoft chặn thêm alias quá thường xuyên ("try again later") — tự dừng, thử lại sau');
+      rateLimited = true;
+      break;
     } else {
       stall += 1;
       log.warn(`kết quả không rõ khi tạo "${name}" (lần ${stall}): ${outcome.detail}`);
@@ -218,7 +230,7 @@ export async function createAliases(opts: CreateAliasesOptions): Promise<CreateA
     }
   }
 
-  return { created, existingBefore, hitLimit };
+  return { created, existingBefore, hitLimit, rateLimited };
 }
 
 /** Đăng nhập account.live.com bằng email + password (selector chuẩn Microsoft

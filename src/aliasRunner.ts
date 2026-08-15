@@ -30,6 +30,8 @@ export interface RunAliasesResult {
   created: string[]; // "alias@outlook.com"
   existingBefore: number;
   hitLimit: boolean;
+  /** MS chặn vì thêm alias quá thường xuyên — thử lại sau. */
+  rateLimited: boolean;
   /** Số alias đã thêm vào kho mail (bỏ trùng). */
   storedCount: number;
 }
@@ -112,6 +114,7 @@ export async function runAliasesForMail(
         created: result.created,
         existingBefore: result.existingBefore,
         hitLimit: result.hitLimit,
+        rateLimited: result.rateLimited,
         storedCount: stored.length,
       };
     } finally {

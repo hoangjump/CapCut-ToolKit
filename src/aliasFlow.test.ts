@@ -29,6 +29,10 @@ test('classifySubmit: trang danh sách (có Remove) = đã tạo', () => {
   assert.equal(classifySubmit('别名  删除').kind, 'created');
 });
 
+test('classifySubmit: giới hạn tần suất = ratelimit', () => {
+  assert.equal(classifySubmit('We limit how frequently you can add aliases to your account. Please try again later.').kind, 'ratelimit');
+});
+
 test('classifySubmit: text lạ = unknown kèm trích đoạn', () => {
   const r = classifySubmit('Some totally unexpected page content here');
   assert.equal(r.kind, 'unknown');
