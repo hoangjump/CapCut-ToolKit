@@ -1,5 +1,6 @@
 import type { RegisteredFlow } from '../automation/types.js';
 import { snapshotPage } from '../automation/helper.js';
+import { registerViaApi } from '../capcutRegApi.js';
 import type { Page, Locator } from 'playwright-core';
 
 /**
@@ -348,82 +349,87 @@ export const capcutSigninFlow: RegisteredFlow = {
     // khác + geoip. Không có nó, proxy vùng khác sẽ render ngôn ngữ khác → gãy. ---
     await helper.goto('https://www.capcut.com/login?locale=en');
 
-    // --- Bước 2: bấm "Continue with email" ---
-    await helper.waitFor(BTN_CONTINUE_EMAIL);
-    await helper.click(BTN_CONTINUE_EMAIL);
-    log.info(`[${profile.name}] bấm "Continue with email"`);
-
-    // --- Bước 3: mua mail riêng cho profile này rồi điền email. Runner tự chụp
-    // full mail creds (email|password|refresh_token|client_id) cho dòng sheet,
-    // nên ở đây chỉ cần email + password để điền form. ---
+    // --- Bước 2: mua mail riêng cho profile này. Runner tự chụp full mail creds
+    // (email|password|refresh_token|client_id) cho dòng sheet; ở đây cần
+    // email + password để đăng ký. ---
     const { email, password } = await buyMail();
-    log.info(`[${profile.name}] mua mail: ${email}`);
-    await helper.waitFor(INPUT_EMAIL);
-    await helper.fill(INPUT_EMAIL, email);
-
-    // --- Bước 4: bấm Continue ---
-    await helper.click(BTN_CONTINUE);
-
-    // --- Bước 5: điền mật khẩu (chính là password của mail vừa mua) ---
     if (!password) throw new Error('Mail mua về không kèm password — không thể đặt mật khẩu đăng ký');
-    await helper.waitFor(INPUT_PASSWORD);
-    await helper.fill(INPUT_PASSWORD, password);
+    log.info(`[${profile.name}] mua mail: ${email}`);
 
-    // --- Bước 6: bấm Sign up ---
-    await helper.click(BTN_SIGN_UP);
-
-    // --- Bước 7: ngày sinh ngẫu nhiên (Year input + Month/Day dropdown) ---
-    const year = randInt(1990, 2002);
-    const month = randInt(1, 12);
-    const day = randInt(1, 28); // ≤28 để hợp lệ với mọi tháng
-    await helper.waitFor(INPUT_YEAR);
-    await helper.fill(INPUT_YEAR, String(year));
-
-    // Month: mở dropdown → chọn option thứ `month`. VERIFY selector LV_OPTION.
-    await helper.click(SEL_MONTH_TRIGGER);
-    await helper.waitFor(LV_OPTION);
-    const monthOpt = page.locator(LV_OPTION).filter({ hasText: exactText(MONTH_NAMES[month - 1]), visible: true });
-    await clickLocator(monthOpt, log, `[${profile.name}] chọn tháng ${MONTH_NAMES[month - 1]}`, 8_000);
-
-    // Day: tương tự. Danh sách day có thể cuộn — chọn theo text cho chắc.
-    await helper.click(SEL_DAY_TRIGGER);
-    await helper.waitFor(LV_OPTION);
-    const dayOpt = page.locator(LV_OPTION).filter({ hasText: exactText(String(day)), visible: true });
-    await clickLocator(dayOpt, log, `[${profile.name}] chọn ngày ${day}`, 8_000);
-    if (await page.locator(LV_OPTION).first().isVisible().catch(() => false)) {
-      await page.keyboard.press('Escape').catch(() => {});
-      await page.waitForTimeout(300);
-    }
-    log.info(`[${profile.name}] ngày sinh: ${day}/${month}/${year}`);
-
-    // Bấm Continue sau ngày sinh.
-    await helper.click(BTN_CONTINUE);
-
-    // --- Bước 8: màn xác nhận email — kiểm tra đúng email vừa nhập ---
-    await helper.waitFor(CODE_TIP);
-    const tip = await helper.text(CODE_TIP);
-    if (!tip.toLowerCase().includes(email.toLowerCase())) {
-      log.warn(`[${profile.name}] dòng xác nhận ("${tip}") không chứa email ${email} — vẫn thử lấy code`);
+    // --- Bước 3: ĐĂNG KÝ QUA API (không bấm DOM). Gọi thẳng 3 API passport bằng
+    // XHR của chính trang (trang đã load webmssdk + có cookie passport). Xác minh
+    // bằng hook F12: không captcha. Nhanh + miễn nhiễm đổi UI. Nếu API lỗi (thiếu
+    // cookie / server đổi / CORS) thì RƠI XUỐNG đăng ký bằng DOM như cũ. ---
+    let appPage: Page = page;
+    let registered = false;
+    try {
+      // Chờ cookie passport (csrf) do webmssdk set sau khi trang load.
+      await page
+        .waitForFunction(() => /passport_csrf_token=/.test((globalThis as any).document.cookie), null, { timeout: 20_000 })
+        .catch(() => {});
+      await page.waitForTimeout(1_000);
+      const reg = await registerViaApi(page, {
+        email,
+        password,
+        getCode: () => getOtpByRegex(), // "verification code is <digits>"
+        log,
+      });
+      log.info(`[${profile.name}] đăng ký qua API OK — user_id=${reg.userId}`);
+      // Vào app để có context đăng nhập cho bước mua VIP (register_verify_login
+      // đã set session cookie trên context này).
+      await page.goto('https://www.capcut.com/my-edit?start_tab=video', { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+      await page.waitForTimeout(2_500);
+      registered = true;
+    } catch (apiErr) {
+      log.warn(`[${profile.name}] đăng ký qua API lỗi: ${(apiErr as Error).message} — chuyển sang đăng ký DOM`);
     }
 
-    // --- Bước 9: đọc hòm thư lấy code ("verification code is 747139") ---
-    const code = await getOtpByRegex(); // mặc định khớp "verification code is <digits>"
-    log.info(`[${profile.name}] lấy được code: ${code}`);
+    if (!registered) {
+      // --- Dự phòng: đăng ký bằng DOM (luồng cũ) ---
+      await helper.goto('https://www.capcut.com/login?locale=en');
+      await helper.waitFor(BTN_CONTINUE_EMAIL);
+      await helper.click(BTN_CONTINUE_EMAIL);
+      await helper.waitFor(INPUT_EMAIL);
+      await helper.fill(INPUT_EMAIL, email);
+      await helper.click(BTN_CONTINUE);
+      await helper.waitFor(INPUT_PASSWORD);
+      await helper.fill(INPUT_PASSWORD, password);
+      await helper.click(BTN_SIGN_UP);
 
-    // Nhập code vào ô 6 số: focus ô đầu rồi gõ từng ký tự, focus tự nhảy.
-    await helper.waitFor(OTP_FIRST_BOX);
-    await helper.click(OTP_FIRST_BOX);
-    await helper.typeKeys(code);
+      const year = randInt(1990, 2002);
+      const month = randInt(1, 12);
+      const day = randInt(1, 28);
+      await helper.waitFor(INPUT_YEAR);
+      await helper.fill(INPUT_YEAR, String(year));
+      await helper.click(SEL_MONTH_TRIGGER);
+      await helper.waitFor(LV_OPTION);
+      const monthOpt = page.locator(LV_OPTION).filter({ hasText: exactText(MONTH_NAMES[month - 1]), visible: true });
+      await clickLocator(monthOpt, log, `[${profile.name}] chọn tháng ${MONTH_NAMES[month - 1]}`, 8_000);
+      await helper.click(SEL_DAY_TRIGGER);
+      await helper.waitFor(LV_OPTION);
+      const dayOpt = page.locator(LV_OPTION).filter({ hasText: exactText(String(day)), visible: true });
+      await clickLocator(dayOpt, log, `[${profile.name}] chọn ngày ${day}`, 8_000);
+      if (await page.locator(LV_OPTION).first().isVisible().catch(() => false)) {
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.waitForTimeout(300);
+      }
+      log.info(`[${profile.name}] ngày sinh: ${day}/${month}/${year}`);
+      await helper.click(BTN_CONTINUE);
 
-    // --- Bước 10-11: VÀO DASHBOARD. Sau OTP, onboarding của CapCut không cố định
-    // thứ tự (wizard "Get started with space" với "Open CapCut", popup vai trò
-    // "Which role…" với "Skip", hoặc vào thẳng app) và màn có thể hiện TRỄ. Gộp
-    // thành một vòng lặp poll thay vì các bước cứng theo thứ tự — trước đây kẹt
-    // vì "Open CapCut" hiện sau cửa sổ chờ 8s nên không được bấm. reachDashboard
-    // lo cả bấm "Open CapCut" (bám cả tab mới), bấm "Skip", và dừng khi thấy nút
-    // Upgrade header. Từ đây dùng appPage (có thể là tab mới do Open CapCut mở). ---
-    const appPage = await reachDashboard(page, log, profile.name);
-    if (appPage !== page) log.info(`[${profile.name}] dashboard ở tab: ${appPage.url()}`);
+      await helper.waitFor(CODE_TIP);
+      const tip = await helper.text(CODE_TIP);
+      if (!tip.toLowerCase().includes(email.toLowerCase())) {
+        log.warn(`[${profile.name}] dòng xác nhận ("${tip}") không chứa email ${email} — vẫn thử lấy code`);
+      }
+      const code = await getOtpByRegex();
+      log.info(`[${profile.name}] lấy được code: ${code}`);
+      await helper.waitFor(OTP_FIRST_BOX);
+      await helper.click(OTP_FIRST_BOX);
+      await helper.typeKeys(code);
+
+      appPage = await reachDashboard(page, log, profile.name);
+      if (appPage !== page) log.info(`[${profile.name}] dashboard ở tab: ${appPage.url()}`);
+    }
 
     // --- Bước 12: NÂNG CẤP VIP QUA API (không qua UI). Gọi thẳng 3 API thương mại
     // bằng fetch của chính trang (webmssdk tự ký chống bot). Bỏ hẳn chuỗi bấm
