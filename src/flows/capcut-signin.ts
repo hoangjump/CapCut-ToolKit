@@ -201,15 +201,6 @@ async function purchaseVipViaApi(page: Page): Promise<VipPurchaseResult> {
   return await page.evaluate(async () => {
     const g = globalThis as any;
     const doc = g.document;
-    const fetchFn = g.fetch;
-    const H = {
-      'Content-Type': 'application/json',
-      appId: '348188',
-      appvr: '12.4.0',
-      lan: 'en',
-      loc: 'VN',
-      pf: '7',
-    };
     const cookie = (name: string): string => {
       const m = String(doc?.cookie ?? '').match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
       return m ? decodeURIComponent(m[1]) : '';
@@ -218,14 +209,42 @@ async function purchaseVipViaApi(page: Page): Promise<VipPurchaseResult> {
 
     // Sau Open CapCut, cookie login (sessionid/sid_guard) có thể chưa set ngay —
     // gọi API sớm sẽ dính "not login". Chờ cookie xuất hiện tối đa ~15s trước khi
-    // gọi; hết giờ mà vẫn chưa có thì cứ thử (fetch dùng credentials:include nên
-    // vẫn gửi cookie hiện có).
+    // gọi; hết giờ mà vẫn chưa có thì cứ thử (XHR withCredentials nên vẫn gửi
+    // cookie hiện có).
     for (let i = 0; i < 30; i++) {
       if (cookie('sessionid') || cookie('sid_guard')) break;
       await sleep(500);
     }
 
     const region = (cookie('store-country-code') || 'VN').toUpperCase();
+
+    // GỌI QUA XMLHttpRequest, KHÔNG PHẢI fetch. Xác minh bằng bắt request THẬT
+    // lúc mua tay: mọi request thương mại đi bằng XHR và có header `sign` (chữ ký
+    // chống bot). SDK CapCut patch XMLHttpRequest để tự chèn sign/device-time/
+    // web_id/did/store-country-code khi send → XHR ĐƯỢC KÝ, còn fetch thì KHÔNG →
+    // init_trade qua fetch bị "shark blocked" (ret=-6). Ta chỉ set các header
+    // nghiệp vụ (appId/appvr/lan/loc/pf), phần chữ ký để SDK tự thêm.
+    const apiPost = (url: string, bodyObj: any): Promise<any> =>
+      new Promise((resolve) => {
+        try {
+          const xhr = new g.XMLHttpRequest();
+          xhr.open('POST', url, true);
+          xhr.withCredentials = true;
+          xhr.setRequestHeader('Content-Type', 'application/json');
+          xhr.setRequestHeader('appId', '348188');
+          xhr.setRequestHeader('appvr', '12.4.0');
+          xhr.setRequestHeader('lan', 'en');
+          xhr.setRequestHeader('loc', region);
+          xhr.setRequestHeader('pf', '7');
+          xhr.onload = () => { try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({}); } };
+          xhr.onerror = () => resolve({ __err: 'xhr error' });
+          xhr.ontimeout = () => resolve({ __err: 'xhr timeout' });
+          xhr.timeout = 20000;
+          xhr.send(JSON.stringify(bodyObj || {}));
+        } catch (e: any) {
+          resolve({ __err: String((e && e.message) || e) });
+        }
+      });
     const result = {
       region,
       alreadyVip: false,
@@ -238,15 +257,10 @@ async function purchaseVipViaApi(page: Page): Promise<VipPurchaseResult> {
 
     // --- B1: đã có VIP chưa? ---
     try {
-      const sub = await fetchFn(
+      const sub = await apiPost(
         'https://commerce-api-sg.capcut.com/commerce/v3/trade/subscription_infos',
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: H,
-          body: JSON.stringify({ scene: ['vip', 'workspace'], app_id: 348188, vip_levels: ['vip', 'ultra'] }),
-        },
-      ).then((r: any) => r.json());
+        { scene: ['vip'], app_id: 348188, vip_levels: ['vip', 'ultra'] },
+      );
       const vip = sub?.data?.subscription_user_infos?.vip;
       const info = (vip?.vip_infos ?? []).find((v: any) => v?.is_vip);
       if (info) {
@@ -262,15 +276,10 @@ async function purchaseVipViaApi(page: Page): Promise<VipPurchaseResult> {
     // --- B2: lấy bảng giá, chọn gói dùng thử 7 ngày, lấy sku ĐỘNG ---
     let pick: any = null;
     try {
-      const pr = await fetchFn(
+      const pr = await apiPost(
         'https://commerce-api-sg.capcut.com/commerce/v1/subscription/cc_price_list',
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: H,
-          body: JSON.stringify({ aid: 348188, region, scene: 'vip' }),
-        },
-      ).then((r: any) => r.json());
+        { aid: 348188, region, scene: 'vip' },
+      );
       const list = pr?.data?.all_price_list ?? [];
       // CHỈ mua gói dùng thử 7 ngày (can_trial + trial_cycle=7). KHÔNG fallback
       // sang gói mặc định — tránh lỡ init_trade một gói trả tiền ngay.
@@ -309,10 +318,7 @@ async function purchaseVipViaApi(page: Page): Promise<VipPurchaseResult> {
           user_create_time: Math.floor(Date.now() / 1000),
         },
       };
-      const res = await fetchFn(
-        'https://commerce-api-sg.capcut.com/commerce/v3/trade/init_trade',
-        { method: 'POST', credentials: 'include', headers: H, body: JSON.stringify(body) },
-      ).then((r: any) => r.json());
+      const res = await apiPost('https://commerce-api-sg.capcut.com/commerce/v3/trade/init_trade', body);
       result.ret = String(res?.ret ?? '');
       result.errmsg = String(res?.errmsg ?? '');
       result.cashierUrl = res?.data?.pipo_aggregate_pay_info?.cashier_url ?? '';
