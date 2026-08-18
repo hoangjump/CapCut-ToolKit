@@ -429,13 +429,34 @@ export const capcutSigninFlow: RegisteredFlow = {
     // trang rồi thử lại, tối đa 3 lượt. Kết quả CHỐT (already-vip/checkout/no-trial)
     // dừng ngay, không reload thừa. ---
     const TERMINAL = new Set(['already-vip', 'checkout', 'no-trial']);
-    let vip = await purchaseVipViaApi(appPage);
+    // Gọi API mua VIP an toàn: `purchaseVipViaApi` chạy async ~15-20s TRONG
+    // page.evaluate (chờ cookie + fetch). Nếu trang CapCut tự điều hướng giữa
+    // chừng (SPA redirect, hoặc reload lúc retry) thì context bị huỷ và evaluate
+    // NÉM "Execution context was destroyed" — trước đây làm CHẾT cả task, mất
+    // account đã đăng ký xong. Bọc lại thành kết quả tạm để retry/kết thúc êm.
+    const tryPurchase = async (): Promise<VipPurchaseResult> => {
+      try {
+        return await purchaseVipViaApi(appPage);
+      } catch (e) {
+        const msg = (e as Error).message || String(e);
+        log.warn(`[${profile.name}] purchaseVipViaApi ném lỗi (coi là tạm): ${msg.slice(0, 120)}`);
+        return { region: '', alreadyVip: false, vipEndTime: 0, cashierUrl: '', ret: '', errmsg: msg.slice(0, 120), step: 'evaluate-error' };
+      }
+    };
+    // Bị "shark" (chống gian lận CapCut, ret=-6) chặn init-trade KHÔNG phải lỗi
+    // tạm — reload cùng IP không giải được, chỉ tổ tốn thời gian + rước thêm rủi
+    // ro context-destroyed. Coi như chốt: account đã đăng ký xong, chỉ thiếu VIP.
+    const riskBlocked = (v: VipPurchaseResult) => /shark|risk\b|blocked|风控/i.test(v.errmsg || '');
+    let vip = await tryPurchase();
     log.info(`[${profile.name}] purchaseVipViaApi: step=${vip.step} region=${vip.region} ret=${vip.ret} ${vip.errmsg}`);
-    for (let attempt = 1; attempt <= 2 && !TERMINAL.has(vip.step); attempt++) {
+    for (let attempt = 1; attempt <= 2 && !TERMINAL.has(vip.step) && !riskBlocked(vip); attempt++) {
       log.warn(`[${profile.name}] kết quả tạm (${vip.step}) — reload + thử lại (${attempt}/2)`);
       await appPage.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
+      // Chờ trang ổn định (không còn điều hướng) TRƯỚC khi gọi lại evaluate, để
+      // không lại dính context-destroyed. networkidle best-effort + nghỉ ngắn.
+      await appPage.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
       await appPage.waitForTimeout(2_000);
-      vip = await purchaseVipViaApi(appPage);
+      vip = await tryPurchase();
       log.info(`[${profile.name}] purchaseVipViaApi (thử ${attempt + 1}): step=${vip.step} ret=${vip.ret} ${vip.errmsg}`);
     }
     await snapshotPage(appPage, `capcut-dashboard-${profile.name}`).catch(() => {});
@@ -447,6 +468,10 @@ export const capcutSigninFlow: RegisteredFlow = {
     } else if (vip.cashierUrl) {
       report({ checkoutUrl: vip.cashierUrl, status: 'checkout' });
       log.info(`[${profile.name}] link thanh toán: ${vip.cashierUrl}`);
+    } else if (riskBlocked(vip)) {
+      // Account đã tạo OK; VIP bị CapCut chống gian lận chặn. Ghi rõ để lọc.
+      report({ status: 'vip-shark-blocked' });
+      log.warn(`[${profile.name}] đăng ký OK nhưng VIP bị shark chặn (ret=${vip.ret}, ${vip.errmsg}) — account vẫn lưu`);
     } else {
       report({ status: 'signup-ok' });
       log.warn(`[${profile.name}] không lấy được cashier_url (step=${vip.step}, ret=${vip.ret}, ${vip.errmsg})`);
