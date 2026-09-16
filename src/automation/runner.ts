@@ -5,7 +5,7 @@ import { getCode, getMessages } from '../mailClient.js';
 import { findAliasOtp } from '../graphMailClient.js';
 import { getFlow } from '../flows/index.js';
 import { PageHelper, setShotsDir } from './helper.js';
-import type { FlowContext, SheetRow, BoughtMail, RentedMailbox } from './types.js';
+import type { FlowContext, SheetRow, BoughtMail, RentedMailbox, TempMailbox } from './types.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('runner');
@@ -43,6 +43,9 @@ export interface RunProjectDeps {
    *  Trả mailbox có waitCode/success/cancel. Absent khi chưa cấu hình key
    *  SmsBower → ctx.rentMail() ném lỗi rõ. */
   rentMail?: (input: { service: string; profileName: string }) => Promise<RentedMailbox>;
+  /** Tạo hộp thư tạm từ tempmail.id.vn cho một profile. Absent khi chưa cấu hình
+   *  API token → ctx.tempMail() ném lỗi rõ. */
+  createTempMail?: (input: { domain?: string; profileName: string }) => Promise<TempMailbox>;
   /** Append one row to the configured Google Sheet (Apps Script web app). Absent
    *  when no webhook URL is set — ctx.appendSheet() then no-ops with a warning. */
   appendSheet?: (row: SheetRow) => Promise<void>;
@@ -245,6 +248,11 @@ export async function runProject(
         report: (partial) => {
           reported = { ...reported, ...partial };
         },
+        reportMail: (email, password) => {
+          // Flow tự-quản mail (yopmail): không có refresh/client, chỉ email+pass.
+          // Ghi vào boughtMail để finally dựng dòng sheet như buyMail.
+          boughtMail = { email, password, refreshToken: '', clientId: '' };
+        },
         rentMail: async (serviceOverride) => {
           if (!deps.rentMail) {
             throw new Error('Không thể thuê mail — chưa cấu hình API key SmsBower (vào tab Mail)');
@@ -256,6 +264,14 @@ export async function runProject(
           const rented = await deps.rentMail({ service, profileName: session.profile.name });
           flowLog.info(`thuê mail SmsBower: ${rented.email} (service=${service})`);
           return rented;
+        },
+        tempMail: async (opts) => {
+          if (!deps.createTempMail) {
+            throw new Error('Không thể tạo mail tạm — chưa cấu hình API token tempmail (vào tab Mail)');
+          }
+          const box = await deps.createTempMail({ domain: opts?.domain, profileName: session.profile.name });
+          flowLog.info(`mail tạm: ${box.email}`);
+          return box;
         },
         getOtp: (type: MailCodeType) => {
           if (!currentMail) throw new Error('Chưa có mail — gán mail cho project hoặc gọi buyMail() trước');

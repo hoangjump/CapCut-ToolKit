@@ -30,6 +30,11 @@ export interface FlowContext {
    *  qua getCode). Trả mailbox có waitCode()/success()/cancel(). Ném nếu chưa
    *  cấu hình API key SmsBower. */
   rentMail: (service?: string) => Promise<RentedMailbox>;
+  /** Tạo một hộp thư TẠM từ tempmail.id.vn (API HTTP) để nhận OTP CapCut. Khác
+   *  buyMail (không lưu kho, không refresh_token) và khác rentMail (đọc THẲNG qua
+   *  HTTP, không dính captcha). Trả hộp có waitOtp() poll mã. Ném nếu chưa cấu
+   *  hình API token tempmail. */
+  tempMail: (opts?: { domain?: string }) => Promise<TempMailbox>;
   /** Poll the current mailbox (bound project mail, or the one buyMail() bought)
    *  for a confirmation code. Throws if no mailbox is available. */
   getOtp: (type: MailCodeType) => Promise<string>;
@@ -45,6 +50,11 @@ export interface FlowContext {
    *  error in the fail column. Mail creds are captured automatically by
    *  buyMail(); the flow only needs to report the checkout URL / status. */
   report: (partial: { checkoutUrl?: string; status?: string }) => void;
+  /** Ghi thông tin mailbox cho dòng sheet khi flow TỰ quản mail (không qua
+   *  buyMail) — ví dụ yopmail: sinh địa chỉ tại chỗ, không mua từ nhà cung cấp.
+   *  refresh_token/client_id để trống (yopmail không có). Dòng sheet vẫn có
+   *  email+password để tái nhập/đăng nhập CapCut. */
+  reportMail: (email: string, password?: string) => void;
   /** Scoped to `flow:<profileName>` so batch logs stay readable. */
   log: Logger;
 }
@@ -65,6 +75,17 @@ export interface RentedMailbox {
   success: () => Promise<void>;
   /** Huỷ (hoàn tiền nếu chưa có code). Best-effort, không ném. */
   cancel: () => Promise<void>;
+}
+
+/** Một hộp thư TẠM từ tempmail.id.vn (ctx.tempMail): địa chỉ dùng-một-lần + hàm
+ *  poll OTP đọc qua API HTTP. Không có password/refresh (flow tự đặt mật khẩu
+ *  CapCut khi đăng ký). */
+export interface TempMailbox {
+  email: string;
+  /** Id hộp thư trên tempmail — dùng để poll message. */
+  mailId: string;
+  /** Poll hộp thư tới khi có OTP khớp `pattern` (mặc định mẫu mã CapCut). */
+  waitOtp: (opts?: { pattern?: RegExp; tries?: number; intervalMs?: number }) => Promise<string>;
 }
 
 /** Full mailbox credentials returned by ctx.buyMail() — everything needed to

@@ -136,6 +136,8 @@ export interface Settings {
   selltaikhoanMasked: string | null;
   hasSmsbowerKey: boolean;
   smsbowerMasked: string | null;
+  hasTempmailToken: boolean;
+  tempmailMasked: string | null;
   hasTelegram: boolean;
   telegramMasked: string | null;
   telegramChatId: string;
@@ -329,7 +331,7 @@ export const profileApi = {
 // ---- Settings / Mail ----
 export const settingsApi = {
   get: () => fetch('/api/settings').then((r) => parse<Settings>(r)),
-  save: (body: Partial<{ dongvanfbApiKey: string; sheetWebhookUrl: string; mktproxyApiKey: string; selltaikhoanApiKey: string; smsbowerApiKey: string; telegramBotToken: string; telegramChatId: string }>) =>
+  save: (body: Partial<{ dongvanfbApiKey: string; sheetWebhookUrl: string; mktproxyApiKey: string; selltaikhoanApiKey: string; smsbowerApiKey: string; tempmailApiToken: string; telegramBotToken: string; telegramChatId: string }>) =>
     put('/api/settings', body).then((r) => parse<Settings>(r)),
 };
 export const mailApi = {

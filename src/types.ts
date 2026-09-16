@@ -257,6 +257,10 @@ export interface AppSettings {
    *  sẵn nên đi đường riêng (ctx.rentMail), không qua buyMail/getOtp. Lưu local,
    *  chỉ trả UI dạng masked. */
   smsbowerApiKey?: string;
+  /** tempmail.id.vn API token — dịch vụ mail TẠM có API HTTP đọc OTP thẳng (không
+   *  cần mở tab như yopmail). Dùng cho flow đăng ký CapCut bằng mail tạm. Miễn phí
+   *  ở mức cơ bản. Lưu local, chỉ trả UI dạng masked. */
+  tempmailApiToken?: string;
   /** Telegram bot token (from @BotFather). When set together with a chat id,
    *  each successfully registered account is posted to that chat. */
   telegramBotToken?: string;

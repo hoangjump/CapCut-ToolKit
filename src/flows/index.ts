@@ -1,6 +1,8 @@
 import type { RegisteredFlow, FlowMeta } from '../automation/types.js';
 import { demoFlow } from './demo.js';
 import { capcutSigninFlow } from './capcut-signin.js';
+import { capcutSigninYopmailFlow } from './capcut-signin-yopmail.js';
+import { capcutSigninTempmailFlow } from './capcut-signin-tempmail.js';
 import { chatgptSignupFlow } from './chatgpt-signup.js';
 
 /**
@@ -11,6 +13,8 @@ import { chatgptSignupFlow } from './chatgpt-signup.js';
 export const FLOWS: Record<string, RegisteredFlow> = {
   [demoFlow.meta.name]: demoFlow,
   [capcutSigninFlow.meta.name]: capcutSigninFlow,
+  [capcutSigninYopmailFlow.meta.name]: capcutSigninYopmailFlow,
+  [capcutSigninTempmailFlow.meta.name]: capcutSigninTempmailFlow,
   [chatgptSignupFlow.meta.name]: chatgptSignupFlow,
 };
 

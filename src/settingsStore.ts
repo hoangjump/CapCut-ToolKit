@@ -78,6 +78,15 @@ export class SettingsStore {
     await this.persist();
   }
 
+  getTempmailToken(): string | undefined {
+    return this.settings.tempmailApiToken;
+  }
+
+  async setTempmailToken(token: string | undefined): Promise<void> {
+    this.settings.tempmailApiToken = token?.trim() || undefined;
+    await this.persist();
+  }
+
   getTelegramBotToken(): string | undefined {
     return this.settings.telegramBotToken;
   }

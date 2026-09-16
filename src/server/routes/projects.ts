@@ -15,6 +15,7 @@ import { profilePresets, projectPresets } from '../../presets.js';
 import { buyMail } from '../../mailClient.js';
 import * as selltaikhoan from '../../selltaikhoanClient.js';
 import * as smsbower from '../../smsbowerClient.js';
+import * as tempmail from '../../tempmailClient.js';
 import { TelegramClient } from '../../work/telegramClient.js';
 import {
   defaultAntiDetect,
@@ -342,6 +343,35 @@ export function registerProjectRoutes(app: Express, { profiles, browsers, mails,
         cancel: async () => {}, // batch không huỷ/hoàn lẻ được
       };
     };
+    // createTempMail dep: hộp thư tạm tempmail.id.vn (flow đăng ký CapCut bằng
+    // mail tạm). Tự chọn domain ít lộ liễu để giảm rủi ro bị CapCut chặn; đọc OTP
+    // thẳng qua API HTTP. Luôn dựng nếu có token; flow gọi ctx.tempMail() mà thiếu
+    // token thì runner ném lỗi rõ.
+    const tempmailToken = settings.getTempmailToken();
+    const createTempMailDep = tempmailToken
+      ? async (input: { domain?: string; profileName: string }) => {
+          const cfg: tempmail.TempmailConfig = { token: tempmailToken };
+          let domain = input.domain;
+          if (!domain) {
+            try {
+              domain = tempmail.pickTempmailDomain(await tempmail.listDomains(cfg));
+            } catch (e) {
+              log.warn(`[${input.profileName}] tempmail lấy domain lỗi (dùng ngẫu nhiên server): ${(e as Error).message}`);
+            }
+          }
+          const created = await tempmail.createEmail(cfg, { domain });
+          log.info(`[${input.profileName}] tempmail tạo hộp: ${created.email}`);
+          return {
+            email: created.email,
+            mailId: created.id,
+            waitOtp: (o?: { pattern?: RegExp; tries?: number; intervalMs?: number }) =>
+              tempmail.pollTempmailOtp(cfg, created.id, {
+                ...o,
+                log: { info: (m: string) => log.info(`[${input.profileName}] ${m}`) },
+              }),
+          };
+        }
+      : undefined;
     // Build the appendSheet dependency only when a Sheet webhook URL is configured.
     // POSTs one JSON row to the Apps Script web app; the runner wraps this so a
     // network hiccup logs + continues rather than failing the registration.
@@ -457,6 +487,7 @@ export function registerProjectRoutes(app: Express, { profiles, browsers, mails,
             else await mails.markFailed(id, outcome.error || 'Flow thất bại sau khi cấp mail');
           },
           rentMail: rentMailDep,
+          createTempMail: createTempMailDep,
           // Đợt phân phối ghi Sheet tổng + Sheet nhân viên trong cùng queue để
           // retry từng bước mà không tạo dòng trùng.
           appendSheet: distributionRunId ? undefined : appendSheetDep,

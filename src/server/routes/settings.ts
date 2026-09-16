@@ -35,6 +35,8 @@ export function registerSettingsRoutes(app: Express, { store, profiles, mails, p
       selltaikhoanMasked: maskKey(settings.getSelltaikhoanKey()),
       hasSmsbowerKey: Boolean(settings.getSmsbowerKey()),
       smsbowerMasked: maskKey(settings.getSmsbowerKey()),
+      hasTempmailToken: Boolean(settings.getTempmailToken()),
+      tempmailMasked: maskKey(settings.getTempmailToken()),
       hasTelegram: Boolean(settings.getTelegramBotToken() && settings.getTelegramChatId()),
       telegramMasked: maskKey(settings.getTelegramBotToken()),
       telegramChatId: settings.getTelegramChatId() ?? '',
@@ -62,6 +64,9 @@ export function registerSettingsRoutes(app: Express, { store, profiles, mails, p
       }
       if (body.smsbowerApiKey !== undefined) {
         await settings.setSmsbowerKey(String(body.smsbowerApiKey));
+      }
+      if (body.tempmailApiToken !== undefined) {
+        await settings.setTempmailToken(String(body.tempmailApiToken));
       }
       if (body.telegramBotToken !== undefined) {
         await settings.setTelegramBotToken(String(body.telegramBotToken));

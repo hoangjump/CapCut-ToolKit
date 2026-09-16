@@ -188,7 +188,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, mailStrategy, mailStockTags, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, note, doSave]);
 
   useEffect(() => {
-    if (workEmployeesLoaded && distributionEnabled && flowName === 'capcut-signin' && String(distributionTotal) !== ephemeral) {
+    if (workEmployeesLoaded && distributionEnabled && (flowName === 'capcut-signin' || flowName === 'capcut-signin-yopmail' || flowName === 'capcut-signin-tempmail') && String(distributionTotal) !== ephemeral) {
       setEphemeral(String(distributionTotal));
     }
   }, [workEmployeesLoaded, distributionEnabled, distributionTotal, flowName, ephemeral]);
@@ -226,6 +226,11 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   }
 
   const flowDesc = flows.find((f) => f.name === flowName)?.description || '';
+  // Mọi flow CapCut (mua-mail dongvanfb, yopmail, tempmail) đều tạo account CapCut
+  // → đều phân phối được cho nhân viên. Flow mail-tạm (yopmail/tempmail) KHÔNG mua
+  // mail nên ẩn phần cấu hình "Mail và OTP".
+  const isSelfMail = flowName === 'capcut-signin-yopmail' || flowName === 'capcut-signin-tempmail';
+  const isCapcut = flowName === 'capcut-signin' || isSelfMail;
   const nameById = (pid: string) => allProfiles.find((p) => p.id === pid)?.name || (pid.length > 10 ? pid.slice(0, 8) + '…' : pid);
   const sellNeedle = sellSearch.trim().toLowerCase();
   const sellFiltered = sellNeedle
@@ -254,7 +259,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
       <ConfigSection title="Cấu hình chính" description="Chọn flow và nguồn hồ sơ dùng cho lần chạy này.">
         <div className="space-y-1.5">
           <Label>Flow</Label>
-          <Select value={flowName} onValueChange={(value) => { setFlowName(value); if (value !== 'capcut-signin') setDistributionEnabled(false); }}>
+          <Select value={flowName} onValueChange={(value) => { setFlowName(value); if (value !== 'capcut-signin' && value !== 'capcut-signin-yopmail' && value !== 'capcut-signin-tempmail') setDistributionEnabled(false); }}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{flows.map((f) => <SelectItem key={f.name} value={f.name}>{f.label}</SelectItem>)}</SelectContent>
           </Select>
@@ -281,7 +286,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
         </div>}
       </ConfigSection>
 
-      {flowName === 'capcut-signin' && (
+      {isCapcut && (
         <ConfigSection title="Phân phối nhân viên" description="Gửi link CapCut theo quota và tự động ghi nhận khi tài khoản lên VIP.">
           <div className="flex items-center justify-between gap-4 rounded-md border bg-muted/30 p-3">
             <div>
@@ -334,7 +339,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
         </ConfigSection>
       </div>
 
-      {flowName !== 'chatgpt-signup' && (
+      {flowName !== 'chatgpt-signup' && !isSelfMail && (
         <ConfigSection title="Mail và OTP" description="Chọn cách mua mail mới và cách dùng kho dự phòng khi nhà cung cấp lỗi hoặc hết hàng.">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1.5">

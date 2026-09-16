@@ -70,7 +70,7 @@ function Section({ title, defaultOpen = false, children }: { title: string; defa
 
 export function SettingsTab() {
   const [state, setState] = useState({
-    mail: '(chưa có)', sell: '(chưa có)', sms: '(chưa có)',
+    mail: '(chưa có)', sell: '(chưa có)', sms: '(chưa có)', temp: '(chưa có)',
     mkt: '(chưa có)', sheet: '(chưa có)', telegram: '(chưa có)',
   });
   const [sheetUrl, setSheetUrl] = useState('');
@@ -87,6 +87,7 @@ export function SettingsTab() {
         mail: s.hasKey ? `(đã lưu: ${s.masked})` : '(chưa có)',
         sell: s.hasSelltaikhoanKey ? `(đã lưu: ${s.selltaikhoanMasked})` : '(chưa có)',
         sms: s.hasSmsbowerKey ? `(đã lưu: ${s.smsbowerMasked})` : '(chưa có)',
+        temp: s.hasTempmailToken ? `(đã lưu: ${s.tempmailMasked})` : '(chưa có)',
         mkt: s.hasMktproxyKey ? `(đã lưu: ${s.mktproxyMasked})` : '(chưa có)',
         sheet: s.sheetWebhookUrl ? '(đã lưu)' : '(chưa có)',
         telegram: s.hasTelegram ? `(đã lưu: ${s.telegramMasked})` : '(chưa có)',
@@ -166,6 +167,12 @@ export function SettingsTab() {
             <Button variant="outline" size="sm" onClick={() => balance('sell', sellApi.balance)}>Xem số dư</Button>
             <span className="text-sm font-semibold text-primary">{balances.sell}</span>
           </div>
+          <KeyField
+            label="API token tempmail.id.vn" state={state.temp}
+            hint='Mail TẠM có API đọc OTP thẳng (không mở tab). Dùng cho flow "CapCut — đăng ký bằng mail tạm". Tạo token ở trang cá nhân tempmail.id.vn (chỉ hiện 1 lần).'
+            placeholder="Dán API token tempmail (dạng 12318|xxxx...)"
+            onSave={saver('tempmailApiToken', 'API token tempmail')}
+          />
       </Section>
 
       <Section title="Proxy">
