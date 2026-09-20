@@ -314,70 +314,30 @@ async function loginCapcut(page, email, password) {
 }
 
 async function joinTeam(page, inviteLink) {
+  const JOINED_MARKERS = ['already a member', 'joined', 'thành viên', 'đã tham gia', 'success'];
+  const JOIN_LABELS = ['Submit', 'Join space', 'Join', 'Accept', 'Tham gia', 'Chấp nhận'];
   try {
-    // B1: resolve shortlink /sv2/ → /team-invite/<token>
-    let teamUrl = inviteLink;
-    try {
-      const r = await fetch(inviteLink, { redirect: 'follow' });
-      if (r.url.includes('/team-invite/')) teamUrl = r.url.split('?')[0];
-      log(`  join: resolved → ${teamUrl.slice(0, 100)}`);
-    } catch { log(`  join: resolve lỗi — dùng URL gốc`); }
+    log(`  join: mở trang invite...`);
+    await page.goto(inviteLink, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(4_000);
 
-    // B2: thử XHR join từ trang hiện tại (/my-edit) — SDK ký XHR ở đây
-    const res = await page.evaluate(async (invUrl) => {
-      const sl = ms => new Promise(r => setTimeout(r, ms));
-      for (let i = 0; i < 20; i++) {
-        if (/sessionid=/.test(document.cookie)) break;
-        await sl(400);
-      }
-      return new Promise(resolve => {
-        try {
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', 'https://edit-api-sg.capcut.com/cc/v1/workspace/join_workspace_with_apply', true);
-          xhr.withCredentials = true;
-          xhr.setRequestHeader('Content-Type', 'application/json');
-          xhr.timeout = 20000;
-          xhr.onload = () => { try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({ raw: xhr.responseText.slice(0, 200) }); } };
-          xhr.onerror = () => resolve({ __err: 'xhr error' });
-          xhr.ontimeout = () => resolve({ __err: 'xhr timeout' });
-          xhr.send(JSON.stringify({
-            join_workspace_type: 1,
-            invite_link_param: { invitation_link: invUrl },
-            application_param: {},
-          }));
-        } catch (e) { resolve({ __err: String(e.message || e) }); }
-      });
-    }, teamUrl);
-
-    log(`  join: XHR từ /my-edit → ret=${res?.ret} errmsg=${res?.errmsg || ''}`);
-    if (res?.__err) { log(`  join: XHR lỗi — ${res.__err}`); }
-
-    // Nếu OK → xong
-    if (String(res?.ret) === '0' || /success/i.test(res?.errmsg || '')) {
-      log(`  join: OK — đã join workspace`);
+    const bodyText = await page.innerText('body').catch(() => '');
+    if (JOINED_MARKERS.some(m => bodyText.toLowerCase().includes(m))) {
+      log(`  join: đã là thành viên rồi`);
       return true;
     }
 
-    // B3: fallback — mở trang invite, bấm Submit (SDK ký khi click từ UI)
-    log(`  join: XHR lỗi — fallback bấm Submit trên trang invite...`);
-    await page.goto(inviteLink, { waitUntil: 'load', timeout: 30_000 });
-    // Chờ SDK load + trang render xong
-    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
-    await page.waitForTimeout(3_000);
-
-    // Bắt response join_workspace (đặt TRƯỚC khi click)
     const respPromise = page.waitForResponse(
       r => r.url().includes('join_workspace_with_apply'), { timeout: 20_000 }
     ).catch(() => null);
 
-    // Thử nhiều cách tìm + click nút Submit (Playwright click, KHÔNG dùng DOM click)
     let clicked = false;
-    for (const label of ['Submit', 'Join space', 'Join', 'Accept']) {
-      const loc = page.locator(`text="${label}"`).last();
+    for (const label of JOIN_LABELS) {
+      const loc = page.locator(`button:has-text("${label}"), div[role="button"]:has-text("${label}")`).last();
       if (await loc.isVisible({ timeout: 2_000 }).catch(() => false)) {
         log(`  join: thấy nút "${label}" — click...`);
         await loc.click({ timeout: 5_000 }).catch(async () => {
-          // Force click nếu bị che
           await loc.click({ force: true, timeout: 5_000 }).catch(() => {});
         });
         clicked = true;
@@ -386,8 +346,7 @@ async function joinTeam(page, inviteLink) {
     }
 
     if (!clicked) {
-      // Thử thêm: tìm bằng role button
-      const submitBtn = page.getByRole('button', { name: /submit|join/i }).last();
+      const submitBtn = page.getByRole('button', { name: /submit|join|accept/i }).last();
       if (await submitBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
         log(`  join: thấy button role — click...`);
         await submitBtn.click({ timeout: 5_000 }).catch(() => {});
@@ -396,21 +355,28 @@ async function joinTeam(page, inviteLink) {
     }
 
     if (!clicked) {
-      log(`  join: không tìm thấy nút Submit/Join`);
-      const btns = await page.locator('button:visible, [role="button"]:visible, span:visible').allTextContents().catch(() => []);
+      log(`  join: không tìm thấy nút Join`);
+      const btns = await page.locator('button:visible, [role="button"]:visible').allTextContents().catch(() => []);
       const unique = [...new Set(btns.map(t => t.trim()).filter(t => t.length > 0 && t.length < 30))];
-      if (unique.length) log(`  join: visible texts: [${unique.slice(0, 15).join(', ')}]`);
+      if (unique.length) log(`  join: visible buttons: [${unique.slice(0, 15).join(', ')}]`);
       return false;
     }
 
-    log(`  join: đã click — chờ API response...`);
+    log(`  join: đã click — chờ response...`);
     const resp = await respPromise;
     if (resp) {
       const body = await resp.json().catch(() => ({}));
       log(`  join: response ret=${body?.ret} errmsg=${body?.errmsg || ''}`);
       return String(body?.ret) === '0' || /success/i.test(body?.errmsg || '');
     }
-    log(`  join: click xong nhưng không bắt được API response — coi như OK`);
+
+    await page.waitForTimeout(3_000);
+    const afterText = await page.innerText('body').catch(() => '');
+    if (JOINED_MARKERS.some(m => afterText.toLowerCase().includes(m))) {
+      log(`  join: join thành công (body text)`);
+      return true;
+    }
+    log(`  join: click xong nhưng không xác nhận được — coi như OK`);
     return true;
   } catch (e) { log(`  join: lỗi — ${e.message.slice(0, 80)}`); return false; }
 }
@@ -676,8 +642,8 @@ const server = createServer(async (req, res) => {
 
     // UI
     if (path === '/' || path === '/index.html') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(HTML);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(readFileSync(resolve(__dir, 'ui.html'), 'utf-8'));
       return;
     }
 
@@ -690,276 +656,3 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`\n  CapCut Auto — http://localhost:${PORT}\n`);
 });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// HTML UI
-// ═══════════════════════════════════════════════════════════════════════════
-
-const HTML = `<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CapCut Auto</title>
-<style>
-  :root { --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a; --text: #e4e4e7; --muted: #71717a; --accent: #6366f1; --green: #22c55e; --red: #ef4444; --yellow: #eab308; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-  .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 20px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-  h1 span { background: var(--accent); color: white; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
-  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
-  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 12px; }
-  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
-  input, select, textarea { width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; outline: none; }
-  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
-  textarea { resize: vertical; min-height: 80px; font-family: monospace; }
-  .field { margin-bottom: 10px; }
-  .row { display: flex; gap: 8px; }
-  .row > * { flex: 1; }
-  button { padding: 8px 16px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
-  button:hover { opacity: 0.85; }
-  .btn-primary { background: var(--accent); color: white; }
-  .btn-danger { background: var(--red); color: white; }
-  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
-  .btn-sm { padding: 4px 10px; font-size: 12px; }
-  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-  .stat { text-align: center; padding: 10px; background: var(--bg); border-radius: 8px; }
-  .stat .n { font-size: 24px; font-weight: 700; }
-  .stat .l { font-size: 11px; color: var(--muted); margin-top: 2px; }
-  .stat.ok .n { color: var(--green); }
-  .stat.fail .n { color: var(--red); }
-  #log { background: #000; border-radius: 8px; padding: 10px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; height: 320px; overflow-y: auto; line-height: 1.6; }
-  #log .time { color: var(--muted); }
-  #log .ok { color: var(--green); }
-  #log .err { color: var(--red); }
-  #log .warn { color: var(--yellow); }
-  .results-table { width: 100%; font-size: 12px; border-collapse: collapse; }
-  .results-table th, .results-table td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
-  .results-table th { color: var(--muted); font-weight: 600; }
-  .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
-  .badge.yes { background: #16a34a22; color: var(--green); }
-  .badge.no { background: #dc262622; color: var(--red); }
-  .badge.err { background: #dc262622; color: var(--red); }
-  .balance { font-size: 14px; font-weight: 600; color: var(--green); }
-  .running-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1s infinite; margin-left: 4px; }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>CapCut Auto <span id="status-badge">IDLE</span></h1>
-  <div class="grid">
-    <div>
-      <div class="card" style="margin-bottom: 12px">
-        <h2>Cấu hình</h2>
-        <div class="field">
-          <label>Selltaikhoan API Key</label>
-          <div class="row"><input id="stkApiKey" type="password" placeholder="API key"><button class="btn-outline btn-sm" onclick="checkBalance()">Số dư</button></div>
-          <div id="balance" style="margin-top:4px"></div>
-        </div>
-        <div class="field">
-          <label>Sản phẩm mail (ID) <button class="btn-outline btn-sm" onclick="loadProducts()" style="margin-left:4px">Xem DS</button></label>
-          <input id="stkProduct" placeholder="VD: 6762">
-          <div id="products" style="margin-top:4px;font-size:12px;color:var(--muted);max-height:100px;overflow-y:auto"></div>
-        </div>
-        <div class="field">
-          <label>Link mời Team CapCut</label>
-          <input id="teamInviteLink" placeholder="https://www.capcut.com/sv2/...">
-        </div>
-        <div class="field">
-          <label>Proxy Keys (phẩy ngăn cách)</label>
-          <input id="proxyKeys" placeholder="key1,key2,key3">
-        </div>
-        <div class="row">
-          <div class="field"><label>Delay (ms)</label><input id="delayMs" type="number" value="3000"></div>
-          <div class="field"><label>Xoay IP</label><select id="rotateEach"><option value="true">Mỗi acc</option><option value="false">Không</option></select></div>
-        </div>
-        <button class="btn-outline" style="width:100%;margin-top:4px" onclick="saveConfig()">Lưu cấu hình</button>
-      </div>
-
-      <div class="card">
-        <h2>Chạy</h2>
-        <div class="field">
-          <label>Chế độ</label>
-          <select id="mode">
-            <option value="check">Check info (login + lấy thông tin)</option>
-            <option value="join">Join team (login + vào team)</option>
-            <option value="all">Check + Join (cả hai)</option>
-            <option value="register">Mua mail + Đăng ký CapCut + Join + Check</option>
-          </select>
-        </div>
-        <div class="field" id="countField" style="display:none">
-          <label>Số account cần mua</label>
-          <input id="count" type="number" value="5" min="1" max="100">
-        </div>
-        <div class="field" id="accountsField">
-          <label>Danh sách (email|password mỗi dòng, hoặc đọc accounts.txt)</label>
-          <textarea id="accounts" rows="5" placeholder="email1@mail.com|pass1&#10;email2@mail.com|pass2"></textarea>
-        </div>
-        <div class="actions">
-          <button class="btn-primary" id="btnRun" onclick="startRun()">▶ Chạy</button>
-          <button class="btn-danger" id="btnStop" onclick="stopRun()" disabled>⏹ Dừng</button>
-        </div>
-      </div>
-    </div>
-
-    <div>
-      <div class="stats">
-        <div class="stat"><div class="n" id="s-total">0</div><div class="l">Tổng</div></div>
-        <div class="stat"><div class="n" id="s-done">0</div><div class="l">Đã chạy</div></div>
-        <div class="stat ok"><div class="n" id="s-ok">0</div><div class="l">OK</div></div>
-        <div class="stat fail"><div class="n" id="s-fail">0</div><div class="l">Lỗi</div></div>
-      </div>
-      <div class="card" style="margin-bottom:12px">
-        <h2>Log</h2>
-        <div id="log"></div>
-      </div>
-      <div class="card">
-        <h2>Kết quả</h2>
-        <div style="overflow-x:auto">
-          <table class="results-table">
-            <thead><tr><th>Email</th><th>UID</th><th>VIP</th><th>Trial</th><th>Credit</th><th>Joined</th></tr></thead>
-            <tbody id="results"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-const $ = id => document.getElementById(id);
-let isRunning = false;
-
-// Load config
-fetch('/api/config').then(r=>r.json()).then(c => {
-  $('stkApiKey').value = c.stkApiKey || '';
-  $('stkProduct').value = c.stkProduct || '';
-  $('teamInviteLink').value = c.teamInviteLink || '';
-  $('proxyKeys').value = c.proxyKeys || '';
-  $('delayMs').value = c.delayMs || 3000;
-  $('rotateEach').value = String(c.rotateEach ?? true);
-  $('mode').value = c.mode || 'check';
-  $('count').value = c.count || 5;
-  toggleMode();
-});
-
-$('mode').addEventListener('change', toggleMode);
-function toggleMode() {
-  const m = $('mode').value;
-  $('countField').style.display = m === 'register' ? '' : 'none';
-  $('accountsField').style.display = m === 'register' ? 'none' : '';
-}
-
-function saveConfig() {
-  const body = {
-    stkApiKey: $('stkApiKey').value.trim(),
-    stkProduct: $('stkProduct').value.trim(),
-    teamInviteLink: $('teamInviteLink').value.trim(),
-    proxyKeys: $('proxyKeys').value.trim(),
-    delayMs: Number($('delayMs').value) || 3000,
-    rotateEach: $('rotateEach').value === 'true',
-    mode: $('mode').value,
-    count: Number($('count').value) || 5,
-  };
-  fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    .then(() => addLog('Đã lưu cấu hình', 'ok'));
-}
-
-async function checkBalance() {
-  saveConfig();
-  try {
-    const r = await fetch('/api/stk/balance').then(r => r.json());
-    if (r.error) { $('balance').innerHTML = '<span style="color:var(--red)">' + r.error + '</span>'; return; }
-    $('balance').innerHTML = '<span class="balance">' + r.money.toLocaleString() + 'đ</span>';
-  } catch (e) { $('balance').textContent = 'Lỗi: ' + e.message; }
-}
-
-async function loadProducts() {
-  saveConfig();
-  $('products').textContent = 'Đang tải...';
-  try {
-    const r = await fetch('/api/stk/products').then(r => r.json());
-    if (r.error) { $('products').textContent = r.error; return; }
-    const filtered = r.products.filter(p => /mail|outlook|hotmail|gmail/i.test(p.name));
-    $('products').innerHTML = filtered.map(p =>
-      '<div style="cursor:pointer;padding:2px 0" onclick="document.getElementById(\\'stkProduct\\').value=\\'' + p.id + '\\'"><b>' + p.id + '</b> — ' + p.name + ' — ' + p.price + 'đ (kho: ' + (p.amount ?? '?') + ')</div>'
-    ).join('') || '<div>Không tìm thấy sản phẩm mail. Tổng: ' + r.products.length + '</div>';
-  } catch (e) { $('products').textContent = 'Lỗi: ' + e.message; }
-}
-
-function startRun() {
-  saveConfig();
-  const mode = $('mode').value;
-  const body = { mode };
-  if (mode === 'register') {
-    body.count = Number($('count').value) || 5;
-  } else {
-    body.accounts = $('accounts').value;
-  }
-  fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    .then(r => r.json()).then(r => { if (r.error) addLog(r.error, 'err'); });
-}
-
-function stopRun() {
-  fetch('/api/stop').then(() => addLog('Đang dừng...', 'warn'));
-}
-
-function addLog(msg, cls = '') {
-  const el = document.createElement('div');
-  el.className = cls;
-  const now = new Date().toLocaleTimeString('vi');
-  el.innerHTML = '<span class="time">[' + now + ']</span> ' + msg;
-  $('log').appendChild(el);
-  $('log').scrollTop = $('log').scrollHeight;
-}
-
-function badge(val) {
-  if (!val) return '';
-  const cls = val === 'YES' ? 'yes' : val === 'NO' ? 'no' : 'err';
-  return '<span class="badge ' + cls + '">' + val + '</span>';
-}
-
-function updateUI(data) {
-  if (data.type === 'state') {
-    isRunning = data.running;
-    $('btnRun').disabled = data.running;
-    $('btnStop').disabled = !data.running;
-    $('status-badge').textContent = data.running ? 'RUNNING' : 'IDLE';
-    $('status-badge').innerHTML = data.running ? 'RUNNING <span class="running-dot"></span>' : 'IDLE';
-    $('status-badge').style.background = data.running ? 'var(--green)' : 'var(--accent)';
-
-    const s = data.stats || {};
-    $('s-total').textContent = s.total || 0;
-    $('s-done').textContent = s.done || 0;
-    $('s-ok').textContent = s.ok || 0;
-    $('s-fail').textContent = s.fail || 0;
-
-    const tbody = $('results');
-    tbody.innerHTML = '';
-    for (const r of (data.results || []).slice().reverse()) {
-      const tr = document.createElement('tr');
-      if (r.error) {
-        tr.innerHTML = '<td>' + r.email + '</td><td colspan="5"><span class="badge err">' + r.error + '</span></td>';
-      } else {
-        tr.innerHTML = '<td>' + r.email + '</td><td>' + (r.uid||'') + '</td><td>' + badge(r.vip) + '</td><td>' + badge(r.trial) + '</td><td>' + (r.credit??'') + '</td><td>' + badge(r.joined) + '</td>';
-      }
-      tbody.appendChild(tr);
-    }
-  } else if (data.msg) {
-    const cls = data.msg.includes('✓') ? 'ok' : data.msg.includes('✗') ? 'err' : data.msg.includes('⚠') ? 'warn' : '';
-    addLog(data.msg, cls);
-  }
-}
-
-// SSE
-const es = new EventSource('/api/events');
-es.onmessage = e => { try { updateUI(JSON.parse(e.data)); } catch {} };
-es.onerror = () => { setTimeout(() => {}, 3000); };
-</script>
-</body>
-</html>`;

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CapCut Auto</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #141721; --panel2: #1b1f2b; --border: #262a38;
+    --text: #e6e7ec; --muted: #7c8095; --accent: #6d5cff; --accent2: #8b7dff;
+    --green: #2ecc71; --red: #ff5c5c; --yellow: #f4c542;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif; background: var(--bg); color: var(--text); }
+  .app { max-width: 1240px; margin: 0 auto; padding: 20px 16px 40px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .status { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--border); color: var(--muted); }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .status.running { color: var(--green); border-color: #2ecc7140; }
+  .status.running .dot { background: var(--green); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  .layout { display: grid; grid-template-columns: 360px 1fr; gap: 16px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .card + .card { margin-top: 14px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 12px; }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  input, select, textarea { width: 100%; padding: 9px 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 13px; outline: none; }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.5; }
+  .field { margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 5px; }
+
+  button { padding: 9px 14px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text); background: var(--panel2); border: 1px solid var(--border); transition: .15s; }
+  button:hover { border-color: var(--accent2); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent2); }
+  .btn-danger { background: #3a1b1b; border-color: #5a2a2a; color: var(--red); }
+  .btn-sm { padding: 6px 10px; font-size: 12px; }
+  .btn-block { width: 100%; }
+
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+  .mode { text-align: left; padding: 10px 11px; border-radius: 9px; background: var(--bg); border: 1px solid var(--border); }
+  .mode b { display: block; font-size: 13px; }
+  .mode small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .mode.active { border-color: var(--accent); background: #6d5cff1a; }
+  .mode.active small { color: var(--accent2); }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px; text-align: center; }
+  .stat .n { font-size: 26px; font-weight: 700; }
+  .stat .l { font-size: 11px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: .06em; }
+  .stat.ok .n { color: var(--green); }
+  .stat.fail .n { color: var(--red); }
+
+  #log { background: #05060a; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; height: 300px; overflow-y: auto; line-height: 1.7; white-space: pre-wrap; }
+  #log .t { color: #4d5166; }
+  #log .ok { color: var(--green); }
+  #log .err { color: var(--red); }
+  #log .warn { color: var(--yellow); }
+
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .toolbar h2 { margin: 0; }
+  .toolbar .right { display: flex; gap: 6px; }
+
+  table { width: 100%; font-size: 12px; border-collapse: collapse; }
+  th, td { padding: 8px 8px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td.mono { font-family: ui-monospace, Menlo, monospace; }
+  tbody tr:hover { background: #ffffff06; }
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+  .badge.yes { background: #2ecc7122; color: var(--green); }
+  .badge.no { background: #ff5c5c22; color: var(--red); }
+  .badge.err { background: #ff5c5c22; color: var(--red); white-space: normal; }
+  .empty { color: var(--muted); font-size: 12px; padding: 14px 0; text-align: center; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+  .tab { background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 12px; color: var(--muted); font-size: 12px; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab:hover { border-color: transparent; border-bottom-color: var(--border); color: var(--text); }
+  .tab.active:hover { border-bottom-color: var(--accent); }
+  .pane { display: none; }
+  .pane.active { display: block; }
+  #export { min-height: 160px; }
+  .balance { color: var(--green); font-weight: 600; font-size: 13px; }
+  .products div { padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .products div:hover { background: var(--panel2); }
+  .products { max-height: 110px; overflow-y: auto; margin-top: 6px; }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--panel2); border: 1px solid var(--border); padding: 10px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: none; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>CapCut Auto</h1>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">IDLE</span></div>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <div class="card">
+        <h2>Cấu hình</h2>
+        <div class="field">
+          <label>Selltaikhoan API Key</label>
+          <div class="row">
+            <input id="stkApiKey" type="password" placeholder="API key" autocomplete="off">
+            <button class="btn-sm" style="flex:0 0 auto" onclick="checkBalance()">Số dư</button>
+          </div>
+          <div class="hint" id="balance"></div>
+        </div>
+        <div class="field">
+          <label>Sản phẩm mail (ID)</label>
+          <div class="row">
+            <input id="stkProduct" placeholder="VD: 6762">
+            <button class="btn-sm" style="flex:0 0 auto" onclick="loadProducts()">Xem DS</button>
+          </div>
+          <div class="products" id="products"></div>
+        </div>
+        <div class="field">
+          <label>Link mời Team CapCut</label>
+          <input id="teamInviteLink" placeholder="https://www.capcut.com/sv2/...">
+        </div>
+        <div class="field">
+          <label>Proxy keys (phẩy ngăn cách)</label>
+          <input id="proxyKeys" placeholder="key1,key2,key3">
+        </div>
+        <div class="row">
+          <div class="field"><label>Delay (ms)</label><input id="delayMs" type="number" value="3000"></div>
+          <div class="field"><label>Xoay IP</label>
+            <select id="rotateEach"><option value="true">Mỗi acc</option><option value="false">Không</option></select>
+          </div>
+        </div>
+        <button class="btn-block" onclick="saveConfig(true)">Lưu cấu hình</button>
+      </div>
+
+      <div class="card">
+        <h2>Chạy</h2>
+        <div class="modes" id="modes">
+          <button class="mode" data-mode="register"><b>Đăng ký mới</b><small>Mua mail → reg → join → check</small></button>
+          <button class="mode" data-mode="all"><b>Check + Join</b><small>Login → join team → info</small></button>
+          <button class="mode" data-mode="check"><b>Check info</b><small>Login → lấy thông tin</small></button>
+          <button class="mode" data-mode="join"><b>Join team</b><small>Login → vào team</small></button>
+        </div>
+
+        <div class="field" id="countField">
+          <label>Số account cần mua</label>
+          <input id="count" type="number" value="5" min="1" max="100">
+        </div>
+
+        <div class="field" id="accountsField">
+          <label>Danh sách account</label>
+          <textarea id="accounts" rows="6" placeholder="email1@mail.com|pass1&#10;email2@mail.com|pass2"></textarea>
+          <div class="hint">Mỗi dòng <code>email|password</code>. Để trống → đọc accounts.txt</div>
+        </div>
+
+        <div class="row">
+          <button class="btn-primary" id="btnRun" onclick="startRun()">▶ Chạy</button>
+          <button class="btn-danger" id="btnStop" onclick="stopRun()" disabled>■ Dừng</button>
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <div class="stats">
+        <div class="stat"><div class="n" id="s-total">0</div><div class="l">Tổng</div></div>
+        <div class="stat"><div class="n" id="s-done">0</div><div class="l">Đã chạy</div></div>
+        <div class="stat ok"><div class="n" id="s-ok">0</div><div class="l">OK</div></div>
+        <div class="stat fail"><div class="n" id="s-fail">0</div><div class="l">Lỗi</div></div>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <h2>Log</h2>
+          <div class="right"><button class="btn-sm" onclick="clearLog()">Xóa</button></div>
+        </div>
+        <div id="log"></div>
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <h2>Kết quả</h2>
+          <div class="right">
+            <button class="btn-sm" onclick="copyExport()">Copy email|pass</button>
+            <button class="btn-sm" onclick="copyExport(true)">Copy full</button>
+          </div>
+        </div>
+        <div class="tabs">
+          <button class="tab active" data-pane="table" onclick="showPane('table')">Bảng</button>
+          <button class="tab" data-pane="export" onclick="showPane('export')">Text (email|pass)</button>
+        </div>
+        <div class="pane active" id="pane-table" style="overflow-x:auto">
+          <table>
+            <thead><tr><th>#</th><th>Email</th><th>UID</th><th>VIP</th><th>Trial</th><th>Credit</th><th>Joined</th></tr></thead>
+            <tbody id="results"></tbody>
+          </table>
+          <div class="empty" id="empty">Chưa có kết quả</div>
+        </div>
+        <div class="pane" id="pane-export">
+          <textarea id="export" readonly placeholder="email|password sẽ hiện ở đây..."></textarea>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let currentMode = 'check';
+let lastResults = [];
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 1400);
+}
+
+function setMode(m) {
+  currentMode = m;
+  document.querySelectorAll('.mode').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+  $('countField').style.display = m === 'register' ? '' : 'none';
+  $('accountsField').style.display = m === 'register' ? 'none' : '';
+}
+document.querySelectorAll('.mode').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+setMode(currentMode);
+
+function showPane(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.pane === name));
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + name));
+}
+
+function readConfig() {
+  return {
+    stkApiKey: $('stkApiKey').value.trim(),
+    stkProduct: $('stkProduct').value.trim(),
+    teamInviteLink: $('teamInviteLink').value.trim(),
+    proxyKeys: $('proxyKeys').value.trim(),
+    delayMs: Number($('delayMs').value) || 3000,
+    rotateEach: $('rotateEach').value === 'true',
+    mode: currentMode,
+    count: Number($('count').value) || 5,
+  };
+}
+
+async function saveConfig(notify) {
+  await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(readConfig()) });
+  if (notify) toast('Đã lưu cấu hình');
+}
+
+fetch('/api/config').then(r => r.json()).then(c => {
+  $('stkApiKey').value = c.stkApiKey || '';
+  $('stkProduct').value = c.stkProduct || '';
+  $('teamInviteLink').value = c.teamInviteLink || '';
+  $('proxyKeys').value = c.proxyKeys || '';
+  $('delayMs').value = c.delayMs || 3000;
+  $('rotateEach').value = String(c.rotateEach ?? true);
+  $('count').value = c.count || 5;
+  setMode(c.mode || 'check');
+});
+
+async function checkBalance() {
+  await saveConfig();
+  try {
+    const r = await fetch('/api/stk/balance').then(r => r.json());
+    $('balance').innerHTML = r.error ? '<span style="color:var(--red)">' + r.error + '</span>'
+      : '<span class="balance">' + Number(r.money).toLocaleString('vi') + 'đ</span>';
+  } catch (e) { $('balance').textContent = 'Lỗi: ' + e.message; }
+}
+
+async function loadProducts() {
+  await saveConfig();
+  $('products').textContent = 'Đang tải...';
+  try {
+    const r = await fetch('/api/stk/products').then(r => r.json());
+    if (r.error) { $('products').textContent = r.error; return; }
+    const list = r.products.filter(p => /mail|outlook|hotmail|gmail/i.test(p.name));
+    $('products').innerHTML = '';
+    if (!list.length) { $('products').textContent = 'Không có sản phẩm mail (tổng ' + r.products.length + ')'; return; }
+    for (const p of list) {
+      const d = document.createElement('div');
+      d.innerHTML = '<b>' + p.id + '</b> — ' + p.name + ' — ' + p.price + 'đ (kho: ' + (p.amount ?? '?') + ')';
+      d.onclick = () => { $('stkProduct').value = p.id; toast('Chọn ' + p.id); };
+      $('products').appendChild(d);
+    }
+  } catch (e) { $('products').textContent = 'Lỗi: ' + e.message; }
+}
+
+async function startRun() {
+  await saveConfig();
+  const body = { mode: currentMode };
+  if (currentMode === 'register') body.count = Number($('count').value) || 5;
+  else body.accounts = $('accounts').value;
+  const r = await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+  if (r.error) addLog(r.error, 'err');
+}
+
+function stopRun() { fetch('/api/stop').then(() => addLog('Đang dừng...', 'warn')); }
+function clearLog() { $('log').innerHTML = ''; }
+
+function addLog(msg, cls) {
+  const el = document.createElement('div');
+  if (cls) el.className = cls;
+  const t = document.createElement('span'); t.className = 't'; t.textContent = '[' + new Date().toLocaleTimeString('vi') + '] ';
+  el.appendChild(t); el.appendChild(document.createTextNode(msg));
+  $('log').appendChild(el);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function badge(v) {
+  if (!v) return '';
+  const cls = v === 'YES' ? 'yes' : v === 'NO' ? 'no' : 'err';
+  return '<span class="badge ' + cls + '">' + v + '</span>';
+}
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function renderResults(results) {
+  lastResults = results || [];
+  const tbody = $('results');
+  tbody.innerHTML = '';
+  const rows = lastResults.slice().reverse();
+  $('empty').style.display = rows.length ? 'none' : '';
+  rows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    const n = rows.length - i;
+    tr.innerHTML = r.error
+      ? '<td>' + n + '</td><td class="mono">' + esc(r.email) + '</td><td colspan="5"><span class="badge err">' + esc(r.error) + '</span></td>'
+      : '<td>' + n + '</td><td class="mono">' + esc(r.email) + '</td><td class="mono">' + esc(r.uid) + '</td><td>' + badge(r.vip) + '</td><td>' + badge(r.trial) + '</td><td>' + esc(r.credit) + '</td><td>' + badge(r.joined) + '</td>';
+    tbody.appendChild(tr);
+  });
+  $('export').value = lastResults.filter(r => !r.error && r.email).map(r => r.email + '|' + (r.password || '')).join('\n');
+}
+
+function copyExport(full) {
+  const text = full
+    ? lastResults.filter(r => !r.error && r.email).map(r => [r.email, r.password || '', r.uid || '', r.vip || '', r.trial || '', r.credit ?? '', r.joined || ''].join('|')).join('\n')
+    : $('export').value;
+  if (!text) { toast('Chưa có kết quả'); return; }
+  navigator.clipboard.writeText(text).then(() => toast('Đã copy ' + text.split('\n').length + ' dòng'));
+}
+
+function onEvent(data) {
+  if (data.type === 'state') {
+    $('btnRun').disabled = data.running;
+    $('btnStop').disabled = !data.running;
+    $('status').classList.toggle('running', data.running);
+    $('statusText').textContent = data.running ? 'RUNNING' : 'IDLE';
+    const s = data.stats || {};
+    $('s-total').textContent = s.total || 0;
+    $('s-done').textContent = s.done || 0;
+    $('s-ok').textContent = s.ok || 0;
+    $('s-fail').textContent = s.fail || 0;
+    renderResults(data.results);
+  } else if (data.msg) {
+    const cls = data.msg.includes('✓') ? 'ok' : data.msg.includes('✗') ? 'err' : data.msg.includes('⚠') ? 'warn' : '';
+    addLog(data.msg, cls);
+  }
+}
+
+function connect() {
+  const es = new EventSource('/api/events');
+  es.onmessage = e => { try { onEvent(JSON.parse(e.data)); } catch {} };
+  es.onerror = () => { es.close(); setTimeout(connect, 3000); };
+}
+connect();
+</script>
+</body>
+</html>

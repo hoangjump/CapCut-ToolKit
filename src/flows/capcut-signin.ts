@@ -186,60 +186,27 @@ export async function joinTeamViaLink(
   log: FlowLog,
   profileName: string,
 ): Promise<boolean> {
+  const JOINED_MARKERS = ['already a member', 'joined', 'thành viên', 'đã tham gia', 'success'];
+  const JOIN_LABELS = ['Submit', 'Join space', 'Join', 'Accept', 'Tham gia', 'Chấp nhận'];
   try {
-    // B1: resolve shortlink /sv2/ → /team-invite/<token> (Node fetch)
-    let teamUrl = inviteLink;
-    try {
-      const r = await globalThis.fetch(inviteLink, { redirect: 'follow' });
-      if (r.url.includes('/team-invite/')) teamUrl = r.url.split('?')[0];
-      log.info(`[${profileName}] join team: resolved → ${teamUrl.slice(0, 100)}`);
-    } catch { /* dùng URL gốc */ }
+    log.info(`[${profileName}] join team: mở trang invite...`);
+    await page.goto(inviteLink, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(4_000);
 
-    // B2: thử XHR từ trang hiện tại (/my-edit)
-    const res: any = await page.evaluate(async (invUrl: string) => {
-      const g = globalThis as any;
-      const sl = (ms: number) => new Promise((r) => setTimeout(r, ms));
-      for (let i = 0; i < 20; i++) {
-        if (/sessionid=/.test(g.document.cookie)) break;
-        await sl(400);
-      }
-      return new Promise((resolve) => {
-        try {
-          const xhr = new g.XMLHttpRequest();
-          xhr.open('POST', 'https://edit-api-sg.capcut.com/cc/v1/workspace/join_workspace_with_apply', true);
-          xhr.withCredentials = true;
-          xhr.setRequestHeader('Content-Type', 'application/json');
-          xhr.timeout = 20000;
-          xhr.onload = () => { try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({ raw: String(xhr.responseText).slice(0, 200) }); } };
-          xhr.onerror = () => resolve({ __err: 'xhr error' });
-          xhr.ontimeout = () => resolve({ __err: 'xhr timeout' });
-          xhr.send(JSON.stringify({
-            join_workspace_type: 1,
-            invite_link_param: { invitation_link: invUrl },
-            application_param: {},
-          }));
-        } catch (e: any) { resolve({ __err: String((e && e.message) || e) }); }
-      });
-    }, teamUrl);
-
-    if (String(res?.ret) === '0' || /success/i.test(res?.errmsg || '')) {
-      log.info(`[${profileName}] join team OK via XHR (ret=${res.ret})`);
+    const bodyText = await page.innerText('body').catch(() => '');
+    if (JOINED_MARKERS.some((m) => bodyText.toLowerCase().includes(m))) {
+      log.info(`[${profileName}] join team: đã là thành viên`);
       return true;
     }
-    log.info(`[${profileName}] join XHR: ret=${res?.ret} ${res?.errmsg || res?.__err || ''} — fallback click Submit`);
-
-    // B3: fallback — mở trang invite, bấm Submit (Playwright click, SDK ký)
-    await page.goto(inviteLink, { waitUntil: 'load', timeout: 30_000 });
-    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
-    await page.waitForTimeout(3_000);
 
     const respPromise = page.waitForResponse(
       (r) => r.url().includes('join_workspace_with_apply'), { timeout: 20_000 },
     ).catch(() => null);
 
     let clicked = false;
-    for (const label of ['Submit', 'Join space', 'Join', 'Accept']) {
-      const loc = page.locator(`text="${label}"`).last();
+    for (const label of JOIN_LABELS) {
+      const loc = page.locator(`button:has-text("${label}"), div[role="button"]:has-text("${label}")`).last();
       if (await loc.isVisible({ timeout: 2_000 }).catch(() => false)) {
         log.info(`[${profileName}] join team: thấy "${label}" — click`);
         await loc.click({ timeout: 5_000 }).catch(async () => {
@@ -251,7 +218,16 @@ export async function joinTeamViaLink(
     }
 
     if (!clicked) {
-      log.warn(`[${profileName}] join team: không tìm thấy nút Submit/Join`);
+      const submitBtn = page.getByRole('button', { name: /submit|join|accept/i }).last();
+      if (await submitBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        log.info(`[${profileName}] join team: thấy button role — click`);
+        await submitBtn.click({ timeout: 5_000 }).catch(() => {});
+        clicked = true;
+      }
+    }
+
+    if (!clicked) {
+      log.warn(`[${profileName}] join team: không tìm thấy nút Join`);
       return false;
     }
 
@@ -261,7 +237,14 @@ export async function joinTeamViaLink(
       log.info(`[${profileName}] join team response: ret=${body?.ret} ${body?.errmsg || ''}`);
       return String(body?.ret) === '0' || /success/i.test(body?.errmsg || '');
     }
-    log.info(`[${profileName}] join team: click xong, không bắt được response — coi như OK`);
+
+    await page.waitForTimeout(3_000);
+    const afterText = await page.innerText('body').catch(() => '');
+    if (JOINED_MARKERS.some((m) => afterText.toLowerCase().includes(m))) {
+      log.info(`[${profileName}] join team thành công (body text)`);
+      return true;
+    }
+    log.info(`[${profileName}] join team: click xong, không xác nhận được — coi như OK`);
     return true;
   } catch (e) {
     log.warn(`[${profileName}] join team lỗi: ${(e as Error).message.slice(0, 120)}`);
