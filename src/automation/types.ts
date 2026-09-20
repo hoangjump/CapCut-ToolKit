@@ -55,6 +55,8 @@ export interface FlowContext {
    *  refresh_token/client_id để trống (yopmail không có). Dòng sheet vẫn có
    *  email+password để tái nhập/đăng nhập CapCut. */
   reportMail: (email: string, password?: string) => void;
+  /** Link mời vào team CapCut — flow join sau đăng ký. Absent = không join. */
+  teamInviteLink?: string;
   /** Scoped to `flow:<profileName>` so batch logs stay readable. */
   log: Logger;
 }

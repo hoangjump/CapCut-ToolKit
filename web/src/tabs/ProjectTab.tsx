@@ -107,6 +107,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   const [poolTags, setPoolTags] = useState((project.ephemeralProxyPool?.tags || []).join(', '));
   const [poolLive, setPoolLive] = useState(project.ephemeralProxyPool?.liveOnly !== false);
   const [note, setNote] = useState(project.note || '');
+  const [teamInviteLink, setTeamInviteLink] = useState(project.teamInviteLink || '');
   const [blockImages, setBlockImages] = useState(!!project.blockImages);
   const [headless, setHeadless] = useState(project.headless === true);
   const [distributionEnabled, setDistributionEnabled] = useState(project.telegramDistribution?.enabled ?? false);
@@ -167,13 +168,14 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
       ephemeralProxyPool: usePool ? { tags: poolTags.split(',').map((s) => s.trim()).filter(Boolean), liveOnly: poolLive } : null,
       blockImages,
       headless,
+      teamInviteLink: teamInviteLink.trim() || undefined,
       telegramDistribution: workEmployeesLoaded
         ? { enabled: distributionEnabled, allocations: distributionAllocations }
         : undefined,
       note,
     });
     setSaved(true); setTimeout(() => setSaved(false), 1200); onChanged();
-  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, mailStrategy, mailStockTags, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
+  }, [name, flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, mailStrategy, mailStockTags, smsService, usePool, poolTags, poolLive, blockImages, headless, teamInviteLink, distributionEnabled, quotaByEmployee, workEmployees, workEmployeesLoaded, note, project.id, project.name, onChanged]);
 
   const doSave = useCallback(() => {
     clearTimeout(saveTimer.current);
@@ -185,7 +187,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   useEffect(() => {
     if (firstRun.current) { firstRun.current = false; return; }
     doSave();
-  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, mailStrategy, mailStockTags, smsService, usePool, poolTags, poolLive, blockImages, headless, distributionEnabled, quotaByEmployee, note, doSave]);
+  }, [flowName, profileIds, mailId, concurrency, ephemeral, mailProvider, buyType, buyQuality, buyProductId, mailStrategy, mailStockTags, smsService, usePool, poolTags, poolLive, blockImages, headless, teamInviteLink, distributionEnabled, quotaByEmployee, note, doSave]);
 
   useEffect(() => {
     if (workEmployeesLoaded && distributionEnabled && (flowName === 'capcut-signin' || flowName === 'capcut-signin-yopmail' || flowName === 'capcut-signin-tempmail') && String(distributionTotal) !== ephemeral) {
@@ -230,6 +232,7 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
   // → đều phân phối được cho nhân viên. Flow mail-tạm (yopmail/tempmail) KHÔNG mua
   // mail nên ẩn phần cấu hình "Mail và OTP".
   const isSelfMail = flowName === 'capcut-signin-yopmail' || flowName === 'capcut-signin-tempmail';
+  const isCapcutLogin = flowName === 'capcut-login';
   const isCapcut = flowName === 'capcut-signin' || isSelfMail;
   const nameById = (pid: string) => allProfiles.find((p) => p.id === pid)?.name || (pid.length > 10 ? pid.slice(0, 8) + '…' : pid);
   const sellNeedle = sellSearch.trim().toLowerCase();
@@ -337,9 +340,16 @@ function ProjectConfig({ project, flows, onChanged, onDeleted }: { project: Proj
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border p-3"><span className="text-sm">Chạy ẩn (Headless)<span className="block text-xs text-muted-foreground">Không mở cửa sổ Camoufox</span></span><Switch checked={headless} onCheckedChange={setHeadless} /></label>
           <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border p-3"><span className="text-sm">Chặn tải hình ảnh<span className="block text-xs text-muted-foreground">Chạy nhanh hơn, tiết kiệm băng thông proxy</span></span><Switch checked={blockImages} onCheckedChange={setBlockImages} /></label>
         </ConfigSection>
+
+        {(isCapcut || isSelfMail) && (
+        <ConfigSection title="Team CapCut" description="Sau đăng ký, tự join team qua link mời.">
+          <Input value={teamInviteLink} onChange={(e) => setTeamInviteLink(e.target.value)} placeholder="https://www.capcut.com/sv2/..." />
+          <p className="text-xs text-muted-foreground">Dán link mời từ trang Space. Bỏ trống = không join team. Link có hạn sử dụng và giới hạn thành viên.</p>
+        </ConfigSection>
+        )}
       </div>
 
-      {flowName !== 'chatgpt-signup' && !isSelfMail && (
+      {flowName !== 'chatgpt-signup' && !isSelfMail && !isCapcutLogin && (
         <ConfigSection title="Mail và OTP" description="Chọn cách mua mail mới và cách dùng kho dự phòng khi nhà cung cấp lỗi hoặc hết hàng.">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1.5">

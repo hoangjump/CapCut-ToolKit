@@ -175,6 +175,7 @@ export function registerProjectRoutes(app: Express, { profiles, browsers, mails,
       if (body.blockImages !== undefined) patch.blockImages = body.blockImages === true ? true : undefined;
       if (body.headless !== undefined) patch.headless = body.headless === true ? true : undefined;
       if (body.telegramDistribution !== undefined) patch.telegramDistribution = parseTelegramDistribution(body.telegramDistribution);
+      if (body.teamInviteLink !== undefined) patch.teamInviteLink = body.teamInviteLink ? String(body.teamInviteLink).trim() : undefined;
       if (body.note !== undefined) patch.note = String(body.note);
       const updated = await projects.update(id, patch);
       res.json(updated);
@@ -474,6 +475,7 @@ export function registerProjectRoutes(app: Express, { profiles, browsers, mails,
           mailStrategy: project.mailStrategy,
           mailStockTags: project.mailStockTags,
           smsbowerService: project.smsbowerService,
+          teamInviteLink: project.teamInviteLink,
         },
         // "Số luồng" trong project là luồng MỖI NHÂN VIÊN, không phải tổng. Chia
         // một trần chung cho N nhân viên khiến mỗi người chỉ tới lượt sau khi

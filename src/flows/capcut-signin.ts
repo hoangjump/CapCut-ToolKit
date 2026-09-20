@@ -172,6 +172,102 @@ async function reachDashboard(
   return appPage;
 }
 
+/**
+ * Join team CapCut. Hai bước:
+ *   1) Thử XHR join_workspace_with_apply từ trang HIỆN TẠI (/my-edit) — nếu SDK
+ *      ký được (như commerce API) thì xong luôn, không cần navigate.
+ *   2) Nếu "system busy" (SDK không ký) → fallback: mở trang team-invite, tìm +
+ *      bấm Submit (nút này trigger app code → SDK ký), bắt response.
+ * Best-effort: lỗi chỉ log warning, không ném.
+ */
+export async function joinTeamViaLink(
+  page: Page,
+  inviteLink: string,
+  log: FlowLog,
+  profileName: string,
+): Promise<boolean> {
+  try {
+    // B1: resolve shortlink /sv2/ → /team-invite/<token> (Node fetch)
+    let teamUrl = inviteLink;
+    try {
+      const r = await globalThis.fetch(inviteLink, { redirect: 'follow' });
+      if (r.url.includes('/team-invite/')) teamUrl = r.url.split('?')[0];
+      log.info(`[${profileName}] join team: resolved → ${teamUrl.slice(0, 100)}`);
+    } catch { /* dùng URL gốc */ }
+
+    // B2: thử XHR từ trang hiện tại (/my-edit)
+    const res: any = await page.evaluate(async (invUrl: string) => {
+      const g = globalThis as any;
+      const sl = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 20; i++) {
+        if (/sessionid=/.test(g.document.cookie)) break;
+        await sl(400);
+      }
+      return new Promise((resolve) => {
+        try {
+          const xhr = new g.XMLHttpRequest();
+          xhr.open('POST', 'https://edit-api-sg.capcut.com/cc/v1/workspace/join_workspace_with_apply', true);
+          xhr.withCredentials = true;
+          xhr.setRequestHeader('Content-Type', 'application/json');
+          xhr.timeout = 20000;
+          xhr.onload = () => { try { resolve(JSON.parse(xhr.responseText)); } catch { resolve({ raw: String(xhr.responseText).slice(0, 200) }); } };
+          xhr.onerror = () => resolve({ __err: 'xhr error' });
+          xhr.ontimeout = () => resolve({ __err: 'xhr timeout' });
+          xhr.send(JSON.stringify({
+            join_workspace_type: 1,
+            invite_link_param: { invitation_link: invUrl },
+            application_param: {},
+          }));
+        } catch (e: any) { resolve({ __err: String((e && e.message) || e) }); }
+      });
+    }, teamUrl);
+
+    if (String(res?.ret) === '0' || /success/i.test(res?.errmsg || '')) {
+      log.info(`[${profileName}] join team OK via XHR (ret=${res.ret})`);
+      return true;
+    }
+    log.info(`[${profileName}] join XHR: ret=${res?.ret} ${res?.errmsg || res?.__err || ''} — fallback click Submit`);
+
+    // B3: fallback — mở trang invite, bấm Submit
+    await page.goto(inviteLink, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.waitForTimeout(4_000);
+
+    const respPromise = page.waitForResponse(
+      (r: any) => r.url().includes('join_workspace_with_apply'), { timeout: 15_000 },
+    ).catch(() => null);
+
+    const clicked = await page.evaluate(() => {
+      const all = (globalThis as any).document.querySelectorAll('span, button, div[role="button"]');
+      for (const el of all) {
+        if (el.textContent.trim() === 'Submit' && el.offsetParent !== null) { el.click(); return true; }
+      }
+      for (const el of all) {
+        const t = el.textContent.trim();
+        if (/^(Join|Accept|Join space)$/.test(t) && el.offsetParent !== null) { el.click(); return t; }
+      }
+      return false;
+    });
+
+    if (!clicked) {
+      log.warn(`[${profileName}] join team: không tìm thấy nút Submit/Join`);
+      return false;
+    }
+
+    log.info(`[${profileName}] join team: đã click "${clicked === true ? 'Submit' : clicked}" — chờ response`);
+    const resp = await respPromise;
+    if (resp) {
+      const body: any = await resp.json().catch(() => ({}));
+      log.info(`[${profileName}] join team response: ret=${body?.ret} ${body?.errmsg || ''}`);
+      return String(body?.ret) === '0' || /success/i.test(body?.errmsg || '');
+    }
+    log.info(`[${profileName}] join team: click xong, không bắt được response — coi như OK`);
+    return true;
+  } catch (e) {
+    log.warn(`[${profileName}] join team lỗi: ${(e as Error).message.slice(0, 120)}`);
+    return false;
+  }
+}
+
 export interface VipPurchaseResult {
   region: string;
   alreadyVip: boolean;
@@ -398,7 +494,7 @@ export const capcutSigninFlow: RegisteredFlow = {
     description:
       'Mua mail dongvanfb → đăng ký CapCut → tự lấy OTP từ hòm thư → bỏ qua xác minh → mở màn nâng cấp, bắt popup thanh toán.',
   },
-  run: async ({ helper, page, buyMail, getOtpByRegex, report, profile, log }) => {
+  run: async ({ helper, page, buyMail, getOtpByRegex, report, profile, log, teamInviteLink }) => {
     // (KHÔNG còn addLocatorHandler/sweepPopups: từ khi vào dashboard, việc nâng
     // cấp VIP gọi thẳng API thương mại qua purchaseVipViaApi — không đụng DOM nên
     // popup "What's new"/"CapCut Ultra" che chắn không còn ảnh hưởng gì.)
@@ -492,8 +588,14 @@ export const capcutSigninFlow: RegisteredFlow = {
       if (appPage !== page) log.info(`[${profile.name}] dashboard ở tab: ${appPage.url()}`);
     }
 
-    // --- Bước 12: NÂNG CẤP VIP QUA API (không qua UI). Toàn bộ retry lỗi-tạm +
-    // xử lý shark + báo sheet nằm trong hàm dùng chung purchaseVipAndReport. ---
+    // --- Join team nếu có invite link ---
+    if (teamInviteLink) {
+      await joinTeamViaLink(appPage, teamInviteLink, log, profile.name);
+      await appPage.goto('https://www.capcut.com/my-edit?start_tab=video', { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
+      await appPage.waitForTimeout(2_000);
+    }
+
+    // --- NÂNG CẤP VIP QUA API (không qua UI). ---
     await purchaseVipAndReport(appPage, { log, report, profileName: profile.name });
   },
 };

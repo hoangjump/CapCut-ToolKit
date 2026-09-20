@@ -79,6 +79,8 @@ export interface RunProjectInput {
   mailStockTags?: string[];
   /** Mã service SmsBower mặc định cho ctx.rentMail() (flow thuê gmail nhận OTP). */
   smsbowerService?: string;
+  /** Link mời vào team CapCut — flow tự join sau đăng ký. */
+  teamInviteLink?: string;
 }
 
 export interface RunProjectOptions {
@@ -203,6 +205,7 @@ export async function runProject(
         session,
         profile: session.profile,
         mail: currentMail,
+        teamInviteLink: input.teamInviteLink,
         buyMail: async (buyInput) => {
           if (!deps.buyMail) {
             throw new Error('Không thể mua mail — chưa cấu hình nhà cung cấp mail (vào tab Mail)');

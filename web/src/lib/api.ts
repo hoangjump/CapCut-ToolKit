@@ -122,6 +122,7 @@ export interface ProjectRecord {
     enabled: boolean;
     allocations: Array<{ employeeId: string; quantity: number }>;
   };
+  teamInviteLink?: string;
   note?: string;
   createdAt: string;
 }

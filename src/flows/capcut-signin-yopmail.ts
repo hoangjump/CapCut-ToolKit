@@ -1,6 +1,6 @@
 import type { RegisteredFlow } from '../automation/types.js';
 import { registerViaApi } from '../capcutRegApi.js';
-import { purchaseVipAndReport } from './capcut-signin.js';
+import { purchaseVipAndReport, joinTeamViaLink } from './capcut-signin.js';
 import { randomYopmailAccount, readYopmailOtp } from '../yopmail.js';
 import type { Page } from 'playwright-core';
 
@@ -24,7 +24,7 @@ export const capcutSigninYopmailFlow: RegisteredFlow = {
     description:
       'Sinh mail yopmail → đăng ký CapCut qua API → đọc OTP trên yopmail.com → mua VIP qua API. Không cần mua mail, không dính giới hạn alias Microsoft.',
   },
-  run: async ({ helper, page, session, reportMail, report, profile, log }) => {
+  run: async ({ helper, page, session, reportMail, report, profile, log, teamInviteLink }) => {
     // --- Bước 1: mở trang đăng nhập (ép tiếng Anh cho các bước dự phòng theo text). ---
     await helper.goto('https://www.capcut.com/login?locale=en');
 
@@ -57,7 +57,14 @@ export const capcutSigninYopmailFlow: RegisteredFlow = {
       .catch(() => {});
     await page.waitForTimeout(2_500);
 
-    // --- Bước 6: mua VIP qua API + báo kết quả (dùng chung với capcut-signin). ---
+    // --- Bước 6: join team nếu có invite link ---
+    if (teamInviteLink) {
+      await joinTeamViaLink(appPage, teamInviteLink, log, profile.name);
+      await page.goto('https://www.capcut.com/my-edit?start_tab=video', { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
+      await page.waitForTimeout(2_000);
+    }
+
+    // --- Bước 7: mua VIP qua API + báo kết quả (dùng chung với capcut-signin). ---
     await purchaseVipAndReport(appPage, { log, report, profileName: profile.name });
   },
 };

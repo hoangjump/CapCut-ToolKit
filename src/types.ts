@@ -331,6 +331,9 @@ export interface ProjectRecord {
   };
   /** Max profiles driven at once. Kept low (default 2) since runs are headful. */
   concurrency?: number;
+  /** Link mời vào team CapCut (dạng https://www.capcut.com/sv2/...). Sau đăng ký,
+   *  flow tự navigate tới link này để join team. */
+  teamInviteLink?: string;
   note?: string;
   createdAt: string;
 }
