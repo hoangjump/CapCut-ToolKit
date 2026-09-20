@@ -228,32 +228,33 @@ export async function joinTeamViaLink(
     }
     log.info(`[${profileName}] join XHR: ret=${res?.ret} ${res?.errmsg || res?.__err || ''} — fallback click Submit`);
 
-    // B3: fallback — mở trang invite, bấm Submit
-    await page.goto(inviteLink, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.waitForTimeout(4_000);
+    // B3: fallback — mở trang invite, bấm Submit (Playwright click, SDK ký)
+    await page.goto(inviteLink, { waitUntil: 'load', timeout: 30_000 });
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(3_000);
 
     const respPromise = page.waitForResponse(
-      (r: any) => r.url().includes('join_workspace_with_apply'), { timeout: 15_000 },
+      (r) => r.url().includes('join_workspace_with_apply'), { timeout: 20_000 },
     ).catch(() => null);
 
-    const clicked = await page.evaluate(() => {
-      const all = (globalThis as any).document.querySelectorAll('span, button, div[role="button"]');
-      for (const el of all) {
-        if (el.textContent.trim() === 'Submit' && el.offsetParent !== null) { el.click(); return true; }
+    let clicked = false;
+    for (const label of ['Submit', 'Join space', 'Join', 'Accept']) {
+      const loc = page.locator(`text="${label}"`).last();
+      if (await loc.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        log.info(`[${profileName}] join team: thấy "${label}" — click`);
+        await loc.click({ timeout: 5_000 }).catch(async () => {
+          await loc.click({ force: true, timeout: 5_000 }).catch(() => {});
+        });
+        clicked = true;
+        break;
       }
-      for (const el of all) {
-        const t = el.textContent.trim();
-        if (/^(Join|Accept|Join space)$/.test(t) && el.offsetParent !== null) { el.click(); return t; }
-      }
-      return false;
-    });
+    }
 
     if (!clicked) {
       log.warn(`[${profileName}] join team: không tìm thấy nút Submit/Join`);
       return false;
     }
 
-    log.info(`[${profileName}] join team: đã click "${clicked === true ? 'Submit' : clicked}" — chờ response`);
     const resp = await respPromise;
     if (resp) {
       const body: any = await resp.json().catch(() => ({}));

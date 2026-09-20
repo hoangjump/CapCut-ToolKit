@@ -358,44 +358,52 @@ async function joinTeam(page, inviteLink) {
       return true;
     }
 
-    // B3: fallback — mở trang invite, bấm Submit (SDK ký khi click)
+    // B3: fallback — mở trang invite, bấm Submit (SDK ký khi click từ UI)
     log(`  join: XHR lỗi — fallback bấm Submit trên trang invite...`);
-    await page.goto(inviteLink, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.waitForTimeout(4_000);
+    await page.goto(inviteLink, { waitUntil: 'load', timeout: 30_000 });
+    // Chờ SDK load + trang render xong
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(3_000);
 
-    // Bắt response join_workspace
+    // Bắt response join_workspace (đặt TRƯỚC khi click)
     const respPromise = page.waitForResponse(
-      r => r.url().includes('join_workspace_with_apply'), { timeout: 15_000 }
+      r => r.url().includes('join_workspace_with_apply'), { timeout: 20_000 }
     ).catch(() => null);
 
-    // Tìm + click Submit bằng DOM (bền hơn locator)
-    const clicked = await page.evaluate(() => {
-      const all = document.querySelectorAll('span, button, div[role="button"]');
-      for (const el of all) {
-        if (el.textContent.trim() === 'Submit' && el.offsetParent !== null) {
-          el.click();
-          return true;
-        }
+    // Thử nhiều cách tìm + click nút Submit (Playwright click, KHÔNG dùng DOM click)
+    let clicked = false;
+    for (const label of ['Submit', 'Join space', 'Join', 'Accept']) {
+      const loc = page.locator(`text="${label}"`).last();
+      if (await loc.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        log(`  join: thấy nút "${label}" — click...`);
+        await loc.click({ timeout: 5_000 }).catch(async () => {
+          // Force click nếu bị che
+          await loc.click({ force: true, timeout: 5_000 }).catch(() => {});
+        });
+        clicked = true;
+        break;
       }
-      // Thử thêm: tìm nút có chữ Join/Accept
-      for (const el of all) {
-        const t = el.textContent.trim();
-        if (/^(Join|Accept|Join space)$/.test(t) && el.offsetParent !== null) {
-          el.click();
-          return t;
-        }
+    }
+
+    if (!clicked) {
+      // Thử thêm: tìm bằng role button
+      const submitBtn = page.getByRole('button', { name: /submit|join/i }).last();
+      if (await submitBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        log(`  join: thấy button role — click...`);
+        await submitBtn.click({ timeout: 5_000 }).catch(() => {});
+        clicked = true;
       }
-      return false;
-    });
+    }
 
     if (!clicked) {
       log(`  join: không tìm thấy nút Submit/Join`);
-      const btns = await page.locator('button:visible, [role="button"]:visible').allTextContents().catch(() => []);
-      if (btns.length) log(`  join: buttons: [${btns.map(t => t.trim().slice(0, 30)).join(', ')}]`);
+      const btns = await page.locator('button:visible, [role="button"]:visible, span:visible').allTextContents().catch(() => []);
+      const unique = [...new Set(btns.map(t => t.trim()).filter(t => t.length > 0 && t.length < 30))];
+      if (unique.length) log(`  join: visible texts: [${unique.slice(0, 15).join(', ')}]`);
       return false;
     }
 
-    log(`  join: đã click "${clicked === true ? 'Submit' : clicked}" — chờ response...`);
+    log(`  join: đã click — chờ API response...`);
     const resp = await respPromise;
     if (resp) {
       const body = await resp.json().catch(() => ({}));
