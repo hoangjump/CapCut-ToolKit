@@ -90,6 +90,8 @@
   .tab.active:hover { border-bottom-color: var(--accent); }
   .pane { display: none; }
   .pane.active { display: block; }
+  .prov-pane { display: none; }
+  .prov-pane.active { display: block; }
   #export { min-height: 160px; }
   .balance { color: var(--green); font-weight: 600; font-size: 13px; }
   .products div { padding: 4px 6px; border-radius: 6px; cursor: pointer; font-size: 12px; }
@@ -111,19 +113,38 @@
       <div class="card">
         <h2>Cấu hình</h2>
         <div class="field">
-          <label>Selltaikhoan API Key</label>
-          <div class="row">
-            <input id="stkApiKey" type="password" placeholder="API key" autocomplete="off">
-            <button class="btn-sm" style="flex:0 0 auto" onclick="checkBalance()">Số dư</button>
+          <label>Nguồn mua mail</label>
+          <div class="modes" style="margin-bottom:0">
+            <button class="mode prov" data-prov="stk"><b>Selltaikhoan</b><small>selltaikhoan.com</small></button>
+            <button class="mode prov" data-prov="dvfb"><b>Dongvanfb</b><small>api.dongvanfb.net</small></button>
           </div>
-          <div class="hint" id="balance"></div>
+        </div>
+        <div class="prov-pane" data-prov="stk">
+          <div class="field">
+            <label>Selltaikhoan API Key</label>
+            <input id="stkApiKey" type="password" placeholder="API key" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Sản phẩm mail (ID)</label>
+            <input id="stkProduct" placeholder="VD: 6762">
+          </div>
+        </div>
+        <div class="prov-pane" data-prov="dvfb">
+          <div class="field">
+            <label>Dongvanfb API Key</label>
+            <input id="dvfbApiKey" type="password" placeholder="apikey" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Loại account (account_type)</label>
+            <input id="dvfbProduct" placeholder="VD: 1 = Hotmail NEW, 5 = Hotmail TRUSTED">
+          </div>
         </div>
         <div class="field">
-          <label>Sản phẩm mail (ID)</label>
           <div class="row">
-            <input id="stkProduct" placeholder="VD: 6762">
-            <button class="btn-sm" style="flex:0 0 auto" onclick="loadProducts()">Xem DS</button>
+            <button class="btn-sm" onclick="checkBalance()">Số dư</button>
+            <button class="btn-sm" onclick="loadProducts()">Xem DS sản phẩm</button>
           </div>
+          <div class="hint" id="balance"></div>
           <div class="products" id="products"></div>
         </div>
         <div class="field">
@@ -217,7 +238,17 @@
 <script>
 const $ = id => document.getElementById(id);
 let currentMode = 'check';
+let currentProv = 'stk';
 let lastResults = [];
+
+function setProv(p) {
+  currentProv = p;
+  document.querySelectorAll('.prov').forEach(b => b.classList.toggle('active', b.dataset.prov === p));
+  document.querySelectorAll('.prov-pane').forEach(el => el.classList.toggle('active', el.dataset.prov === p));
+  $('balance').textContent = ''; $('products').innerHTML = '';
+}
+document.querySelectorAll('.prov').forEach(b => b.addEventListener('click', () => setProv(b.dataset.prov)));
+setProv(currentProv);
 
 function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
@@ -240,8 +271,11 @@ function showPane(name) {
 
 function readConfig() {
   return {
+    mailProvider: currentProv,
     stkApiKey: $('stkApiKey').value.trim(),
     stkProduct: $('stkProduct').value.trim(),
+    dvfbApiKey: $('dvfbApiKey').value.trim(),
+    dvfbProduct: $('dvfbProduct').value.trim(),
     teamInviteLink: $('teamInviteLink').value.trim(),
     proxyKeys: $('proxyKeys').value.trim(),
     delayMs: Number($('delayMs').value) || 3000,
@@ -259,6 +293,9 @@ async function saveConfig(notify) {
 fetch('/api/config').then(r => r.json()).then(c => {
   $('stkApiKey').value = c.stkApiKey || '';
   $('stkProduct').value = c.stkProduct || '';
+  $('dvfbApiKey').value = c.dvfbApiKey || '';
+  $('dvfbProduct').value = c.dvfbProduct || '';
+  setProv(c.mailProvider || 'stk');
   $('teamInviteLink').value = c.teamInviteLink || '';
   $('proxyKeys').value = c.proxyKeys || '';
   $('delayMs').value = c.delayMs || 3000;
@@ -270,9 +307,9 @@ fetch('/api/config').then(r => r.json()).then(c => {
 async function checkBalance() {
   await saveConfig();
   try {
-    const r = await fetch('/api/stk/balance').then(r => r.json());
-    $('balance').innerHTML = r.error ? '<span style="color:var(--red)">' + r.error + '</span>'
-      : '<span class="balance">' + Number(r.money).toLocaleString('vi') + 'đ</span>';
+    const r = await fetch('/api/mail/balance').then(r => r.json());
+    $('balance').innerHTML = r.error ? '<span style="color:var(--red)">' + esc(r.error) + '</span>'
+      : esc(r.provider) + ': <span class="balance">' + Number(r.money).toLocaleString('vi') + 'đ</span>';
   } catch (e) { $('balance').textContent = 'Lỗi: ' + e.message; }
 }
 
@@ -280,15 +317,16 @@ async function loadProducts() {
   await saveConfig();
   $('products').textContent = 'Đang tải...';
   try {
-    const r = await fetch('/api/stk/products').then(r => r.json());
+    const r = await fetch('/api/mail/products').then(r => r.json());
     if (r.error) { $('products').textContent = r.error; return; }
     const list = r.products.filter(p => /mail|outlook|hotmail|gmail/i.test(p.name));
     $('products').innerHTML = '';
     if (!list.length) { $('products').textContent = 'Không có sản phẩm mail (tổng ' + r.products.length + ')'; return; }
+    const target = currentProv === 'dvfb' ? 'dvfbProduct' : 'stkProduct';
     for (const p of list) {
       const d = document.createElement('div');
-      d.innerHTML = '<b>' + p.id + '</b> — ' + p.name + ' — ' + p.price + 'đ (kho: ' + (p.amount ?? '?') + ')';
-      d.onclick = () => { $('stkProduct').value = p.id; toast('Chọn ' + p.id); };
+      d.innerHTML = '<b>' + esc(p.id) + '</b> — ' + esc(p.name) + ' — ' + esc(p.price) + 'đ' + (p.amount != null ? ' (kho: ' + esc(p.amount) + ')' : '');
+      d.onclick = () => { $(target).value = p.id; toast('Chọn ' + p.id); };
       $('products').appendChild(d);
     }
   } catch (e) { $('products').textContent = 'Lỗi: ' + e.message; }

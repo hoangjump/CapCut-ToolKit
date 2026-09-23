@@ -19,7 +19,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const CONFIG_FILE = resolve(__dir, 'config.json');
 const DEFAULT_CONFIG = {
-  stkApiKey: '', stkProduct: '', teamInviteLink: '', proxyKeys: '',
+  mailProvider: 'stk', stkApiKey: '', stkProduct: '', dvfbApiKey: '', dvfbProduct: '',
+  teamInviteLink: '', proxyKeys: '',
   rotateEach: true, delayMs: 3000, mode: 'check', count: 5,
 };
 
@@ -92,6 +93,55 @@ async function stkBuy(apiKey, productId) {
     if (email) return { email, password, refreshToken, clientId };
   }
   throw new Error('Mua mail thất bại');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DONGVANFB (docs.dongvanfb.net)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function dvfbFetch(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20_000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    const body = await res.json();
+    if (!res.ok || body.status === false || (body.error_code && body.error_code !== 200)) {
+      throw new Error(body.message || `HTTP ${res.status}`);
+    }
+    return body;
+  } finally { clearTimeout(timer); }
+}
+
+async function dvfbBalance(apiKey) {
+  const body = await dvfbFetch(`https://api.dongvanfb.net/user/balance?apikey=${encodeURIComponent(apiKey)}`);
+  return Number(body?.balance ?? 0);
+}
+
+async function dvfbProducts(apiKey) {
+  const body = await dvfbFetch(`https://api.dongvanfb.net/user/account_type?apikey=${encodeURIComponent(apiKey)}`);
+  return (body?.data ?? []).map(p => ({ id: String(p.id), name: p.name, price: p.price, amount: p.quality }));
+}
+
+async function dvfbBuy(apiKey, productId) {
+  const q = new URLSearchParams({ apikey: apiKey, account_type: productId, quality: '1', type: 'full' });
+  const body = await dvfbFetch(`https://api.dongvanfb.net/user/buy?${q}`);
+  for (const row of (body?.data?.list_data || [])) {
+    const [email, password, refreshToken, clientId] = String(row).split('|').map(s => s.trim());
+    if (email) return { email, password, refreshToken, clientId };
+  }
+  throw new Error('Mua mail thất bại');
+}
+
+// Provider chung — chọn theo config.mailProvider
+const MAIL_PROVIDERS = {
+  stk: { name: 'Selltaikhoan', key: c => c.stkApiKey, product: c => c.stkProduct, balance: stkBalance, products: stkProducts, buy: stkBuy },
+  dvfb: { name: 'Dongvanfb', key: c => c.dvfbApiKey, product: c => c.dvfbProduct, balance: dvfbBalance, products: dvfbProducts, buy: dvfbBuy },
+};
+function mailProvider() {
+  const p = MAIL_PROVIDERS[config.mailProvider] || MAIL_PROVIDERS.stk;
+  const apiKey = p.key(config);
+  if (!apiKey) throw new Error(`Chưa nhập API key ${p.name}`);
+  return { ...p, apiKey, productId: p.product(config) };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -573,16 +623,16 @@ const server = createServer(async (req, res) => {
       return json(res, { ok: true });
     }
 
-    // Selltaikhoan
-    if (path === '/api/stk/balance') {
-      if (!config.stkApiKey) return json(res, { error: 'Chưa nhập API key' }, 400);
-      const money = await stkBalance(config.stkApiKey);
-      return json(res, { money });
+    // Mail provider (selltaikhoan / dongvanfb)
+    if (path === '/api/mail/balance') {
+      let p; try { p = mailProvider(); } catch (e) { return json(res, { error: e.message }, 400); }
+      const money = await p.balance(p.apiKey);
+      return json(res, { provider: p.name, money });
     }
-    if (path === '/api/stk/products') {
-      if (!config.stkApiKey) return json(res, { error: 'Chưa nhập API key' }, 400);
-      const products = await stkProducts(config.stkApiKey);
-      return json(res, { products });
+    if (path === '/api/mail/products') {
+      let p; try { p = mailProvider(); } catch (e) { return json(res, { error: e.message }, 400); }
+      const products = await p.products(p.apiKey);
+      return json(res, { provider: p.name, products });
     }
 
     // Run
@@ -593,13 +643,15 @@ const server = createServer(async (req, res) => {
       let accounts = [];
 
       if (mode === 'register' && body.count > 0) {
-        log(`Mua ${body.count} mail từ selltaikhoan (product=${config.stkProduct})...`);
+        let p; try { p = mailProvider(); } catch (e) { return json(res, { error: e.message }, 400); }
+        if (!p.productId) return json(res, { error: `Chưa chọn sản phẩm mail ${p.name}` }, 400);
+        log(`Mua ${body.count} mail từ ${p.name} (product=${p.productId})...`);
         json(res, { ok: true, msg: 'Đang mua mail...' });
         const bought = [];
         for (let i = 0; i < body.count; i++) {
           if (shouldStop) break;
           try {
-            const mail = await stkBuy(config.stkApiKey, config.stkProduct);
+            const mail = await p.buy(p.apiKey, p.productId);
             bought.push({ email: mail.email, password: mail.password || '', refreshToken: mail.refreshToken, clientId: mail.clientId });
             log(`  [${i + 1}/${body.count}] ✓ ${mail.email}`);
             const accFile = resolve(__dir, 'accounts.txt');
