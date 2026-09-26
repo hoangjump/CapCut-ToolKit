@@ -12,6 +12,38 @@ proxy và hồ sơ.
 > dấu vết "đã patch", và platform/UA/WebGL/font tự nhất quán với nhau theo OS đã
 > chọn. Đổi lại, engine là Firefox — automation viết theo API Playwright Firefox.
 
+## Cài trên máy mới
+
+Yêu cầu: **Node.js 20+**, Git (không bắt buộc). Windows dùng PowerShell; macOS/Linux dùng Terminal.
+
+```bash
+# 1. Giải nén / clone rồi vào thư mục
+cd Capcut-Autp
+
+# 2. Cài thư viện + engine trình duyệt (chỉ lần đầu, ~300MB)
+npm install
+npx camoufox-js fetch              # Camoufox (Firefox anti-detect) cho tool chính
+npx playwright install chromium    # Chromium cho capcut-checker
+
+# 3. Chạy tool chính (web UI + API) → http://localhost:3000
+npm run server:dev
+
+# 4. (Tuỳ chọn) Tool checker riêng: mua mail → reg CapCut → join team → check
+cd capcut-checker && npm install && npm start   # → http://localhost:3456
+```
+
+Trong repo có 2 tool độc lập:
+
+| Thư mục | Tool | Cổng |
+|---|---|---|
+| `/` (gốc) | Multi-profile browser + flow tự động CapCut (Camoufox, proxy, sheet) | 3000 |
+| `capcut-checker/` | Web UI gọn: mua mail (Selltaikhoan/Dongvanfb) → đăng ký → join team → check VIP/credit | 3456 |
+
+Hướng dẫn riêng của checker: [capcut-checker/README.md](capcut-checker/README.md).
+
+Dữ liệu nhạy cảm **không** nằm trong gói: `profiles-store/` (session/cookie), `.env`,
+`capcut-checker/config.json`, `capcut-checker/accounts.txt` — máy mới sẽ tự tạo khi chạy.
+
 ## Chạy thử
 
 ```bash
