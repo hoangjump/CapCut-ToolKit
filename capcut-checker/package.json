@@ -1,9 +1,11 @@
 {
   "name": "capcut-checker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js",
+    "cli": "node index.js",
+    "setup": "npm install && npx playwright install chromium"
   },
   "dependencies": {
     "playwright": "^1.52.0"

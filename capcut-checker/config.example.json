@@ -1,0 +1,13 @@
+{
+  "mailProvider": "stk",
+  "stkApiKey": "",
+  "stkProduct": "",
+  "dvfbApiKey": "",
+  "dvfbProduct": "",
+  "teamInviteLink": "",
+  "proxyKeys": "",
+  "rotateEach": true,
+  "delayMs": 3000,
+  "mode": "register",
+  "count": 5
+}
