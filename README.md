@@ -12,98 +12,81 @@ proxy và hồ sơ.
 > dấu vết "đã patch", và platform/UA/WebGL/font tự nhất quán với nhau theo OS đã
 > chọn. Đổi lại, engine là Firefox — automation viết theo API Playwright Firefox.
 
-## Cài trên máy mới
+## Cài và chạy (web — không cần Docker hay build app)
 
-Yêu cầu: **Node.js 20+**, Git (không bắt buộc). Windows dùng PowerShell; macOS/Linux dùng Terminal.
+Yêu cầu: **Node.js 20+**. Windows dùng PowerShell; macOS/Linux dùng Terminal.
 
 ```bash
-# 1. Giải nén / clone rồi vào thư mục
 cd Capcut-Autp
-
-# 2. Cài thư viện + engine trình duyệt (chỉ lần đầu, ~300MB)
-npm install
-npx camoufox-js fetch              # Camoufox (Firefox anti-detect) cho tool chính
-npx playwright install chromium    # Chromium cho capcut-checker
-
-# 3. Chạy tool chính (web UI + API) → http://localhost:3000
-npm run server:dev
-
-# 4. (Tuỳ chọn) CLI checker riêng: mua mail → reg CapCut → join team → check
-cd capcut-checker && npm run setup && node index.js 5
+npm run setup      # lần đầu: cài thư viện + tải Camoufox (~150MB) + dựng giao diện web
+npm start          # chạy → mở http://localhost:3000
 ```
+
+Tắt bằng `Ctrl+C` trong terminal. Sau khi cập nhật code (git pull / chép đè thư mục)
+thì chạy lại `npm run setup` một lần.
 
 Trong repo có 2 tool độc lập:
 
 | Thư mục | Tool | Chạy |
 |---|---|---|
-| `/` (gốc) | Multi-profile browser + flow tự động CapCut (Camoufox, proxy, sheet) | web UI cổng 3000 |
-| `capcut-checker/` | CLI 1 lệnh: mua mail (Selltaikhoan/Dongvanfb) → đăng ký → join team → check VIP/credit | `node index.js [N]` |
+| `/` (gốc) | Quản lý nhiều profile Camoufox, proxy, kho mail, flow tự động CapCut, công việc Telegram | `npm start` → http://localhost:3000 |
+| `capcut-checker/` | Mua mail (Selltaikhoan/Dongvanfb) → đăng ký CapCut → join team → check VIP/credit | `cd capcut-checker && npm start` → http://localhost:3456 |
 
 Hướng dẫn riêng của checker: [capcut-checker/README.md](capcut-checker/README.md).
 
-Dữ liệu nhạy cảm **không** nằm trong gói: `profiles-store/` (session/cookie), `.env`,
-`capcut-checker/config.json`, `capcut-checker/accounts.txt` — máy mới sẽ tự tạo khi chạy.
+### Dữ liệu nằm ở đâu
 
-## Chạy thử
+Profile, proxy, mail, project, cài đặt… nằm trong thư mục `profiles-store`:
+
+- Máy **từng dùng bản app desktop cũ**: tự đọc tiếp kho của app, không phải chép gì
+  (macOS `~/Library/Application Support/teamhatde-auto/profiles-store`,
+  Windows `%APPDATA%\TeamHatDe-Capcut-Auto\profiles-store`).
+- Máy mới: tạo `./profiles-store` ngay trong thư mục dự án.
+- Chỉ định chỗ khác: `STORE_ROOT=/duong/dan npm start`
+  (PowerShell: `$env:STORE_ROOT="D:\data"; npm start`).
+
+Dòng log `dữ liệu (profiles-store): …` lúc khởi động cho biết đang dùng kho nào.
+Đừng gửi kèm `profiles-store/`, `capcut-checker/config.json`, `capcut-checker/accounts.txt`
+cho người khác — chứa cookie, API key và tài khoản.
+
+### Lệnh khác
 
 ```bash
-npm install
-npx camoufox-js fetch              # tải binary Camoufox (~150MB) — lần đầu
-
-npm run server:dev                 # web UI + API, mặc định http://localhost:3000
-npm run dev                        # demo CLI: seed vài profile rồi mở song song, in egress IP/UA
-```
-
-Build production:
-
-```bash
-npm run build                      # tsc -> dist/
-npm run server                     # chạy bản đã build
-npm run dist:win                   # build bộ cài Windows, kèm cloudflared.exe
+npm run dev        # như npm start nhưng tự khởi động lại khi sửa code backend
+npm run build:web  # dựng lại giao diện sau khi sửa code trong web/
+npm run demo       # demo CLI: seed vài profile rồi mở song song, in egress IP/UA
+npm test && npm run typecheck && npm run lint
 ```
 
 Biến môi trường:
 - `PORT` — cổng web (mặc định 3000)
-- `STORE_ROOT` — thư mục lưu trữ (mặc định `./profiles-store`)
+- `HOST` — mặc định `127.0.0.1` (chỉ máy này). Đặt `0.0.0.0` để máy khác trong mạng
+  vào được — API quản trị **không có mật khẩu**, chỉ làm trong mạng tin tưởng.
+- `STORE_ROOT` — thư mục dữ liệu (xem mục trên)
 - `HEADLESS` — chế độ hiển thị trình duyệt:
-  - `false` — headful, cửa sổ thật trên màn hình (mặc định khi chạy local)
-  - `virtual` — headful bên trong màn hình ảo Xvfb (mặc định trong Docker; khó bị
-    phát hiện hơn headless thuần của Firefox)
+  - `false` — headful, cửa sổ thật trên màn hình (mặc định)
+  - `virtual` — headful bên trong màn hình ảo Xvfb (máy chủ Linux không có màn hình;
+    khó bị phát hiện hơn headless thuần của Firefox)
   - `true` — headless thật (nhanh nhất nhưng dễ lộ nhất)
   - Khi không đặt: `virtual` nếu `NODE_ENV=production`, ngược lại headful.
 - `CAMOUFOX_INSTALL_DIR` — nơi cài/đọc binary Camoufox (mặc định `~/.cache/camoufox`).
-  Đặt biến này khi home directory vô định (container/CI).
 
-## Docker
+## Tính năng chính
 
-```bash
-docker compose up -d --build       # build image + chạy nền, web ở http://localhost:3000
-docker compose logs -f             # xem log
-docker compose down                # dừng + xóa container
-```
+### Xác minh thanh toán của nhân viên
 
-### Thanh toán nhân viên trong app Windows
+Không cần VPS, tunnel hay mở port router:
 
-App tự chạy toàn bộ luồng, không cần VPS, Docker gateway hay cấu hình tên miền:
-
-1. Khi app mở, `cloudflared.exe` tạo một Quick Tunnel `https://...trycloudflare.com`.
-2. Bot gửi link `/pay/:token` vào Telegram cho nhân viên.
-3. Nhân viên bấm bắt đầu; app mở Camoufox headless bằng đúng proxy của tài khoản.
-4. Trang nhân viên nhận ảnh màn hình và gửi click/phím về app. Phiên tự đóng sau
-   15 phút; mặc định tối đa 3 phiên đồng thời.
-5. Thanh toán thành công chỉ đổi trạng thái. Tiền công vẫn chỉ cộng khi nhân viên
+1. Bot gửi task vào Telegram cho nhân viên.
+2. App tự mở Camoufox chạy nền **ngay trên máy đang chạy app**, dùng đúng proxy của
+   tài khoản, để theo dõi trạng thái VIP CapCut. Không còn trang `/pay`, tunnel hay
+   màn hình điều khiển từ xa — nhân viên không phải bấm mở gì.
+3. Thanh toán thành công chỉ đổi trạng thái. Tiền công vẫn chỉ cộng khi nhân viên
    thả reaction ❤️ trên Telegram.
 
-Tab `Công việc -> Thanh toán` trên app PC hiển thị các phiên chờ/đang chạy và số
-slot đang dùng. Nút `Xem` mở popup màn hình remote ngay trong app để quản lý theo
-dõi hoặc thao tác hỗ trợ; browser tự đóng sau 5 giây khi phát hiện thanh toán xong.
-
-Trong `Công việc -> Telegram`, nút `Bật link nhân viên` dùng để bật lại tunnel nếu
-nó bị mất kết nối. App ghi nhớ lựa chọn và tự bật ở lần chạy sau. Public hostname
-chỉ được phép truy cập trang/API thanh toán, không thể mở dashboard quản trị.
-
-Lệnh `npm run dist:win` tự tải binary chính thức của Cloudflare và nhét vào bộ cài;
-máy nhân viên không phải cài thêm gì, máy quản lý cũng không cần mở port router.
+Tab `Công việc -> Thanh toán` hiển thị các phiên chờ/đang chạy và số slot đang dùng
+(giới hạn bằng biến `PAYMENT_MAX_SESSIONS`). Máy chạy app phải bật trong lúc nhân
+viên làm việc.
 
 ### Đặc tả các flow tự động
 
@@ -178,22 +161,14 @@ Sheet tổng và mọi Sheet riêng. Một file Google Sheet chỉ được gán
 app từ chối nếu bạn dán trùng ID của người khác. App cũng chặn bắt đầu phân phối nếu
 Apps Script chưa được deploy lại hoặc nhân viên có quota chưa được cấu hình Sheet riêng.
 
-[Dockerfile](Dockerfile) dùng base image `mcr.microsoft.com/playwright:vX.Y-noble`
-**chỉ để lấy system lib** (Xvfb, fonts, thư viện đồ họa mà Firefox cần) — engine
-thật là binary Camoufox được `npx camoufox-js fetch` tải vào `/opt/camoufox` và
-bake thẳng vào image, nên container khởi động là chạy ngay, không cần tải lúc
-runtime. Vì engine không phải Chromium của image nữa, tag base image **không cần
-khớp** version playwright; nó chỉ cung cấp system deps.
-
-Trong container không có X server, nên server mặc định chạy `HEADLESS=virtual`:
-Camoufox chạy headful thật bên trong một màn hình ảo Xvfb (camoufox-js tự spawn
-Xvfb). Cửa sổ trình duyệt do nút "Mở" bật lên sống trong màn hình ảo đó — thứ bạn
-xem qua trình duyệt là web UI ở cổng 3000. Muốn thấy cửa sổ thật trên màn hình
-thì chạy local với `npm run server:dev`.
+Trên máy chủ Linux không có màn hình, chạy với `HEADLESS=virtual`: Camoufox chạy
+headful thật bên trong màn hình ảo Xvfb (camoufox-js tự spawn Xvfb — cần cài gói
+`xvfb`). Cửa sổ trình duyệt do nút "Mở" bật lên sống trong màn hình ảo đó; thứ bạn
+xem qua trình duyệt là web UI ở cổng 3000.
 
 ## Lưu trữ trên đĩa
 
-`ProfileManager` sở hữu layout dưới `STORE_ROOT` (mặc định `profiles-store/`):
+`ProfileManager` sở hữu layout dưới `STORE_ROOT` (xem mục "Dữ liệu nằm ở đâu"):
 
 ```
 <root>/profiles.json        — metadata mọi profile
@@ -290,8 +265,7 @@ Một số knob các antidetect Chromium (GoLogin/AdsPower) hay phơi ra thì **
 - **Memory devices** (`navigator.deviceMemory`), **Bluetooth**, **MAC address**,
   **Device name** — API riêng Chromium hoặc Firefox/JS không expose, không có knob.
 
-GeoIP dùng DB `GeoLite2-City.mmdb` (~60MB). Docker bake sẵn vào image; chạy local
-lần đầu geoip bật sẽ tự tải vào `CAMOUFOX_INSTALL_DIR` (mặc định `~/.cache/camoufox`).
+GeoIP dùng DB `GeoLite2-City.mmdb` (~60MB). Lần đầu bật geoip sẽ tự tải vào `CAMOUFOX_INSTALL_DIR` (mặc định `~/.cache/camoufox`).
 
 Mỗi profile có `seed` ổn định để fingerprint nhất quán qua các lần chạy.
 
@@ -367,8 +341,8 @@ dùng key đã lưu.
 
 ## Web UI
 
-Bản desktop có năm tab: **Quản lý proxy**, **Hồ sơ**, **Mail**, **Project** và
-**Công việc**. Tab Công việc quản lý nhân viên theo Telegram Forum Topic, giao
+Giao diện web có sáu mục: **Proxy**, **Hồ sơ**, **Mail**, **Chạy tự động**,
+**Công việc** và **Cài đặt**. Tab Công việc quản lý nhân viên theo Telegram Forum Topic, giao
 task, tính sản lượng và tiền công khi đúng nhân viên thả ❤️.
 
 Mỗi nhân viên có đơn giá mặc định; task chụp lại đơn giá lúc gửi nên việc đổi giá
@@ -394,9 +368,8 @@ email, password, mail full và checkout link. Link nằm trong hàng chờ khi b
 vào bảng công. Hàng chờ được lưu trong `telegram-work.json`, có thể resume/retry
 sau khi app khởi động lại.
 
-Pipeline `.gitlab-ci.yml` tự typecheck, test và build Electron target Windows
-bằng Wine. File `.exe` được lưu trong GitLab Job Artifacts trên mỗi push `main`,
-Merge Request, tag hoặc khi chạy pipeline thủ công.
+Pipeline `.gitlab-ci.yml` chỉ chạy kiểm tra: test, typecheck, lint và dựng thử
+giao diện web.
 
 Tab Hồ sơ (master-detail):
 - Danh sách bên trái: mỗi hồ sơ có chấm trạng thái (xanh = đang chạy) và nút **Mở/Đóng**.
@@ -440,7 +413,7 @@ Tab Project (master-detail, chạy automation hàng loạt):
   tiến độ realtime, và mỗi project gán tối đa 1 mail. Thêm tác vụ mới = viết một
   file flow + đăng ký một dòng ở [src/flows/index.ts](src/flows/index.ts).
 - `npm run dev` (demo CLI) và việc mở/đóng qua web UI đã chạy thật headful trên
-  local với Camoufox. Chế độ `virtual` trong Docker đã được kiểm thử khi build image.
+  local với Camoufox.
 
 ## Proxy từ mktproxy.com (nguồn dạng API)
 

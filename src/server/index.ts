@@ -2,6 +2,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { existsSync } from 'node:fs';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { ProxyStore } from '../proxyStore.js';
@@ -37,7 +38,6 @@ export interface ServerConfig {
   storeRoot?: string;
   headless?: boolean | 'virtual';
   publicDir?: string;
-  embeddedTunnel?: boolean;
 }
 
 export interface CreatedApp {
@@ -82,8 +82,24 @@ function resolveDefaultPublicDir(): string {
 }
 const DEFAULT_PUBLIC_DIR = resolveDefaultPublicDir();
 
+// Bản desktop (Electron) cũ lưu dữ liệu trong thư mục app data của hệ điều hành.
+// Máy từng dùng bản đó thì đọc tiếp kho ấy, để chạy web vẫn thấy đủ profile/mail
+// mà không phải chép dữ liệu; máy mới thì dùng ./profiles-store.
+function resolveDefaultStoreRoot(): string {
+  const appData = process.platform === 'win32'
+    ? process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming')
+    : process.platform === 'darwin'
+      ? join(homedir(), 'Library', 'Application Support')
+      : process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
+  for (const appName of ['TeamHatDe-Capcut-Auto', 'teamhatde-auto']) {
+    const legacy = join(appData, appName, 'profiles-store');
+    if (existsSync(join(legacy, 'profiles.json'))) return legacy;
+  }
+  return join(process.cwd(), 'profiles-store');
+}
+
 export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> {
-  const storeRoot = config.storeRoot ?? process.env.STORE_ROOT ?? join(process.cwd(), 'profiles-store');
+  const storeRoot = config.storeRoot ?? process.env.STORE_ROOT ?? resolveDefaultStoreRoot();
   const headless = config.headless ?? parseHeadless();
   const publicDir = config.publicDir ?? DEFAULT_PUBLIC_DIR;
 
@@ -204,7 +220,7 @@ export async function startServer(config: ServerConfig = {}): Promise<StartedSer
   const created = await createApp(config);
   // Mặc định CHỈ nghe loopback. Toàn bộ API quản trị không có xác thực, và
   // GET /api/store/export trả về API key thô + mail password — bind 0.0.0.0 là
-  // phơi hết ra LAN. Docker cần nghe mọi interface thì đặt HOST=0.0.0.0.
+  // phơi hết ra LAN. Muốn máy khác trong mạng truy cập thì đặt HOST=0.0.0.0.
   const host = config.host ?? process.env.HOST ?? '127.0.0.1';
   const port = config.port ?? Number(process.env.PORT ?? 3000);
 
@@ -220,6 +236,7 @@ export async function startServer(config: ServerConfig = {}): Promise<StartedSer
 
   log.info(`proxy manager listening on ${url}`);
   log.info(`serving UI from ${created.publicDir}`);
+  log.info(`dữ liệu (profiles-store): ${created.storeRoot}`);
   if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
     log.warn(`đang nghe trên ${host} — API quản trị KHÔNG có xác thực, chỉ dùng trong mạng bạn tin tưởng`);
   }

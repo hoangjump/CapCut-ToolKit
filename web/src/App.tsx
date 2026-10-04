@@ -9,10 +9,6 @@ import { ProjectTab } from '@/tabs/ProjectTab';
 import { WorkTab } from '@/tabs/WorkTab';
 import { SettingsTab } from '@/tabs/SettingsTab';
 
-// macOS: chừa lề trái cho traffic lights (hiddenInset). Nhận diện qua UA — chỉ
-// ảnh hưởng lề cosmetic nên an toàn cả khi chạy trong trình duyệt lúc dev.
-const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent);
-
 const navigation = [
   { id: 'proxies', label: 'Proxy', description: 'Kho proxy và IP xoay', icon: Menu },
   { id: 'profiles', label: 'Hồ sơ', description: 'Camoufox và phiên chạy', icon: User },
@@ -31,18 +27,14 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background pb-11">
-      {/* Title bar riêng để Electron vẫn kéo cửa sổ được trên Windows/macOS. */}
-      <header
-        className="drag sticky top-0 z-30 flex h-10 shrink-0 items-center border-b bg-background"
-        style={{ paddingLeft: isMac ? 84 : 18, paddingRight: 18 }}
-      >
+      <header className="sticky top-0 z-30 flex h-10 shrink-0 items-center border-b bg-background px-[18px]">
         <span className="text-[13px] font-semibold tracking-tight">TeamHatDe-Capcut-Auto</span>
         <span className="ml-2 text-xs text-muted-foreground">Trung tâm vận hành</span>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <aside className="shrink-0 border-b bg-sidebar md:w-56 md:border-b-0 md:border-r">
-          <nav className="no-drag flex gap-1 overflow-x-auto p-2 md:flex-col md:p-3" aria-label="Điều hướng chính">
+          <nav className="flex gap-1 overflow-x-auto p-2 md:flex-col md:p-3" aria-label="Điều hướng chính">
             {navigation.map((item) => {
               const Icon = item.icon;
               const active = tab === item.id;

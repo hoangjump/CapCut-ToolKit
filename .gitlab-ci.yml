@@ -1,6 +1,5 @@
 stages:
   - test
-  - build
 
 workflow:
   rules:
@@ -30,22 +29,3 @@ test:
     - npm run typecheck
     - npm run lint
     - npm run build --prefix web
-
-build_windows:
-  stage: build
-  image: electronuserland/builder:wine
-  needs:
-    - test
-  script:
-    - npm ci
-    - npm ci --prefix web
-    - npm run build
-    - npm run build --prefix web
-    - npx electron-builder --win --publish never
-  artifacts:
-    name: 'TeamHatDe-Auto-Windows-$CI_COMMIT_SHORT_SHA'
-    expire_in: 14 days
-    paths:
-      - release/*.exe
-      - release/*.blockmap
-      - release/latest.yml

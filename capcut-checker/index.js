@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * CapCut Auto — CLI: (mua mail →) đăng ký / login → join team → check VIP/trial/credit.
- * Chạy `node index.js --help` để xem cách dùng.
+ * CapCut Auto — (mua mail →) đăng ký / login → join team → check VIP/trial/credit.
+ * `node index.js` mở web UI; các lệnh CLI xem `node index.js --help`.
  */
 
-import { readFileSync, appendFileSync, existsSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
@@ -15,19 +16,23 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const HELP = `
 CapCut Auto — mua mail → đăng ký CapCut → join team → check VIP/trial/credit
 
-  node index.js [N]              Mua N mail rồi chạy cả quy trình (mặc định: "count" trong config.json)
+Web:
+  node index.js                  Mở giao diện web http://localhost:3456 (đổi cổng: --port=4000)
+
+CLI:
+  node index.js N                Mua N mail rồi chạy cả quy trình
   node index.js --file=list.txt  Chạy từ file có sẵn, mỗi dòng:
                                    email|pass                          → login → join → check
                                    email|pass|refresh_token|client_id  → đăng ký → join → check
   node index.js --balance        Xem số dư nguồn mail
   node index.js --products       Liệt kê sản phẩm mail (lấy ID điền vào config.json)
 
-Tuỳ chọn:
+Tuỳ chọn CLI:
   --provider=stk|dvfb   Nguồn mua mail: stk = Selltaikhoan, dvfb = Dongvanfb
   --no-join             Bỏ bước join team
   --help                Hiện hướng dẫn này
 
-Cấu hình (API key, link team, proxy…): config.json — mẫu ở config.example.json
+Cấu hình (API key, link team, proxy…): config.json — sửa trên web hoặc tay, mẫu ở config.example.json
 `;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -58,23 +63,57 @@ function loadConfig() {
   }
 }
 
+const isCli = Boolean(args.help || args.balance || args.products || typeof args.file === 'string' || args._.length);
+
 const config = loadConfig();
-if (typeof args.provider === 'string') config.mailProvider = args.provider;
-if (args['no-join']) config.teamInviteLink = '';
+if (isCli) {
+  if (typeof args.provider === 'string') config.mailProvider = args.provider;
+  if (args['no-join']) config.teamInviteLink = '';
+}
+
+function saveConfig() {
+  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + '\n');
+}
+
+// Chỉ nhận đúng các khoá đã biết, ép đúng kiểu — body đến từ form web.
+function pickConfig(body) {
+  const out = {};
+  for (const [k, def] of Object.entries(DEFAULT_CONFIG)) {
+    if (!(k in body)) continue;
+    if (typeof def === 'number') out[k] = Number(body[k]) || def;
+    else if (typeof def === 'boolean') out[k] = body[k] === true || body[k] === 'true';
+    else out[k] = String(body[k] ?? '').trim();
+  }
+  return out;
+}
 
 const RESULTS_FILE = resolve(__dir, 'results.txt');
 const MAILS_FILE = resolve(__dir, 'accounts.txt');
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LOG
+// STATE + LOG (console + đẩy sang web qua SSE)
 // ═══════════════════════════════════════════════════════════════════════════
+
+const state = { running: false, stats: { total: 0, done: 0, ok: 0, fail: 0 }, results: [] };
+const sseClients = new Set();
+const recentLogs = [];
+
+function emit(data) {
+  const line = `data: ${JSON.stringify(data)}\n\n`;
+  for (const res of sseClients) res.write(line);
+}
+const broadcastState = () => emit({ type: 'state', ...state });
 
 const tty = process.stdout.isTTY;
 const color = (code, s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
 function log(msg) {
-  const t = color(90, `[${new Date().toLocaleTimeString('vi')}]`);
+  const time = new Date().toLocaleTimeString('vi');
   const m = msg.includes('✓') ? color(32, msg) : msg.includes('✗') ? color(31, msg) : msg.includes('⚠') ? color(33, msg) : msg;
-  console.log(`${t} ${m}`);
+  console.log(`${color(90, `[${time}]`)} ${m}`);
+  const entry = { type: 'log', time, msg };
+  recentLogs.push(entry);
+  if (recentLogs.length > 300) recentLogs.shift();
+  emit(entry);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -486,33 +525,60 @@ async function processAccount(browser, acct, proxyUrl) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN
+// RUN — dùng chung cho CLI và web
 // ═══════════════════════════════════════════════════════════════════════════
 
-function readAccountFile(file) {
-  if (!existsSync(file)) throw new Error(`Không tìm thấy file ${file}`);
-  return readFileSync(file, 'utf-8').split('\n')
+function parseAccountLines(text) {
+  return String(text).split('\n')
     .map(l => l.trim()).filter(l => l && !l.startsWith('#'))
     .map(parseMailRow).filter(a => a && a.password);
 }
 
+function readAccountFile(file) {
+  if (!existsSync(file)) throw new Error(`Không tìm thấy file ${file}`);
+  return parseAccountLines(readFileSync(file, 'utf-8'));
+}
+
+function providerForBuying() {
+  const p = mailProvider();
+  if (!p.product) throw new Error(`Chưa có ID sản phẩm mail ${p.name} — xem bằng "Xem DS sản phẩm" / --products`);
+  return p;
+}
+
+function mailBuyer(p) {
+  return async () => {
+    const mail = await p.buy(p.key, p.product);
+    appendFileSync(MAILS_FILE, `${mail.email}|${mail.password || ''}|${mail.refreshToken || ''}|${mail.clientId || ''}\n`);
+    if (!mail.refreshToken || !mail.clientId) throw new Error(`Mail ${mail.email} không có refresh_token/client_id — chọn sản phẩm OAuth2`);
+    return mail;
+  };
+}
+
 let stopRequested = false;
-process.on('SIGINT', () => {
-  if (stopRequested) process.exit(130);
+function requestStop() {
+  if (stopRequested) return;
   stopRequested = true;
-  log('⚠ Ctrl+C — dừng sau account hiện tại (bấm lần nữa để thoát ngay)');
+  log('⚠ Sẽ dừng sau account đang chạy');
+}
+process.on('SIGINT', () => {
+  if (stopRequested || !state.running) process.exit(130);
+  requestStop();
 });
 
 async function run(total, nextAccount) {
+  state.running = true;
+  stopRequested = false;
+  state.stats = { total, done: 0, ok: 0, fail: 0 };
+  state.results = [];
+  broadcastState();
+
   const pool = new ProxyPool(config.proxyKeys, config.rotateEach);
   log(`═══ ${total} account | team: ${config.teamInviteLink ? 'có' : 'không join'} | proxy: ${pool.size ? `${pool.size} key` : 'direct'} ═══`);
-
   if (!existsSync(RESULTS_FILE)) appendFileSync(RESULTS_FILE, 'email|pass|uid|vip|trial|credit|joined\n');
-  const browser = await chromium.launch({ headless: true });
-  const ok = [];
-  let fail = 0;
 
+  let browser;
   try {
+    browser = await chromium.launch({ headless: true });
     for (let i = 0; i < total && !stopRequested; i++) {
       let acct;
       try { acct = await nextAccount(i); } catch (e) { log(`✗ ${e.message} — dừng`); break; }
@@ -527,30 +593,143 @@ async function run(total, nextAccount) {
 
       try {
         const r = await processAccount(browser, acct, proxyUrl);
-        ok.push(r);
+        state.results.push(r);
+        state.stats.ok++;
         appendFileSync(RESULTS_FILE, `${r.email}|${r.password}|${r.uid}|${r.vip}|${r.trial}|${r.credit}|${r.joined}\n`);
         log(`  ✓ vip=${r.vip} trial=${r.trial} credit=${r.credit} joined=${r.joined}`);
       } catch (e) {
-        fail++;
         const msg = e.message.split('\n')[0].slice(0, 120);
+        state.results.push({ email: acct.email, password: acct.password, error: msg });
+        state.stats.fail++;
         appendFileSync(RESULTS_FILE, `${acct.email}|${acct.password}|ERROR:${msg}||||\n`);
         log(`  ✗ ${msg}`);
       }
+      state.stats.done++;
+      broadcastState();
 
       if (i < total - 1 && !stopRequested) await sleep(config.delayMs);
     }
+    if (stopRequested) log('⚠ Đã dừng theo yêu cầu');
   } finally {
-    await browser.close().catch(() => {});
+    await browser?.close().catch(() => {});
+    state.running = false;
+    broadcastState();
   }
 
-  console.log(`\n═══ XONG: ${ok.length} OK, ${fail} lỗi — chi tiết trong results.txt ═══`);
-  if (ok.length) {
-    console.log('\nemail|pass:');
-    for (const r of ok) console.log(`${r.email}|${r.password}`);
-  }
+  log(`═══ XONG: ${state.stats.ok} OK, ${state.stats.fail} lỗi — chi tiết trong results.txt ═══`);
+  return state.results.filter(r => !r.error);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WEB — chỉ nghe 127.0.0.1 (API trả cả API key)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function readJsonBody(req) {
+  return new Promise((ok, fail) => {
+    let body = '';
+    req.on('data', c => {
+      body += c;
+      if (body.length > 5e6) { fail(new Error('Dữ liệu quá lớn')); req.destroy(); }
+    });
+    req.on('end', () => { try { ok(body ? JSON.parse(body) : {}); } catch { fail(new Error('JSON không hợp lệ')); } });
+  });
+}
+
+function startWeb(port) {
+  const sendJson = (res, status, data) => {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(data));
+  };
+
+  const server = createServer(async (req, res) => {
+    // Chặn trang web lạ gọi API qua DNS rebinding / form POST chéo trang.
+    const host = String(req.headers.host || '').replace(/:\d+$/, '');
+    if (host !== 'localhost' && host !== '127.0.0.1') return sendJson(res, 403, { error: 'Forbidden' });
+    if (req.method === 'POST' && !String(req.headers['content-type'] || '').startsWith('application/json')) {
+      return sendJson(res, 415, { error: 'Cần Content-Type: application/json' });
+    }
+
+    const { pathname } = new URL(req.url, 'http://localhost');
+    try {
+      if (req.method === 'GET' && pathname === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(readFileSync(resolve(__dir, 'ui.html')));
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/events') {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+        res.write(`data: ${JSON.stringify({ type: 'state', ...state })}\n\n`);
+        for (const entry of recentLogs) res.write(`data: ${JSON.stringify(entry)}\n\n`);
+        sseClients.add(res);
+        req.on('close', () => sseClients.delete(res));
+        return;
+      }
+      if (req.method === 'GET' && pathname === '/api/config') return sendJson(res, 200, config);
+      if (req.method === 'POST' && pathname === '/api/config') {
+        Object.assign(config, pickConfig(await readJsonBody(req)));
+        saveConfig();
+        return sendJson(res, 200, { ok: true });
+      }
+      if (req.method === 'GET' && pathname === '/api/balance') {
+        const p = mailProvider();
+        return sendJson(res, 200, { provider: p.name, money: await p.balance(p.key) });
+      }
+      if (req.method === 'GET' && pathname === '/api/products') {
+        const p = mailProvider();
+        return sendJson(res, 200, { provider: p.name, products: await p.products(p.key) });
+      }
+      if (req.method === 'POST' && pathname === '/api/run') {
+        if (state.running) return sendJson(res, 409, { error: 'Đang chạy rồi' });
+        const body = await readJsonBody(req);
+        const accounts = parseAccountLines(body.accounts || '');
+        let total;
+        let next;
+        if (accounts.length) {
+          total = accounts.length;
+          next = i => accounts[i];
+        } else {
+          total = Number(body.count);
+          if (!Number.isInteger(total) || total < 1) throw new Error('Số lượng không hợp lệ');
+          const p = providerForBuying();
+          log(`Mua mail từ ${p.name} (sản phẩm ${p.product})`);
+          next = mailBuyer(p);
+        }
+        run(total, next).catch(e => log(`✗ ${e.message}`));
+        return sendJson(res, 200, { ok: true, total });
+      }
+      if (req.method === 'POST' && pathname === '/api/stop') {
+        if (state.running) requestStop();
+        return sendJson(res, 200, { ok: true });
+      }
+      sendJson(res, 404, { error: 'Not found' });
+    } catch (e) {
+      sendJson(res, 400, { error: e.message });
+    }
+  });
+
+  server.on('error', e => {
+    console.error(color(31, e.code === 'EADDRINUSE' ? `✗ Cổng ${port} đang bận — chạy với --port=<cổng khác>` : `✗ ${e.message}`));
+    process.exit(1);
+  });
+  server.listen(port, '127.0.0.1', () => console.log(`\n  CapCut Auto — mở http://localhost:${port}\n  (Ctrl+C để tắt)\n`));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN
+// ═══════════════════════════════════════════════════════════════════════════
+
+function printOk(ok) {
+  if (!ok.length) return;
+  console.log('\nemail|pass:');
+  for (const r of ok) console.log(`${r.email}|${r.password}`);
 }
 
 async function main() {
+  if (!isCli) {
+    startWeb(Number(args.port) || Number(process.env.PORT) || 3456);
+    return;
+  }
+
   if (args.help) { console.log(HELP); return; }
 
   if (args.balance) {
@@ -570,22 +749,15 @@ async function main() {
   if (typeof args.file === 'string') {
     const accounts = readAccountFile(resolve(process.cwd(), args.file));
     if (!accounts.length) throw new Error(`File ${args.file} không có dòng email|pass nào`);
-    await run(accounts.length, i => accounts[i]);
+    printOk(await run(accounts.length, i => accounts[i]));
     return;
   }
 
-  const count = Number(args._[0] ?? config.count);
-  if (!Number.isInteger(count) || count < 1) throw new Error(`Số lượng không hợp lệ: ${args._[0] ?? config.count}`);
-  const p = mailProvider();
-  if (!p.product) throw new Error(`Chưa có ID sản phẩm mail ${p.name} trong config.json — chạy --products để xem`);
+  const count = Number(args._[0]);
+  if (!Number.isInteger(count) || count < 1) throw new Error(`Số lượng không hợp lệ: ${args._[0]}`);
+  const p = providerForBuying();
   log(`Mua mail từ ${p.name} (sản phẩm ${p.product})`);
-
-  await run(count, async () => {
-    const mail = await p.buy(p.key, p.product);
-    appendFileSync(MAILS_FILE, `${mail.email}|${mail.password || ''}|${mail.refreshToken || ''}|${mail.clientId || ''}\n`);
-    if (!mail.refreshToken || !mail.clientId) throw new Error(`Mail ${mail.email} không có refresh_token/client_id — chọn sản phẩm OAuth2`);
-    return mail;
-  });
+  printOk(await run(count, mailBuyer(p)));
 }
 
 main().catch(e => { console.error(color(31, `✗ ${e.message}`)); process.exit(1); });

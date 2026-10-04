@@ -38,11 +38,3 @@
     text-rendering: optimizeLegibility;
   }
 }
-
-/* Vùng kéo cửa sổ cho title bar tùy biến (Electron frameless). */
-.drag {
-  -webkit-app-region: drag;
-}
-.no-drag {
-  -webkit-app-region: no-drag;
-}

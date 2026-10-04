@@ -1,6 +1,7 @@
-# CapCut Auto (CLI)
+# CapCut Auto (checker)
 
-Một lệnh làm hết: **mua mail → đăng ký CapCut → join team → check VIP / trial / credit**.
+Một nút làm hết: **mua mail → đăng ký CapCut → join team → check VIP / trial / credit**.
+Chạy bằng giao diện web hoặc dòng lệnh, không cần build hay Docker.
 
 ## Cài đặt (1 lần)
 
@@ -9,10 +10,26 @@ Yêu cầu **Node.js 20+** (https://nodejs.org).
 ```bash
 cd capcut-checker
 npm run setup          # npm install + tải Chromium cho Playwright
-cp config.example.json config.json
 ```
 
-Mở `config.json` điền:
+## Chạy web
+
+```bash
+npm start              # → mở http://localhost:3456 (đổi cổng: node index.js --port=4000)
+```
+
+1. Khung **Cấu hình**: chọn nguồn mail, nhập API key, bấm **Xem DS sản phẩm** để chọn ID,
+   điền link mời team, proxy key → **Lưu cấu hình** (ghi vào `config.json`).
+2. Khung **Chạy**: nhập số account rồi bấm **▶ Chạy**. Muốn chạy account có sẵn thì dán
+   danh sách vào ô bên dưới (để trống = mua mail mới).
+3. Log chạy realtime; kết quả ở tab **Bảng** / **Text email|pass**, bấm **Copy email|pass**.
+   **■ Dừng** = dừng sau account đang chạy.
+
+Web chỉ mở cho máy này (`127.0.0.1`) vì API trả cả API key. Tắt bằng `Ctrl+C`.
+
+## Cấu hình (`config.json`)
+
+Sửa trên web, hoặc `cp config.example.json config.json` rồi điền tay:
 
 | Khoá | Ý nghĩa |
 |---|---|
@@ -23,15 +40,14 @@ Mở `config.json` điền:
 | `proxyKeys` | Key MKTProxy, nhiều key phẩy ngăn cách (để trống = chạy direct) |
 | `rotateEach` | `true` = xoay IP mỗi account |
 | `delayMs` | Nghỉ giữa mỗi account (ms) |
-| `count` | Số account mặc định khi chạy không truyền số |
+| `count` | Số account mặc định điền sẵn trên web |
 
 Sản phẩm mail phải là loại **OAuth2** (có `refresh_token|client_id`) để tool tự đọc OTP.
 
-## Chạy
+## Chạy dòng lệnh (không mở web)
 
 ```bash
 node index.js 5                 # mua 5 mail → đăng ký → join → check
-node index.js                   # như trên, số lượng lấy từ "count" trong config.json
 node index.js --file=list.txt   # chạy từ danh sách có sẵn
 node index.js --balance         # xem số dư nguồn mail
 node index.js --products        # liệt kê sản phẩm mail để lấy ID
@@ -40,7 +56,7 @@ node index.js --help
 
 Tuỳ chọn thêm: `--provider=stk|dvfb` (đổi nguồn mail cho lần chạy này), `--no-join` (bỏ bước join).
 
-`--file`: mỗi dòng một account, tool tự nhận dạng:
+`--file` (và ô danh sách trên web): mỗi dòng một account, tool tự nhận dạng:
 
 ```
 email|pass                            → login → join → check

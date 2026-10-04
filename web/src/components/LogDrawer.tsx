@@ -81,7 +81,7 @@ export function LogDrawer({ onActivity }: { onActivity?: () => void }) {
         </span>
 
         {open && (
-          <div className="no-drag ml-3 flex flex-1 items-center gap-2" onClick={stop}>
+          <div className="ml-3 flex flex-1 items-center gap-2" onClick={stop}>
             <Select value={level} onValueChange={setLevel}>
               <SelectTrigger className="h-8 w-28"><SelectValue /></SelectTrigger>
               <SelectContent>
