@@ -8,6 +8,5 @@
   "proxyKeys": "",
   "rotateEach": true,
   "delayMs": 3000,
-  "mode": "register",
-  "count": 5
+  "count": 1
 }

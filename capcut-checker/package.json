@@ -1,10 +1,10 @@
 {
   "name": "capcut-checker",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "type": "module",
+  "bin": { "capcut-auto": "index.js" },
   "scripts": {
-    "start": "node server.js",
-    "cli": "node index.js",
+    "start": "node index.js",
     "setup": "npm install && npx playwright install chromium"
   },
   "dependencies": {

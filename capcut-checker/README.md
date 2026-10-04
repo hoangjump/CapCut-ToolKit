@@ -1,113 +1,74 @@
-# CapCut Checker
+# CapCut Auto (CLI)
 
-Tool tự động cho CapCut: mua mail → đăng ký tài khoản → join team → check thông tin (VIP / trial / credit).
+Một lệnh làm hết: **mua mail → đăng ký CapCut → join team → check VIP / trial / credit**.
 
-Có 2 cách chạy:
+## Cài đặt (1 lần)
 
-| Cách | File | Dùng khi |
-|---|---|---|
-| **Web UI** (khuyên dùng) | `server.js` | Bấm nút, xem log realtime, copy kết quả `email\|pass` |
-| CLI | `index.js` | Chạy nền / cấu hình bằng `.env` |
-
----
-
-## 1. Cài đặt trên máy mới
-
-Yêu cầu: **Node.js 20+** (tải tại https://nodejs.org).
+Yêu cầu **Node.js 20+** (https://nodejs.org).
 
 ```bash
-# Giải nén rồi vào thư mục
 cd capcut-checker
-
-# Cài thư viện + trình duyệt Chromium cho Playwright (~150MB, chỉ 1 lần)
-npm install
-npx playwright install chromium
+npm run setup          # npm install + tải Chromium cho Playwright
+cp config.example.json config.json
 ```
 
-Windows: mở **PowerShell** hoặc **CMD** tại thư mục rồi chạy y hệt.
+Mở `config.json` điền:
 
----
+| Khoá | Ý nghĩa |
+|---|---|
+| `mailProvider` | `stk` = Selltaikhoan, `dvfb` = Dongvanfb |
+| `stkApiKey`, `stkProduct` | Key + ID sản phẩm Selltaikhoan |
+| `dvfbApiKey`, `dvfbProduct` | Key + `account_type` Dongvanfb (VD `1` Hotmail NEW, `5` Hotmail TRUSTED) |
+| `teamInviteLink` | Link mời team `https://www.capcut.com/sv2/...` (để trống = không join) |
+| `proxyKeys` | Key MKTProxy, nhiều key phẩy ngăn cách (để trống = chạy direct) |
+| `rotateEach` | `true` = xoay IP mỗi account |
+| `delayMs` | Nghỉ giữa mỗi account (ms) |
+| `count` | Số account mặc định khi chạy không truyền số |
 
-## 2. Chạy Web UI
+Sản phẩm mail phải là loại **OAuth2** (có `refresh_token|client_id`) để tool tự đọc OTP.
+
+## Chạy
 
 ```bash
-npm start
+node index.js 5                 # mua 5 mail → đăng ký → join → check
+node index.js                   # như trên, số lượng lấy từ "count" trong config.json
+node index.js --file=list.txt   # chạy từ danh sách có sẵn
+node index.js --balance         # xem số dư nguồn mail
+node index.js --products        # liệt kê sản phẩm mail để lấy ID
+node index.js --help
 ```
 
-Mở trình duyệt vào **http://localhost:3456**
+Tuỳ chọn thêm: `--provider=stk|dvfb` (đổi nguồn mail cho lần chạy này), `--no-join` (bỏ bước join).
 
-### Cấu hình (khung bên trái)
-
-- **Nguồn mua mail**: chọn `Selltaikhoan` hoặc `Dongvanfb`, nhập API key + ID sản phẩm.
-  Bấm **Xem DS sản phẩm** để liệt kê và click chọn ID; **Số dư** để kiểm tra tiền.
-  - Selltaikhoan: key tại selltaikhoan.com → API
-  - Dongvanfb: key tại dongvanfb.net (VD `1` = Hotmail NEW, `5` = Hotmail TRUSTED)
-- **Link mời Team CapCut**: dạng `https://www.capcut.com/sv2/...` (bỏ trống = không join)
-- **Proxy keys**: key MKTProxy, nhiều key phẩy ngăn cách (bỏ trống = chạy direct)
-- **Delay / Xoay IP**: nghỉ giữa mỗi account, có xoay IP mỗi acc hay không
-- Bấm **Lưu cấu hình** → lưu vào `config.json`
-
-### Chạy
-
-Chọn 1 trong 4 chế độ:
-
-| Chế độ | Làm gì | Input |
-|---|---|---|
-| **Đăng ký mới** | Mua mail → đăng ký CapCut → join team → check | Số account cần mua |
-| **Check + Join** | Login → join team → lấy info | Danh sách `email\|pass` |
-| **Check info** | Login → lấy info | Danh sách `email\|pass` |
-| **Join team** | Login → join team | Danh sách `email\|pass` |
-
-Danh sách để trống → tự đọc `accounts.txt`.
-
-### Kết quả
-
-- Tab **Bảng**: email, UID, VIP, Trial, Credit, Joined
-- Tab **Text**: mỗi dòng `email|password` — bấm **Copy email|pass** hoặc **Copy full**
-- Tự ghi thêm vào `results.txt`: `email|pass|uid|VIP|Trial|credit|joined`
-- Mail mua được ghi vào `accounts.txt`: `email|pass|refresh_token|client_id`
-
-Đổi port: `PORT=8080 npm start`
-
----
-
-## 3. Chạy CLI (tuỳ chọn)
-
-```bash
-cp .env.example .env     # điền key vào .env
-node index.js
-```
-
-Xem chú thích từng biến trong `.env.example` (`MODE`, `COUNT`, `SELLTK_*`, `MKT_PROXY_KEYS`…).
-
----
-
-## 4. Cấu trúc file
+`--file`: mỗi dòng một account, tool tự nhận dạng:
 
 ```
-server.js       Web UI + API (mua mail, đăng ký, join, check)
-ui.html         Giao diện web
-index.js        Entry CLI
-app.js          Logic CLI (đăng ký / check)
-browser.js      Playwright: login CapCut, lấy info
-capcut.js       Gọi API CapCut (passport, OTP…)
-device.js       Sinh fingerprint thiết bị
-proxy.js        Pool proxy MKTProxy, xoay IP
-config.js       Đọc .env cho CLI
-config.example.json   Mẫu cấu hình Web UI
-.env.example          Mẫu cấu hình CLI
+email|pass                            → login → join → check
+email|pass|refresh_token|client_id    → đăng ký mới → join → check
 ```
 
-Các file **không** nên gửi cho người khác (chứa key / tài khoản): `config.json`, `.env`, `accounts.txt`, `results.txt`.
+Nên có thể chạy lại những mail đã mua mà đăng ký lỗi bằng `--file=accounts.txt` (sửa file chỉ giữ dòng cần chạy).
 
----
+`Ctrl+C` một lần = dừng sau account đang chạy; bấm lần hai = thoát ngay.
 
-## 5. Lỗi thường gặp
+## Kết quả
+
+- Cuối mỗi lần chạy in danh sách `email|pass` các account OK để copy.
+- `results.txt` (ghi nối thêm, không xoá kết quả cũ): `email|pass|uid|vip|trial|credit|joined`
+  — dòng lỗi có `ERROR:<lý do>` ở cột uid.
+- `accounts.txt`: mọi mail đã mua `email|pass_mail|refresh_token|client_id` (giữ lại phòng khi đăng ký lỗi).
+
+`pass` trong kết quả là **mật khẩu CapCut** (tool tự sinh khi đăng ký), không phải mật khẩu mail.
+
+## Lỗi thường gặp
 
 | Lỗi | Cách xử lý |
 |---|---|
-| `Executable doesn't exist` / không mở được Chromium | Chạy lại `npx playwright install chromium` |
-| `Chưa nhập API key …` | Nhập key đúng nguồn đang chọn, bấm Lưu cấu hình |
-| `Mua mail thất bại` | Hết tiền / hết kho — bấm Số dư và Xem DS sản phẩm |
-| Join team `joined=NO` | Kiểm tra link mời còn hạn, xem log dòng `join:` |
-| Port 3456 đang bận | `PORT=3457 npm start` |
+| `Executable doesn't exist` | `npx playwright install chromium` |
+| `Chưa có API key …` / `Chưa có ID sản phẩm …` | Điền vào `config.json`; xem ID bằng `--products` |
+| `Mua mail thất bại … — dừng` | Hết tiền hoặc hết kho: `--balance`, `--products` |
+| `không có refresh_token/client_id` | Chọn sản phẩm mail loại OAuth2 |
+| `Không nhận được OTP sau 90s` | Mail chết/chậm — chạy lại mail đó bằng `--file` |
+| `joined=NO` | Link mời hết hạn / team đầy; log dòng `join:` in các nút đang có trên trang |
+
+Không gửi `config.json`, `accounts.txt`, `results.txt` cho người khác — chứa key và tài khoản.

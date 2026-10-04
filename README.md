@@ -28,16 +28,16 @@ npx playwright install chromium    # Chromium cho capcut-checker
 # 3. Chạy tool chính (web UI + API) → http://localhost:3000
 npm run server:dev
 
-# 4. (Tuỳ chọn) Tool checker riêng: mua mail → reg CapCut → join team → check
-cd capcut-checker && npm install && npm start   # → http://localhost:3456
+# 4. (Tuỳ chọn) CLI checker riêng: mua mail → reg CapCut → join team → check
+cd capcut-checker && npm run setup && node index.js 5
 ```
 
 Trong repo có 2 tool độc lập:
 
-| Thư mục | Tool | Cổng |
+| Thư mục | Tool | Chạy |
 |---|---|---|
-| `/` (gốc) | Multi-profile browser + flow tự động CapCut (Camoufox, proxy, sheet) | 3000 |
-| `capcut-checker/` | Web UI gọn: mua mail (Selltaikhoan/Dongvanfb) → đăng ký → join team → check VIP/credit | 3456 |
+| `/` (gốc) | Multi-profile browser + flow tự động CapCut (Camoufox, proxy, sheet) | web UI cổng 3000 |
+| `capcut-checker/` | CLI 1 lệnh: mua mail (Selltaikhoan/Dongvanfb) → đăng ký → join team → check VIP/credit | `node index.js [N]` |
 
 Hướng dẫn riêng của checker: [capcut-checker/README.md](capcut-checker/README.md).
 
