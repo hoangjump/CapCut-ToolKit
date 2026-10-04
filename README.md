@@ -25,14 +25,8 @@ npm start          # chạy → mở http://localhost:3000
 Tắt bằng `Ctrl+C` trong terminal. Sau khi cập nhật code (git pull / chép đè thư mục)
 thì chạy lại `npm run setup` một lần.
 
-Trong repo có 2 tool độc lập:
-
-| Thư mục | Tool | Chạy |
-|---|---|---|
-| `/` (gốc) | Quản lý nhiều profile Camoufox, proxy, kho mail, flow tự động CapCut, công việc Telegram | `npm start` → http://localhost:3000 |
-| `capcut-checker/` | Mua mail (Selltaikhoan/Dongvanfb) → đăng ký CapCut → join team → check VIP/credit | `cd capcut-checker && npm start` → http://localhost:3456 |
-
-Hướng dẫn riêng của checker: [capcut-checker/README.md](capcut-checker/README.md).
+Tất cả tính năng gồm cả **Checker** (mua mail → đăng ký → join team → check VIP/credit)
+nằm chung trong một ứng dụng, tab **Checker** trên giao diện web.
 
 ### Dữ liệu nằm ở đâu
 
@@ -46,8 +40,7 @@ Profile, proxy, mail, project, cài đặt… nằm trong thư mục `profiles-s
   (PowerShell: `$env:STORE_ROOT="D:\data"; npm start`).
 
 Dòng log `dữ liệu (profiles-store): …` lúc khởi động cho biết đang dùng kho nào.
-Đừng gửi kèm `profiles-store/`, `capcut-checker/config.json`, `capcut-checker/accounts.txt`
-cho người khác — chứa cookie, API key và tài khoản.
+Đừng gửi kèm `profiles-store/` cho người khác — chứa cookie, API key và tài khoản.
 
 ### Lệnh khác
 

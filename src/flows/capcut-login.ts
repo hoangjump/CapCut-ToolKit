@@ -17,7 +17,7 @@ import type { Logger } from '../logger.js';
  *   - POST /commerce/v3/trade/subscription_infos
  */
 
-interface AccountInfo {
+export interface AccountInfo {
   userId: string;
   screenName: string;
   email: string;
@@ -30,7 +30,7 @@ interface AccountInfo {
   hasTrial: boolean;
 }
 
-async function loginViaApi(page: Page, email: string, password: string, log: Logger): Promise<void> {
+export async function loginViaApi(page: Page, email: string, password: string, log: Logger): Promise<void> {
   const encEmail = encMixMode(email);
   const encPass = encMixMode(password);
 
@@ -90,7 +90,7 @@ async function loginViaApi(page: Page, email: string, password: string, log: Log
   log.info(`login OK — userId=${res.userId} name=${res.screenName}`);
 }
 
-async function getAccountInfo(page: Page): Promise<AccountInfo> {
+export async function getAccountInfo(page: Page): Promise<AccountInfo> {
   return page.evaluate(async () => {
     const g = globalThis as any;
     const doc = g.document;

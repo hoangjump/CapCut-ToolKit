@@ -1,7 +1,0 @@
-node_modules/
-.env
-.claude/
-config.json
-accounts.txt
-results.txt
-.DS_Store

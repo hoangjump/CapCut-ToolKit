@@ -29,6 +29,7 @@ import { registerSettingsRoutes } from './routes/settings.js';
 import { registerProxyRoutes } from './routes/proxies.js';
 import { registerProfileRoutes } from './routes/profiles.js';
 import { registerProjectRoutes } from './routes/projects.js';
+import { registerCheckerRoutes } from './routes/checker.js';
 
 const log = createLogger('server');
 
@@ -199,6 +200,8 @@ export async function createApp(config: ServerConfig = {}): Promise<CreatedApp> 
   registerMailRoutes(app, { mails, settings, profiles, browsers, store });
 
   registerProjectRoutes(app, { profiles, browsers, mails, projects, settings, telegramWork, storeRoot, headless });
+
+  registerCheckerRoutes(app, { storeRoot });
 
   // Chốt chuỗi: mọi lỗi ném ra từ handler (kể cả reject của handler async, thứ
   // Express 4 KHÔNG tự bắt) đổ về đây thành JSON thay vì treo request.

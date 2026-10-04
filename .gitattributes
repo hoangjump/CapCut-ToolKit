@@ -1,0 +1,5 @@
+# UI vanilla cũ (chỉ dùng khi chưa build web/) và script phụ không tính vào thống kê ngôn ngữ
+public/** linguist-detectable=false
+scripts/*.js linguist-detectable=false
+apps-script.gs linguist-detectable=false
+list-webgl.cjs linguist-detectable=false

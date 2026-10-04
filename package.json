@@ -4,7 +4,7 @@
   "description": "Multi-profile Playwright browser system with anti-detect, session persistence and per-profile proxy",
   "type": "module",
   "scripts": {
-    "setup": "npm install && npx camoufox-js fetch && npm run build:web",
+    "setup": "npm install && npx camoufox-js fetch && npx playwright install chromium && npm run build:web",
     "start": "tsx src/server/index.ts",
     "dev": "tsx watch src/server/index.ts",
     "demo": "tsx src/index.ts",

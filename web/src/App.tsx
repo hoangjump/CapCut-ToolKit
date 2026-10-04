@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Menu, User, Mail, Settings2, ClipboardCheck, SlidersHorizontal } from 'lucide-react';
+import { Menu, User, Mail, Settings2, ClipboardCheck, SlidersHorizontal, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LogDrawer } from '@/components/LogDrawer';
 import { ProxyTab } from '@/tabs/ProxyTab';
@@ -8,12 +8,14 @@ import { MailTab } from '@/tabs/MailTab';
 import { ProjectTab } from '@/tabs/ProjectTab';
 import { WorkTab } from '@/tabs/WorkTab';
 import { SettingsTab } from '@/tabs/SettingsTab';
+import { CheckerTab } from '@/tabs/CheckerTab';
 
 const navigation = [
   { id: 'proxies', label: 'Proxy', description: 'Kho proxy và IP xoay', icon: Menu },
   { id: 'profiles', label: 'Hồ sơ', description: 'Camoufox và phiên chạy', icon: User },
   { id: 'mail', label: 'Mail', description: 'Kho mail và nhà cung cấp', icon: Mail },
   { id: 'project', label: 'Chạy tự động', description: 'Project và flow tự động', icon: Settings2 },
+  { id: 'checker', label: 'Checker', description: 'Mua mail → đăng ký → join → check', icon: Zap },
   { id: 'work', label: 'Công việc', description: 'Nhân viên, lương và thanh toán', icon: ClipboardCheck },
   { id: 'settings', label: 'Cài đặt', description: 'API key, Google Sheet và Telegram', icon: SlidersHorizontal },
 ] as const;
@@ -70,6 +72,7 @@ export default function App() {
             {tab === 'profiles' && <ProfilesTab runSignal={runSignal} />}
             {tab === 'mail' && <MailTab />}
             {tab === 'project' && <ProjectTab />}
+            {tab === 'checker' && <CheckerTab />}
             {tab === 'work' && <WorkTab />}
             {tab === 'settings' && <SettingsTab />}
           </div>

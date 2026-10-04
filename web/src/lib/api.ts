@@ -433,4 +433,42 @@ export const workApi = {
   retryDistributionItem: (id: string) => post(`/api/work/distribution-items/${id}/retry`).then((r) => parse<DistributionRun>(r)),
 };
 
+// ---- Checker (mua mail → đăng ký → join → check) ----
+export interface CheckerConfig {
+  mailProvider: 'stk' | 'dvfb';
+  stkApiKey: string;
+  stkProduct: string;
+  dvfbApiKey: string;
+  dvfbProduct: string;
+  teams: Array<{ link: string; count: number }>;
+  maxTriesPerAccount: number;
+  minCredit: number;
+  proxyKeys: string;
+  rotateEach: boolean;
+  delayMs: number;
+  count: number;
+}
+export interface CheckerResult {
+  email: string;
+  password: string;
+  uid: string;
+  vip: string;
+  trial: string;
+  credit: number;
+  joined: string;
+  team: number;
+  ok: boolean;
+  error?: string;
+}
+export interface CheckerTeamProgress { link: string; target: number; ok: number; tries: number }
+export const checkerApi = {
+  config: () => fetch('/api/checker/config').then((r) => parse<CheckerConfig>(r)),
+  saveConfig: (body: Partial<CheckerConfig>) => post('/api/checker/config', body).then((r) => parse<CheckerConfig>(r)),
+  run: (body: { count?: number; accounts?: string }) => post('/api/checker/run', body).then((r) => parse<{ ok: boolean; total: number }>(r)),
+  stop: () => post('/api/checker/stop').then((r) => parse<{ ok: boolean }>(r)),
+  balance: () => fetch('/api/checker/balance').then((r) => parse<{ balance: number }>(r)),
+  products: (provider?: string) =>
+    fetch('/api/checker/products' + (provider ? `?provider=${provider}` : '')).then((r) => parse<{ products: any[] }>(r)),
+};
+
 export const CODE_TYPES = ['all', 'facebook', 'google', 'instagram', 'tiktok', 'twitter', 'apple', 'amazon', 'lazada', 'shopee', 'telegram', 'wechat'];
